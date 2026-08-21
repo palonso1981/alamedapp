@@ -61,6 +61,7 @@ export type ThreatPhase =
   | "PENALTY"
   | "DOUBLE_PENALTY"
   | "UNSPECIFIED";
+export type LiveThreatPhase = Exclude<ThreatPhase, "UNSPECIFIED">;
 
 export interface NormalizedCoordinates {
   x: number;
@@ -78,6 +79,7 @@ export interface LiveThreatRecordedEvent extends MatchEventBase, ThreatEventData
   type: "threat_recorded";
   source: "live";
   outcome: LiveThreatOutcome;
+  phase: LiveThreatPhase;
 }
 
 export interface LegacyThreatImportedEvent extends MatchEventBase, ThreatEventData {
@@ -124,5 +126,27 @@ export interface ReplayResult {
   onCourtPlayerIds: string[];
   benchPlayerIds: string[];
   timeline: TimelineEntry[];
+  playerMinutes: Record<string, PlayerMinutes>;
   issues: ReplayIssue[];
+}
+
+export interface PlayerMinutes {
+  totalMinutes: number;
+  currentStintMinutes: number;
+  onCourt: boolean;
+}
+
+export type LocalPersistenceStatus = "idle" | "saved" | "error";
+
+export interface MatchSession {
+  matchId: string;
+  players: Player[];
+  period: number;
+  minute: number;
+  events: MatchEvent[];
+  past: MatchEvent[][];
+  future: MatchEvent[][];
+  lastError: string | null;
+  persistenceStatus: LocalPersistenceStatus;
+  lastSavedAt: number | null;
 }

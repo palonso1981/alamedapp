@@ -12,10 +12,13 @@ import {
   restoreEvent as restoreChronologyEvent,
   softDeleteEvent as softDeleteChronologyEvent,
 } from "../lib/matchEngine";
+import { loadMatchSession, saveMatchSession } from "../lib/matchPersistence";
 import {
   EventPosition,
+  LiveThreatPhase,
   LiveThreatOutcome,
   MatchEvent,
+  MatchSession,
   NormalizedCoordinates,
   Player,
 } from "../types";
@@ -39,21 +42,11 @@ export const DEMO_PLAYERS: Player[] = [
   { id: "p8", name: "Leo", number: 9, dominantFoot: "RIGHT" },
 ];
 
-export interface MatchSession {
-  matchId: string;
-  players: Player[];
-  period: number;
-  minute: number;
-  events: MatchEvent[];
-  past: MatchEvent[][];
-  future: MatchEvent[][];
-  lastError: string | null;
-}
-
 interface RecordThreatInput {
   playerId: string;
   origin: NormalizedCoordinates;
   outcome: LiveThreatOutcome;
+  phase: LiveThreatPhase;
 }
 
 interface MatchState {
@@ -97,6 +90,27 @@ function createSession(matchId: string): MatchSession {
     past: [],
     future: [],
     lastError: null,
+    persistenceStatus: "idle",
+    lastSavedAt: null,
+  };
+}
+
+function persistSession(session: MatchSession): MatchSession {
+  const result = saveMatchSession(session);
+  if (result.ok) {
+    return {
+      ...session,
+      persistenceStatus: "saved",
+      lastSavedAt: result.savedAt,
+    };
+  }
+  if (result.unavailable && typeof window === "undefined") {
+    return session;
+  }
+  return {
+    ...session,
+    persistenceStatus: "error",
+    lastError: result.message,
   };
 }
 
@@ -115,6 +129,16 @@ function updateSession(
       [matchId]: updater(current),
     },
   };
+}
+
+function updateAndPersistSession(
+  state: MatchState,
+  matchId: string,
+  updater: (session: MatchSession) => MatchSession,
+): Pick<MatchState, "matches"> {
+  return updateSession(state, matchId, (session) =>
+    persistSession(updater(session)),
+  );
 }
 
 function commitEvents(
@@ -153,17 +177,18 @@ export const useMatchStore = create<MatchState>((set) => ({
       if (state.matches[matchId]) {
         return state;
       }
+      const session = loadMatchSession(matchId) ?? persistSession(createSession(matchId));
       return {
         matches: {
           ...state.matches,
-          [matchId]: createSession(matchId),
+          [matchId]: session,
         },
       };
     }),
 
   incrementMinute: (matchId) =>
     set((state) =>
-      updateSession(state, matchId, (session) => ({
+      updateAndPersistSession(state, matchId, (session) => ({
         ...session,
         minute: session.minute + 1,
       })),
@@ -171,7 +196,7 @@ export const useMatchStore = create<MatchState>((set) => ({
 
   setClock: (matchId, period, minute) =>
     set((state) =>
-      updateSession(state, matchId, (session) => ({
+      updateAndPersistSession(state, matchId, (session) => ({
         ...session,
         period: Math.max(1, Math.trunc(period)),
         minute: Math.max(0, Math.trunc(minute)),
@@ -180,7 +205,7 @@ export const useMatchStore = create<MatchState>((set) => ({
 
   recordThreat: (matchId, input) =>
     set((state) =>
-      updateSession(state, matchId, (session) =>
+      updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
           const event = createLiveThreatEvent({
             matchId,
@@ -197,6 +222,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             playerId: input.playerId,
             origin: input.origin,
             outcome: input.outcome,
+            phase: input.phase,
           });
           return appendEvent(session.players, session.events, event);
         }),
@@ -205,7 +231,7 @@ export const useMatchStore = create<MatchState>((set) => ({
 
   swapPlayer: (matchId, playerOutId, playerInId) =>
     set((state) =>
-      updateSession(state, matchId, (session) =>
+      updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
           const event = createSubstitutionEvent({
             matchId,
@@ -228,7 +254,7 @@ export const useMatchStore = create<MatchState>((set) => ({
 
   editEvent: (matchId, eventId, changes) =>
     set((state) =>
-      updateSession(state, matchId, (session) =>
+      updateAndPersistSession(state, matchId, (session) =>
         command(session, () =>
           editChronologyEvent(
             session.players,
@@ -242,7 +268,7 @@ export const useMatchStore = create<MatchState>((set) => ({
 
   softDeleteEvent: (matchId, eventId) =>
     set((state) =>
-      updateSession(state, matchId, (session) =>
+      updateAndPersistSession(state, matchId, (session) =>
         command(session, () =>
           softDeleteChronologyEvent(session.players, session.events, eventId),
         ),
@@ -251,7 +277,7 @@ export const useMatchStore = create<MatchState>((set) => ({
 
   restoreEvent: (matchId, eventId) =>
     set((state) =>
-      updateSession(state, matchId, (session) =>
+      updateAndPersistSession(state, matchId, (session) =>
         command(session, () =>
           restoreChronologyEvent(session.players, session.events, eventId),
         ),
@@ -260,7 +286,7 @@ export const useMatchStore = create<MatchState>((set) => ({
 
   reorderEvent: (matchId, eventId, target) =>
     set((state) =>
-      updateSession(state, matchId, (session) =>
+      updateAndPersistSession(state, matchId, (session) =>
         command(session, () =>
           reorderChronologyEvent(
             session.players,
@@ -274,7 +300,7 @@ export const useMatchStore = create<MatchState>((set) => ({
 
   undo: (matchId) =>
     set((state) =>
-      updateSession(state, matchId, (session) => {
+      updateAndPersistSession(state, matchId, (session) => {
         const previous = session.past.at(-1);
         if (!previous) {
           return session;
@@ -291,7 +317,7 @@ export const useMatchStore = create<MatchState>((set) => ({
 
   redo: (matchId) =>
     set((state) =>
-      updateSession(state, matchId, (session) => {
+      updateAndPersistSession(state, matchId, (session) => {
         const [next, ...remaining] = session.future;
         if (!next) {
           return session;

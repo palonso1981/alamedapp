@@ -2,6 +2,7 @@ import {
   EventPosition,
   LegacyThreatImportedEvent,
   LineupInitializedEvent,
+  LiveThreatPhase,
   LiveThreatOutcome,
   LiveThreatRecordedEvent,
   MATCH_EVENT_SCHEMA_VERSION,
@@ -17,6 +18,19 @@ import {
 } from "../types";
 
 export const MAX_ON_COURT = 5;
+
+export interface ReplayOptions {
+  currentClock?: Pick<EventPosition, "period" | "minute">;
+  periodDurationMinutes?: number;
+}
+
+function elapsedMinute(
+  period: number,
+  minute: number,
+  periodDurationMinutes: number,
+): number {
+  return Math.max(0, period - 1) * periodDurationMinutes + Math.max(0, minute);
+}
 
 export class MatchIntegrityError extends Error {
   constructor(public readonly issues: ReplayIssue[]) {
@@ -46,15 +60,16 @@ interface ThreatEventInput extends EventFactoryBase {
   side: ThreatSide;
   playerId?: string;
   origin: NormalizedCoordinates;
-  phase?: ThreatPhase;
 }
 
 export interface LiveThreatEventInput extends ThreatEventInput {
   outcome: LiveThreatOutcome;
+  phase: LiveThreatPhase;
 }
 
 export interface LegacyThreatEventInput extends ThreatEventInput {
   outcome: ThreatOutcome;
+  phase?: ThreatPhase;
 }
 
 export interface EventEditChanges {
@@ -118,6 +133,9 @@ export function createLiveThreatEvent(
   if (!["GOL", "PARADA", "FUERA"].includes(input.outcome)) {
     throw new Error("La captura V1 solo admite GOL, PARADA o FUERA.");
   }
+  if (!input.phase || (input.phase as ThreatPhase) === "UNSPECIFIED") {
+    throw new Error("La captura V1 requiere una fase válida.");
+  }
   return {
     ...eventBase(input),
     type: "threat_recorded",
@@ -125,7 +143,7 @@ export function createLiveThreatEvent(
     side: input.side,
     playerId: input.playerId,
     origin: { ...input.origin },
-    phase: input.phase ?? "UNSPECIFIED",
+    phase: input.phase,
     outcome: input.outcome,
   };
 }
@@ -214,12 +232,17 @@ function issue(
 export function replayMatch(
   players: Player[],
   events: MatchEvent[],
+  options: ReplayOptions = {},
 ): ReplayResult {
   const playerIds = new Set(players.map((player) => player.id));
   let squadPlayerIds: string[] = [];
   let onCourtPlayerIds: string[] = [];
   let benchPlayerIds: string[] = [];
   let hasLineup = false;
+  const periodDurationMinutes = options.periodDurationMinutes ?? 20;
+  const totalMinutes = new Map(players.map((player) => [player.id, 0]));
+  const enteredAt = new Map<string, number>();
+  let lastElapsedMinute = 0;
   const timeline: ReplayResult["timeline"] = [];
   const issues: ReplayIssue[] = [];
   const activeEvents = sortEvents(events).filter(
@@ -253,6 +276,19 @@ export function replayMatch(
   }
 
   for (const event of activeEvents) {
+    const eventElapsedMinute = elapsedMinute(
+      event.period,
+      event.minute,
+      periodDurationMinutes,
+    );
+    if (hasLineup) {
+      const elapsed = Math.max(0, eventElapsedMinute - lastElapsedMinute);
+      for (const playerId of onCourtPlayerIds) {
+        totalMinutes.set(playerId, (totalMinutes.get(playerId) ?? 0) + elapsed);
+      }
+    }
+    lastElapsedMinute = Math.max(lastElapsedMinute, eventElapsedMinute);
+
     if (!validPosition(event)) {
       issue(
         issues,
@@ -309,6 +345,10 @@ export function replayMatch(
       benchPlayerIds = squadPlayerIds.filter(
         (id) => !onCourtPlayerIds.includes(id),
       );
+      enteredAt.clear();
+      for (const playerId of onCourtPlayerIds) {
+        enteredAt.set(playerId, eventElapsedMinute);
+      }
       hasLineup = true;
     } else if (!hasLineup) {
       issue(
@@ -344,6 +384,8 @@ export function replayMatch(
         benchPlayerIds = benchPlayerIds.map((id) =>
           id === event.playerInId ? event.playerOutId : id,
         );
+        enteredAt.delete(event.playerOutId);
+        enteredAt.set(event.playerInId, eventElapsedMinute);
       }
     } else if (event.type === "threat_recorded") {
       if (!validCoordinates(event.origin)) {
@@ -374,10 +416,40 @@ export function replayMatch(
     });
   }
 
+  const requestedCurrentMinute = options.currentClock
+    ? elapsedMinute(
+        options.currentClock.period,
+        options.currentClock.minute,
+        periodDurationMinutes,
+      )
+    : lastElapsedMinute;
+  const currentElapsedMinute = Math.max(lastElapsedMinute, requestedCurrentMinute);
+  const remainingElapsed = Math.max(0, currentElapsedMinute - lastElapsedMinute);
+  for (const playerId of onCourtPlayerIds) {
+    totalMinutes.set(playerId, (totalMinutes.get(playerId) ?? 0) + remainingElapsed);
+  }
+
+  const playerMinutes = Object.fromEntries(
+    players.map((player) => {
+      const onCourt = onCourtPlayerIds.includes(player.id);
+      return [
+        player.id,
+        {
+          totalMinutes: totalMinutes.get(player.id) ?? 0,
+          currentStintMinutes: onCourt
+            ? Math.max(0, currentElapsedMinute - (enteredAt.get(player.id) ?? currentElapsedMinute))
+            : 0,
+          onCourt,
+        },
+      ];
+    }),
+  );
+
   return {
     onCourtPlayerIds,
     benchPlayerIds,
     timeline,
+    playerMinutes,
     issues,
   };
 }
@@ -467,6 +539,12 @@ export function editEvent(
       changes.threat.outcome === "BLOQUEADO"
     ) {
       throw new Error("BLOQUEADO solo está permitido en eventos importados.");
+    }
+    if (
+      edited.source === "live" &&
+      (changes.threat.phase as ThreatPhase | undefined) === "UNSPECIFIED"
+    ) {
+      throw new Error("UNSPECIFIED solo está permitido en eventos importados.");
     }
     edited = { ...edited, ...changes.threat } as MatchEvent;
   }

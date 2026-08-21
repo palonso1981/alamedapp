@@ -2,10 +2,12 @@
 
 import { MouseEvent, useEffect, useMemo, useState } from "react";
 
+import { FutsalCourtMarkings } from "../../../../components/court/FutsalCourtMarkings";
 import { replayMatch } from "../../../../lib/matchEngine";
 import { useMatchStore } from "../../../../store/useMatchStore";
 import {
   LiveThreatOutcome,
+  LiveThreatPhase,
   NormalizedCoordinates,
   Player,
   TimelineEntry,
@@ -29,6 +31,17 @@ const OUTCOME_OPTIONS: Array<{
   { value: "FUERA", label: "↗ Fuera", className: "bg-slate-600 hover:bg-slate-500" },
 ];
 
+const PHASE_OPTIONS: Array<{ value: LiveThreatPhase; label: string }> = [
+  { value: "POSITIONAL", label: "Posicional" },
+  { value: "TRANSITION", label: "Transición" },
+  { value: "SET_PIECE_CORNER", label: "ABP córner" },
+  { value: "SET_PIECE_FREE_KICK", label: "ABP falta" },
+  { value: "SET_PIECE_KICK_IN", label: "ABP banda" },
+  { value: "FLYING_GOALKEEPER", label: "Portero-jugador" },
+  { value: "PENALTY", label: "Penalti" },
+  { value: "DOUBLE_PENALTY", label: "Doble penalti" },
+];
+
 type InteractionMode = "threat" | "substitution";
 
 function playerName(players: Player[], playerId?: string): string {
@@ -46,9 +59,13 @@ function eventDescription(entry: TimelineEntry, players: Player[]): string {
   }
   if (event.type === "threat_recorded") {
     const coordinates = `${Math.round(event.origin.x * 100)}%, ${Math.round(event.origin.y * 100)}%`;
-    return `${event.outcome}: ${playerName(players, event.playerId)} · origen ${coordinates}`;
+    return `${event.outcome}: ${playerName(players, event.playerId)} · ${phaseLabel(event.phase)} · origen ${coordinates}`;
   }
   return "Alineación inicial";
+}
+
+function phaseLabel(phase: string): string {
+  return PHASE_OPTIONS.find((option) => option.value === phase)?.label ?? "Sin fase";
 }
 
 export default function DirectoPage({ params }: { params: { id: string } }) {
@@ -66,16 +83,23 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const [mode, setMode] = useState<InteractionMode>("threat");
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [origin, setOrigin] = useState<NormalizedCoordinates | null>(null);
+  const [phase, setPhase] = useState<LiveThreatPhase | null>(null);
 
   useEffect(() => {
     ensureMatch(matchId);
     setMode("threat");
     setSelectedPlayerId(null);
     setOrigin(null);
+    setPhase(null);
   }, [ensureMatch, matchId]);
 
   const replay = useMemo(
-    () => (session ? replayMatch(session.players, session.events) : null),
+    () =>
+      session
+        ? replayMatch(session.players, session.events, {
+            currentClock: { period: session.period, minute: session.minute },
+          })
+        : null,
     [session],
   );
 
@@ -101,6 +125,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     clearError(matchId);
     setSelectedPlayerId((current) => (current === playerId ? null : playerId));
     setOrigin(null);
+    setPhase(null);
   };
 
   const handleCourtClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -111,15 +136,17 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     const x = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
     const y = Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height));
     setOrigin({ x, y });
+    setPhase(null);
   };
 
   const finishThreat = (outcome: LiveThreatOutcome) => {
-    if (!selectedPlayerId || !origin) {
+    if (!selectedPlayerId || !origin || !phase) {
       return;
     }
-    recordThreat(matchId, { playerId: selectedPlayerId, origin, outcome });
+    recordThreat(matchId, { playerId: selectedPlayerId, origin, outcome, phase });
     setSelectedPlayerId(null);
     setOrigin(null);
+    setPhase(null);
   };
 
   const setInteractionMode = (nextMode: InteractionMode) => {
@@ -127,6 +154,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     setMode(nextMode);
     setSelectedPlayerId(null);
     setOrigin(null);
+    setPhase(null);
   };
 
   return (
@@ -140,6 +168,21 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`rounded-lg px-3 py-2 text-xs font-semibold ${
+              session.persistenceStatus === "saved"
+                ? "bg-emerald-950 text-emerald-300"
+                : session.persistenceStatus === "error"
+                  ? "bg-red-950 text-red-300"
+                  : "bg-gray-900 text-gray-400"
+            }`}
+          >
+            {session.persistenceStatus === "saved"
+              ? "● Guardado local"
+              : session.persistenceStatus === "error"
+                ? "● Error de guardado"
+                : "○ Preparando guardado"}
+          </span>
           <span className="rounded-lg bg-gray-900 px-3 py-2 text-sm text-gray-300">
             Parte {session.period}
           </span>
@@ -193,7 +236,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 {mode === "threat"
                   ? selectedPlayerId
                     ? origin
-                      ? "3. Selecciona el resultado de la amenaza"
+                      ? phase
+                        ? "4. Selecciona el resultado de la amenaza"
+                        : "3. Selecciona la fase o contexto"
                       : "2. Marca en la pista el origen del disparo"
                     : "1. Selecciona al jugador que realiza la amenaza"
                   : selectedPlayerId
@@ -232,14 +277,12 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             }`}
             aria-label="Pista de fútbol sala. Selecciona el origen del disparo."
           >
-            <div className="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-white/70" />
-            <div className="pointer-events-none absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/70" />
-            <div className="pointer-events-none absolute inset-y-[24%] left-0 w-[14%] rounded-r-[50%] border-2 border-l-0 border-white/70" />
-            <div className="pointer-events-none absolute inset-y-[24%] right-0 w-[14%] rounded-l-[50%] border-2 border-r-0 border-white/70" />
+            <FutsalCourtMarkings />
 
             {playersOnCourt.map((player, index) => {
               const position = PLAYER_POSITIONS[index] ?? PLAYER_POSITIONS[0];
               const selected = selectedPlayerId === player.id;
+              const minutes = replay.playerMinutes[player.id];
               return (
                 <button
                   key={player.id}
@@ -248,7 +291,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                     event.stopPropagation();
                     selectPlayer(player.id);
                   }}
-                  className={`absolute z-10 flex min-h-16 w-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-2xl border-2 px-2 py-2 text-center shadow-lg transition-all sm:w-28 ${
+                  className={`absolute z-10 flex min-h-20 w-28 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-2xl border-2 px-2 py-2 text-center shadow-lg transition-all sm:w-32 ${
                     selected
                       ? "scale-110 border-yellow-200 bg-yellow-500 text-gray-950 ring-4 ring-yellow-300/30"
                       : "border-white/60 bg-gray-900/90 hover:bg-gray-800"
@@ -258,6 +301,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 >
                   <span className="text-lg font-black">#{player.number}</span>
                   <span className="max-w-full truncate text-xs font-semibold">{player.name}</span>
+                  <span className={`mt-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${selected ? "bg-black/15" : "bg-emerald-950 text-emerald-300"}`}>
+                    {minutes.currentStintMinutes}&apos; activo · {minutes.totalMinutes}&apos; total
+                  </span>
                 </button>
               );
             })}
@@ -271,12 +317,43 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             )}
           </div>
 
+          <div className="mt-3 rounded-xl bg-gray-950 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">
+                Fase / contexto
+              </h3>
+              {phase && (
+                <span className="text-xs font-semibold text-amber-300">
+                  {phaseLabel(phase)}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {PHASE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={mode !== "threat" || !selectedPlayerId || !origin}
+                  onClick={() => setPhase(option.value)}
+                  className={`rounded-lg border px-2 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-600 ${
+                    phase === option.value
+                      ? "border-amber-300 bg-amber-500 text-gray-950"
+                      : "border-gray-700 bg-gray-800 hover:border-amber-500"
+                  }`}
+                  aria-pressed={phase === option.value}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="mt-3 grid grid-cols-3 gap-2">
             {OUTCOME_OPTIONS.map((option) => (
               <button
                 key={option.value}
                 type="button"
-                disabled={mode !== "threat" || !selectedPlayerId || !origin}
+                disabled={mode !== "threat" || !selectedPlayerId || !origin || !phase}
                 onClick={() => finishThreat(option.value)}
                 className={`rounded-xl px-2 py-3 text-sm font-bold shadow-md transition-colors disabled:cursor-not-allowed disabled:bg-gray-800 disabled:text-gray-600 ${option.className}`}
               >
@@ -306,6 +383,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 >
                   <span className="block text-lg">#{player.number}</span>
                   <span className="text-sm">{player.name}</span>
+                  <span className="mt-1 block text-xs font-bold text-emerald-300">
+                    {replay.playerMinutes[player.id].totalMinutes}&apos; total
+                  </span>
                 </button>
               ))}
             </div>

@@ -13,8 +13,14 @@ import {
   restoreEvent,
   softDeleteEvent,
 } from "./matchEngine";
+import {
+  loadMatchSession,
+  LocalStorageAdapter,
+  matchStorageKey,
+  saveMatchSession,
+} from "./matchPersistence";
 import { DEMO_PLAYERS, useMatchStore } from "../store/useMatchStore";
-import { MatchEvent, Player } from "../types";
+import { MatchEvent, MatchSession, Player } from "../types";
 
 const players: Player[] = DEMO_PLAYERS.map((player) => ({ ...player }));
 
@@ -29,6 +35,18 @@ function initialLineup(matchId = "match-a"): MatchEvent[] {
       now: 1,
     }),
   ];
+}
+
+class MemoryStorage implements LocalStorageAdapter {
+  private readonly values = new Map<string, string>();
+
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null;
+  }
+
+  setItem(key: string, value: string): void {
+    this.values.set(key, value);
+  }
 }
 
 test("replay reconstruye pista, banquillo y alineación de cada amenaza", () => {
@@ -56,6 +74,7 @@ test("replay reconstruye pista, banquillo y alineación de cada amenaza", () => 
       playerId: "p6",
       origin: { x: 0.42, y: 0.71 },
       outcome: "GOL",
+      phase: "POSITIONAL",
       now: 3,
     }),
   );
@@ -119,6 +138,7 @@ test("el orden es inequívoco dentro de periodo y minuto", () => {
     side: "AGAINST",
     origin: { x: 0.5, y: 0.5 },
     outcome: "PARADA",
+    phase: "TRANSITION",
     now: 2,
   });
   const second = createLiveThreatEvent({
@@ -128,6 +148,7 @@ test("el orden es inequívoco dentro de periodo y minuto", () => {
     side: "AGAINST",
     origin: { x: 0.7, y: 0.4 },
     outcome: "FUERA",
+    phase: "POSITIONAL",
     now: 3,
   });
 
@@ -159,6 +180,7 @@ test("reordenar eventos recalcula la alineación desde el nuevo orden", () => {
       side: "AGAINST",
       origin: { x: 0.8, y: 0.5 },
       outcome: "PARADA",
+      phase: "TRANSITION",
       now: 3,
     }),
   );
@@ -190,6 +212,7 @@ test("edición, soft delete y restauración conservan una cronología válida", 
       playerId: "p1",
       origin: { x: 0.2, y: 0.3 },
       outcome: "FUERA",
+      phase: "POSITIONAL",
       now: 2,
     }),
   );
@@ -222,6 +245,7 @@ test("BLOQUEADO no puede introducirse en un evento de captura V1", () => {
       playerId: "p1",
       origin: { x: 0.5, y: 0.5 },
       outcome: "PARADA",
+      phase: "SET_PIECE_FREE_KICK",
       now: 2,
     }),
   );
@@ -238,6 +262,106 @@ test("BLOQUEADO no puede introducirse en un evento de captura V1", () => {
   );
 });
 
+test("UNSPECIFIED queda reservado a eventos importados", () => {
+  assert.throws(
+    () =>
+      createLiveThreatEvent({
+        id: "threat-unspecified",
+        matchId: "match-a",
+        position: { period: 1, minute: 2, order: 1 },
+        side: "FOR",
+        playerId: "p1",
+        origin: { x: 0.5, y: 0.5 },
+        outcome: "GOL",
+        phase: "UNSPECIFIED" as never,
+        now: 2,
+      }),
+    /requiere una fase válida/,
+  );
+});
+
+test("replay calcula tramo activo y total acumulado tras varias sustituciones", () => {
+  let events = initialLineup();
+  events = appendEvent(
+    players,
+    events,
+    createSubstitutionEvent({
+      id: "sub-out",
+      matchId: "match-a",
+      position: { period: 1, minute: 5, order: 1 },
+      playerOutId: "p1",
+      playerInId: "p6",
+      now: 2,
+    }),
+  );
+  events = appendEvent(
+    players,
+    events,
+    createSubstitutionEvent({
+      id: "sub-back",
+      matchId: "match-a",
+      position: { period: 1, minute: 10, order: 1 },
+      playerOutId: "p6",
+      playerInId: "p1",
+      now: 3,
+    }),
+  );
+
+  const result = replayMatch(players, events, {
+    currentClock: { period: 1, minute: 12 },
+  });
+
+  assert.deepEqual(result.playerMinutes.p1, {
+    totalMinutes: 7,
+    currentStintMinutes: 2,
+    onCourt: true,
+  });
+  assert.deepEqual(result.playerMinutes.p6, {
+    totalMinutes: 5,
+    currentStintMinutes: 0,
+    onCourt: false,
+  });
+  assert.equal(result.playerMinutes.p2.totalMinutes, 12);
+  assert.equal(result.playerMinutes.p2.currentStintMinutes, 12);
+});
+
+test("persistencia local conserva sesión e historial y aísla cada matchId", () => {
+  const storage = new MemoryStorage();
+  const eventsA = initialLineup("match-a");
+  const sessionA: MatchSession = {
+    matchId: "match-a",
+    players,
+    period: 1,
+    minute: 8,
+    events: eventsA,
+    past: [eventsA],
+    future: [],
+    lastError: null,
+    persistenceStatus: "idle",
+    lastSavedAt: null,
+  };
+  const sessionB: MatchSession = {
+    ...sessionA,
+    matchId: "match-b",
+    minute: 3,
+    events: initialLineup("match-b"),
+    past: [],
+  };
+
+  assert.equal(saveMatchSession(sessionA, storage, 100).ok, true);
+  assert.equal(saveMatchSession(sessionB, storage, 200).ok, true);
+  assert.notEqual(matchStorageKey("match-a"), matchStorageKey("match-b"));
+
+  const restoredA = loadMatchSession("match-a", storage);
+  const restoredB = loadMatchSession("match-b", storage);
+  assert.equal(restoredA?.minute, 8);
+  assert.equal(restoredA?.events[0].matchId, "match-a");
+  assert.equal(restoredA?.past.length, 1);
+  assert.equal(restoredA?.lastSavedAt, 100);
+  assert.equal(restoredB?.minute, 3);
+  assert.equal(restoredB?.events[0].matchId, "match-b");
+});
+
 test("Zustand aísla partidos y soporta undo/redo", () => {
   useMatchStore.setState({ matches: {} });
   const actions = useMatchStore.getState();
@@ -247,6 +371,7 @@ test("Zustand aísla partidos y soporta undo/redo", () => {
     playerId: "p1",
     origin: { x: 0.4, y: 0.6 },
     outcome: "GOL",
+    phase: "POSITIONAL",
   });
 
   let state = useMatchStore.getState();
