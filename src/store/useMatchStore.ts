@@ -1,76 +1,316 @@
-import { create } from 'zustand';
-import { MatchEvent } from '../types';
+import { create } from "zustand";
 
-// Tipos temporales para nuestros jugadores (hasta que los traigamos de Firebase)
-export interface Player {
-  id: string;
-  name: string;
-  number: number;
+import {
+  appendEvent,
+  createLineupInitializedEvent,
+  createLiveThreatEvent,
+  createSubstitutionEvent,
+  editEvent as editChronologyEvent,
+  EventEditChanges,
+  getNextOrder,
+  reorderEvent as reorderChronologyEvent,
+  restoreEvent as restoreChronologyEvent,
+  softDeleteEvent as softDeleteChronologyEvent,
+} from "../lib/matchEngine";
+import {
+  EventPosition,
+  LiveThreatOutcome,
+  MatchEvent,
+  NormalizedCoordinates,
+  Player,
+} from "../types";
+
+const HISTORY_LIMIT = 100;
+
+export const DEMO_PLAYERS: Player[] = [
+  { id: "p1", name: "Mario", number: 10, dominantFoot: "RIGHT" },
+  { id: "p2", name: "Pablo", number: 7, dominantFoot: "LEFT" },
+  { id: "p3", name: "Lucas", number: 4, dominantFoot: "RIGHT" },
+  { id: "p4", name: "Hugo", number: 5, dominantFoot: "RIGHT" },
+  {
+    id: "p5",
+    name: "Dani",
+    number: 1,
+    position: "PORTERO",
+    dominantFoot: "RIGHT",
+  },
+  { id: "p6", name: "Álex", number: 11, dominantFoot: "RIGHT" },
+  { id: "p7", name: "Marcos", number: 8, dominantFoot: "LEFT" },
+  { id: "p8", name: "Leo", number: 9, dominantFoot: "RIGHT" },
+];
+
+export interface MatchSession {
+  matchId: string;
+  players: Player[];
+  period: number;
+  minute: number;
+  events: MatchEvent[];
+  past: MatchEvent[][];
+  future: MatchEvent[][];
+  lastError: string | null;
+}
+
+interface RecordThreatInput {
+  playerId: string;
+  origin: NormalizedCoordinates;
+  outcome: LiveThreatOutcome;
 }
 
 interface MatchState {
-  minute: number;
-  events: MatchEvent[];
-  playersOnCourt: Player[];
-  bench: Player[];
-  addEvent: (event: Omit<MatchEvent, 'id' | 'timestamp'>) => void;
-  incrementMinute: () => void;
-  swapPlayer: (outId: string, inId: string) => void;
+  matches: Record<string, MatchSession>;
+  ensureMatch: (matchId: string) => void;
+  incrementMinute: (matchId: string) => void;
+  setClock: (matchId: string, period: number, minute: number) => void;
+  recordThreat: (matchId: string, input: RecordThreatInput) => void;
+  swapPlayer: (matchId: string, playerOutId: string, playerInId: string) => void;
+  editEvent: (
+    matchId: string,
+    eventId: string,
+    changes: EventEditChanges,
+  ) => void;
+  softDeleteEvent: (matchId: string, eventId: string) => void;
+  restoreEvent: (matchId: string, eventId: string) => void;
+  reorderEvent: (
+    matchId: string,
+    eventId: string,
+    target: EventPosition,
+  ) => void;
+  undo: (matchId: string) => void;
+  redo: (matchId: string) => void;
+  clearError: (matchId: string) => void;
+}
+
+function createSession(matchId: string): MatchSession {
+  const players = DEMO_PLAYERS.map((player) => ({ ...player }));
+  const lineup = createLineupInitializedEvent({
+    matchId,
+    position: { period: 1, minute: 0, order: 1 },
+    squadPlayerIds: players.map((player) => player.id),
+    onCourtPlayerIds: players.slice(0, 5).map((player) => player.id),
+  });
+  return {
+    matchId,
+    players,
+    period: 1,
+    minute: 1,
+    events: [lineup],
+    past: [],
+    future: [],
+    lastError: null,
+  };
+}
+
+function updateSession(
+  state: MatchState,
+  matchId: string,
+  updater: (session: MatchSession) => MatchSession,
+): Pick<MatchState, "matches"> {
+  const current = state.matches[matchId];
+  if (!current) {
+    return { matches: state.matches };
+  }
+  return {
+    matches: {
+      ...state.matches,
+      [matchId]: updater(current),
+    },
+  };
+}
+
+function commitEvents(
+  session: MatchSession,
+  events: MatchEvent[],
+): MatchSession {
+  return {
+    ...session,
+    events,
+    past: [...session.past, session.events].slice(-HISTORY_LIMIT),
+    future: [],
+    lastError: null,
+  };
+}
+
+function command(
+  session: MatchSession,
+  operation: () => MatchEvent[],
+): MatchSession {
+  try {
+    return commitEvents(session, operation());
+  } catch (error) {
+    return {
+      ...session,
+      lastError:
+        error instanceof Error ? error.message : "No se pudo aplicar la acción.",
+    };
+  }
 }
 
 export const useMatchStore = create<MatchState>((set) => ({
-  minute: 1, // Empezamos en el minuto 1
-  events: [],
-  
-  // Estado inicial ficticio para poder maquetar la interfaz
-  playersOnCourt: [
-    { id: 'p1', name: 'Mario', number: 10 },
-    { id: 'p2', name: 'Pablo', number: 7 },
-    { id: 'p3', name: 'Lucas', number: 4 },
-    { id: 'p4', name: 'Hugo', number: 5 },
-    { id: 'p5', name: 'Dani (P)', number: 1 }
-  ],
-  bench: [
-    { id: 'p6', name: 'Alex', number: 11 },
-    { id: 'p7', name: 'Marcos', number: 8 },
-    { id: 'p8', name: 'Leo', number: 9 }
-  ],
-  
-  addEvent: (eventData) => set((state) => ({
-    events: [
-      ...state.events,
-      {
-        ...eventData,
-        id: crypto.randomUUID(),
-        timestamp: Date.now(), // ADR-04: Timestamp en milisegundos para desempatar acciones
+  matches: {},
+
+  ensureMatch: (matchId) =>
+    set((state) => {
+      if (state.matches[matchId]) {
+        return state;
       }
-    ]
-  })),
-  
-  incrementMinute: () => set((state) => ({ minute: state.minute + 1 })),
+      return {
+        matches: {
+          ...state.matches,
+          [matchId]: createSession(matchId),
+        },
+      };
+    }),
 
-  // Función crítica: Intercambia un jugador y guarda el evento en la cronología
-  swapPlayer: (outId, inId) => set((state) => {
-    const playerOut = state.playersOnCourt.find(p => p.id === outId);
-    const playerIn = state.bench.find(p => p.id === inId);
+  incrementMinute: (matchId) =>
+    set((state) =>
+      updateSession(state, matchId, (session) => ({
+        ...session,
+        minute: session.minute + 1,
+      })),
+    ),
 
-    if (!playerOut || !playerIn) return state; // Medida de seguridad
+  setClock: (matchId, period, minute) =>
+    set((state) =>
+      updateSession(state, matchId, (session) => ({
+        ...session,
+        period: Math.max(1, Math.trunc(period)),
+        minute: Math.max(0, Math.trunc(minute)),
+      })),
+    ),
 
-    // Generamos el evento de sustitución para el timeline
-    const substitutionEvent = {
-      id: crypto.randomUUID(),
-      matchId: 'actual', 
-      type: 'substitution' as any, // Forzamos tipo temporalmente para evitar errores estrictos de TS
-      minute: state.minute,
-      timestamp: Date.now(),
-      playerId: outId, // El jugador que sale
-      playerInId: inId // El jugador que entra
-    };
+  recordThreat: (matchId, input) =>
+    set((state) =>
+      updateSession(state, matchId, (session) =>
+        command(session, () => {
+          const event = createLiveThreatEvent({
+            matchId,
+            position: {
+              period: session.period,
+              minute: session.minute,
+              order: getNextOrder(
+                session.events,
+                session.period,
+                session.minute,
+              ),
+            },
+            side: "FOR",
+            playerId: input.playerId,
+            origin: input.origin,
+            outcome: input.outcome,
+          });
+          return appendEvent(session.players, session.events, event);
+        }),
+      ),
+    ),
 
-    return {
-      playersOnCourt: [...state.playersOnCourt.filter(p => p.id !== outId), playerIn],
-      bench: [...state.bench.filter(p => p.id !== inId), playerOut],
-      events: [...state.events, substitutionEvent]
-    };
-  })
+  swapPlayer: (matchId, playerOutId, playerInId) =>
+    set((state) =>
+      updateSession(state, matchId, (session) =>
+        command(session, () => {
+          const event = createSubstitutionEvent({
+            matchId,
+            position: {
+              period: session.period,
+              minute: session.minute,
+              order: getNextOrder(
+                session.events,
+                session.period,
+                session.minute,
+              ),
+            },
+            playerOutId,
+            playerInId,
+          });
+          return appendEvent(session.players, session.events, event);
+        }),
+      ),
+    ),
+
+  editEvent: (matchId, eventId, changes) =>
+    set((state) =>
+      updateSession(state, matchId, (session) =>
+        command(session, () =>
+          editChronologyEvent(
+            session.players,
+            session.events,
+            eventId,
+            changes,
+          ),
+        ),
+      ),
+    ),
+
+  softDeleteEvent: (matchId, eventId) =>
+    set((state) =>
+      updateSession(state, matchId, (session) =>
+        command(session, () =>
+          softDeleteChronologyEvent(session.players, session.events, eventId),
+        ),
+      ),
+    ),
+
+  restoreEvent: (matchId, eventId) =>
+    set((state) =>
+      updateSession(state, matchId, (session) =>
+        command(session, () =>
+          restoreChronologyEvent(session.players, session.events, eventId),
+        ),
+      ),
+    ),
+
+  reorderEvent: (matchId, eventId, target) =>
+    set((state) =>
+      updateSession(state, matchId, (session) =>
+        command(session, () =>
+          reorderChronologyEvent(
+            session.players,
+            session.events,
+            eventId,
+            target,
+          ),
+        ),
+      ),
+    ),
+
+  undo: (matchId) =>
+    set((state) =>
+      updateSession(state, matchId, (session) => {
+        const previous = session.past.at(-1);
+        if (!previous) {
+          return session;
+        }
+        return {
+          ...session,
+          events: previous,
+          past: session.past.slice(0, -1),
+          future: [session.events, ...session.future].slice(0, HISTORY_LIMIT),
+          lastError: null,
+        };
+      }),
+    ),
+
+  redo: (matchId) =>
+    set((state) =>
+      updateSession(state, matchId, (session) => {
+        const [next, ...remaining] = session.future;
+        if (!next) {
+          return session;
+        }
+        return {
+          ...session,
+          events: next,
+          past: [...session.past, session.events].slice(-HISTORY_LIMIT),
+          future: remaining,
+          lastError: null,
+        };
+      }),
+    ),
+
+  clearError: (matchId) =>
+    set((state) =>
+      updateSession(state, matchId, (session) => ({
+        ...session,
+        lastError: null,
+      })),
+    ),
 }));

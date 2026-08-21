@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": false,
+    "incremental": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": ".test-build",
+    "rootDir": "src",
+    "target": "ES2022"
+  },
+  "include": [
+    "src/lib/matchEngine.ts",
+    "src/lib/matchEngine.test.ts",
+    "src/store/useMatchStore.ts",
+    "src/types/index.ts"
+  ]
+}
