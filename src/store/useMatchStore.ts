@@ -53,6 +53,7 @@ interface MatchState {
   matches: Record<string, MatchSession>;
   ensureMatch: (matchId: string) => void;
   incrementMinute: (matchId: string) => void;
+  decrementMinute: (matchId: string) => void;
   setClock: (matchId: string, period: number, minute: number) => void;
   recordThreat: (matchId: string, input: RecordThreatInput) => void;
   swapPlayer: (matchId: string, playerOutId: string, playerInId: string) => void;
@@ -191,6 +192,14 @@ export const useMatchStore = create<MatchState>((set) => ({
       updateAndPersistSession(state, matchId, (session) => ({
         ...session,
         minute: session.minute + 1,
+      })),
+    ),
+
+  decrementMinute: (matchId) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => ({
+        ...session,
+        minute: Math.max(0, session.minute - 1),
       })),
     ),
 

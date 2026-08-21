@@ -21,6 +21,7 @@ export const MAX_ON_COURT = 5;
 
 export interface ReplayOptions {
   currentClock?: Pick<EventPosition, "period" | "minute">;
+  throughClock?: Pick<EventPosition, "period" | "minute">;
   periodDurationMinutes?: number;
 }
 
@@ -250,7 +251,12 @@ export function replayMatch(
   const timeline: ReplayResult["timeline"] = [];
   const issues: ReplayIssue[] = [];
   const activeEvents = sortEvents(events).filter(
-    (candidate) => candidate.deletedAt === null,
+    (candidate) =>
+      candidate.deletedAt === null &&
+      (!options.throughClock ||
+        candidate.period < options.throughClock.period ||
+        (candidate.period === options.throughClock.period &&
+          candidate.minute <= options.throughClock.minute)),
   );
   const matchIds = new Set(activeEvents.map((event) => event.matchId));
   const occupiedPositions = new Set<string>();

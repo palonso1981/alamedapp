@@ -99,6 +99,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const session = useMatchStore((state) => state.matches[matchId]);
   const ensureMatch = useMatchStore((state) => state.ensureMatch);
   const incrementMinute = useMatchStore((state) => state.incrementMinute);
+  const decrementMinute = useMatchStore((state) => state.decrementMinute);
   const recordThreat = useMatchStore((state) => state.recordThreat);
   const swapPlayer = useMatchStore((state) => state.swapPlayer);
   const softDeleteEvent = useMatchStore((state) => state.softDeleteEvent);
@@ -124,12 +125,18 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       session
         ? replayMatch(session.players, session.events, {
             currentClock: { period: session.period, minute: session.minute },
+            throughClock: { period: session.period, minute: session.minute },
           })
         : null,
     [session],
   );
 
-  if (!session || !replay) {
+  const chronologyReplay = useMemo(
+    () => (session ? replayMatch(session.players, session.events) : null),
+    [session],
+  );
+
+  if (!session || !replay || !chronologyReplay) {
     return (
       <main className="grid min-h-screen place-items-center bg-gray-950 text-white">
         Preparando el partido…
@@ -143,7 +150,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const bench = replay.benchPlayerIds
     .map((id) => session.players.find((player) => player.id === id))
     .filter((player): player is Player => Boolean(player));
-  const recentEvents = replay.timeline
+  const recentEvents = chronologyReplay.timeline
     .filter((entry) => entry.event.type !== "lineup_initialized")
     .reverse();
 
@@ -215,13 +222,26 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           <span className="min-w-16 text-center font-mono text-3xl text-green-400">
             {session.minute}&apos;
           </span>
-          <button
-            type="button"
-            onClick={() => incrementMinute(matchId)}
-            className="rounded-lg bg-gray-700 px-3 py-2 text-sm transition-colors hover:bg-gray-600"
-          >
-            +1 min
-          </button>
+          <span className="flex overflow-hidden rounded-lg border border-gray-700 bg-gray-800">
+            <button
+              type="button"
+              onClick={() => decrementMinute(matchId)}
+              disabled={session.minute === 0}
+              className="min-w-10 px-3 py-2 text-lg font-bold leading-none transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:text-gray-600"
+              aria-label="Restar un minuto"
+            >
+              −1
+            </button>
+            <span className="w-px bg-gray-700" aria-hidden="true" />
+            <button
+              type="button"
+              onClick={() => incrementMinute(matchId)}
+              className="min-w-10 px-3 py-2 text-lg font-bold leading-none transition-colors hover:bg-gray-700"
+              aria-label="Sumar un minuto"
+            >
+              +1
+            </button>
+          </span>
           <button
             type="button"
             onClick={() => undo(matchId)}
@@ -329,10 +349,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   <span className="mt-1 max-w-full truncate text-xs font-semibold">{player.name}</span>
                   <span className="mt-1 flex items-baseline gap-1.5" aria-label={`${minutes.currentStintMinutes} minutos en el tramo actual; ${minutes.totalMinutes} minutos acumulados`}>
                     <span className={`text-base font-black ${selected ? "text-slate-950" : "text-cyan-300"}`} title="Tramo actual">
-                      ◷ {minutes.currentStintMinutes}&apos;
+                      {minutes.currentStintMinutes}&apos;
                     </span>
                     <span className={`text-[10px] font-semibold ${selected ? "text-slate-700" : "text-slate-400"}`} title="Acumulado">
-                      (Σ {minutes.totalMinutes}&apos;)
+                      ({minutes.totalMinutes}&apos;)
                     </span>
                   </span>
                 </button>
@@ -419,7 +439,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                     <span>
                       <span className="block text-sm">{player.name}</span>
                       <span className="mt-0.5 block text-xs font-bold text-cyan-300" aria-label={`${replay.playerMinutes[player.id].totalMinutes} minutos acumulados`} title="Acumulado">
-                        Σ {replay.playerMinutes[player.id].totalMinutes}&apos;
+                        {replay.playerMinutes[player.id].totalMinutes}&apos;
                       </span>
                     </span>
                   </span>

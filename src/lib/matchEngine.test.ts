@@ -353,6 +353,34 @@ test("el minuto oficial inicial muestra cero y una entrada en 5 suma tres en 8",
   assert.equal(atEight.playerMinutes.p1.totalMinutes, 4);
 });
 
+test("replay puede reconstruir la alineación en un minuto anterior", () => {
+  let events = initialLineup();
+  events = appendEvent(
+    players,
+    events,
+    createSubstitutionEvent({
+      id: "future-substitution",
+      matchId: "match-a",
+      position: { period: 1, minute: 8, order: 1 },
+      playerOutId: "p1",
+      playerInId: "p6",
+      now: 2,
+    }),
+  );
+
+  const atFive = replayMatch(players, events, {
+    currentClock: { period: 1, minute: 5 },
+    throughClock: { period: 1, minute: 5 },
+  });
+  assert.ok(atFive.onCourtPlayerIds.includes("p1"));
+  assert.ok(!atFive.onCourtPlayerIds.includes("p6"));
+  assert.equal(atFive.timeline.length, 1);
+
+  const complete = replayMatch(players, events);
+  assert.ok(complete.onCourtPlayerIds.includes("p6"));
+  assert.equal(complete.timeline.length, 2);
+});
+
 test("persistencia local conserva sesión e historial y aísla cada matchId", () => {
   const storage = new MemoryStorage();
   const eventsA = initialLineup("match-a");
@@ -414,4 +442,51 @@ test("Zustand aísla partidos y soporta undo/redo", () => {
   state.redo("match-a");
   state = useMatchStore.getState();
   assert.equal(state.matches["match-a"].events.length, 2);
+});
+
+test("el reloj retrocede hasta cero sin alterar eventos y permite inserción retroactiva", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "clock-backward";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  actions.setClock(matchId, 1, 8);
+  actions.recordThreat(matchId, {
+    playerId: "p1",
+    origin: { x: 0.7, y: 0.5 },
+    outcome: "FUERA",
+    phase: "POSITIONAL",
+  });
+  const eventAtEight = useMatchStore
+    .getState()
+    .matches[matchId].events.find((event) => event.minute === 8);
+  assert.ok(eventAtEight);
+
+  actions.decrementMinute(matchId);
+  actions.decrementMinute(matchId);
+  actions.decrementMinute(matchId);
+  actions.recordThreat(matchId, {
+    playerId: "p1",
+    origin: { x: 0.4, y: 0.3 },
+    outcome: "GOL",
+    phase: "TRANSITION",
+  });
+
+  let session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.minute, 5);
+  assert.equal(session.events.length, 3);
+  assert.equal(session.events[1].minute, 5);
+  assert.equal(session.events[2].id, eventAtEight.id);
+  assert.equal(session.events[2].minute, 8);
+
+  for (let index = 0; index < 8; index += 1) {
+    actions.decrementMinute(matchId);
+  }
+  session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.minute, 0);
+  assert.equal(session.events.length, 3);
+
+  actions.incrementMinute(matchId);
+  session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.minute, 1);
+  assert.equal(session.events.length, 3);
 });
