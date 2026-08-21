@@ -3,15 +3,20 @@
 import { MouseEvent, useEffect, useMemo, useState } from "react";
 
 import { FutsalCourtMarkings } from "../../../../components/court/FutsalCourtMarkings";
+import { DisciplineControls } from "../../../../components/match/DisciplineControls";
+import { MatchScoreboard } from "../../../../components/match/MatchScoreboard";
+import { RecentEventsPanel } from "../../../../components/match/RecentEventsPanel";
 import { PlayerAvatar } from "../../../../components/player/PlayerAvatar";
-import { replayMatch } from "../../../../lib/matchEngine";
+import { phaseLabel } from "../../../../lib/eventPresentation";
+import { replayMatch, sortEvents } from "../../../../lib/matchEngine";
 import { useMatchStore } from "../../../../store/useMatchStore";
 import {
+  INFERIORITY_SLOT_ID,
   LiveThreatOutcome,
   LiveThreatPhase,
   NormalizedCoordinates,
   Player,
-  TimelineEntry,
+  ThreatSide,
 } from "../../../../types";
 
 const PLAYER_POSITIONS = [
@@ -70,30 +75,6 @@ const PHASE_TONES: Record<string, { idle: string; active: string }> = {
 
 type InteractionMode = "threat" | "substitution";
 
-function playerName(players: Player[], playerId?: string): string {
-  if (!playerId) {
-    return "Rival";
-  }
-  const player = players.find((candidate) => candidate.id === playerId);
-  return player ? `${player.number}. ${player.name}` : playerId;
-}
-
-function eventDescription(entry: TimelineEntry, players: Player[]): string {
-  const { event } = entry;
-  if (event.type === "substitution") {
-    return `Cambio: sale ${playerName(players, event.playerOutId)} · entra ${playerName(players, event.playerInId)}`;
-  }
-  if (event.type === "threat_recorded") {
-    const coordinates = `${Math.round(event.origin.x * 100)}%, ${Math.round(event.origin.y * 100)}%`;
-    return `${event.outcome}: ${playerName(players, event.playerId)} · ${phaseLabel(event.phase)} · origen ${coordinates}`;
-  }
-  return "Alineación inicial";
-}
-
-function phaseLabel(phase: string): string {
-  return PHASE_OPTIONS.find((option) => option.value === phase)?.label ?? "Sin fase";
-}
-
 export default function DirectoPage({ params }: { params: { id: string } }) {
   const matchId = params.id;
   const session = useMatchStore((state) => state.matches[matchId]);
@@ -101,8 +82,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const incrementMinute = useMatchStore((state) => state.incrementMinute);
   const decrementMinute = useMatchStore((state) => state.decrementMinute);
   const recordThreat = useMatchStore((state) => state.recordThreat);
+  const toggleGameState = useMatchStore((state) => state.toggleGameState);
+  const recordFoul = useMatchStore((state) => state.recordFoul);
+  const recordCard = useMatchStore((state) => state.recordCard);
   const swapPlayer = useMatchStore((state) => state.swapPlayer);
   const softDeleteEvent = useMatchStore((state) => state.softDeleteEvent);
+  const restoreEvent = useMatchStore((state) => state.restoreEvent);
+  const editAndReorderEvent = useMatchStore(
+    (state) => state.editAndReorderEvent,
+  );
   const undo = useMatchStore((state) => state.undo);
   const redo = useMatchStore((state) => state.redo);
   const clearError = useMatchStore((state) => state.clearError);
@@ -111,6 +99,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [origin, setOrigin] = useState<NormalizedCoordinates | null>(null);
   const [phase, setPhase] = useState<LiveThreatPhase | null>(null);
+  const [threatSide, setThreatSide] = useState<ThreatSide>("FOR");
 
   useEffect(() => {
     ensureMatch(matchId);
@@ -118,6 +107,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     setSelectedPlayerId(null);
     setOrigin(null);
     setPhase(null);
+    setThreatSide("FOR");
   }, [ensureMatch, matchId]);
 
   const replay = useMemo(
@@ -144,42 +134,66 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     );
   }
 
-  const playersOnCourt = replay.onCourtPlayerIds
-    .map((id) => session.players.find((player) => player.id === id))
-    .filter((player): player is Player => Boolean(player));
   const bench = replay.benchPlayerIds
     .map((id) => session.players.find((player) => player.id === id))
     .filter((player): player is Player => Boolean(player));
-  const recentEvents = chronologyReplay.timeline
-    .filter((entry) => entry.event.type !== "lineup_initialized")
-    .reverse();
+  const recentEvents = sortEvents(session.events)
+    .filter((event) => event.type !== "lineup_initialized")
+    .reverse()
+    .slice(0, 5);
 
   const selectPlayer = (playerId: string) => {
     clearError(matchId);
     setSelectedPlayerId((current) => (current === playerId ? null : playerId));
     setOrigin(null);
-    setPhase(null);
+    setPhase(
+      replay.flyingGoalkeeperActive ? "FLYING_GOALKEEPER" : null,
+    );
   };
 
   const handleCourtClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (mode !== "threat" || !selectedPlayerId) {
+    if (
+      mode !== "threat" ||
+      (threatSide === "FOR" && !selectedPlayerId)
+    ) {
       return;
     }
     const bounds = event.currentTarget.getBoundingClientRect();
     const x = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
     const y = Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height));
     setOrigin({ x, y });
-    setPhase(null);
+    setPhase(
+      replay.flyingGoalkeeperActive ? "FLYING_GOALKEEPER" : null,
+    );
   };
 
   const finishThreat = (outcome: LiveThreatOutcome) => {
-    if (!selectedPlayerId || !origin || !phase) {
+    if (
+      (threatSide === "FOR" && !selectedPlayerId) ||
+      !origin ||
+      !phase
+    ) {
       return;
     }
-    recordThreat(matchId, { playerId: selectedPlayerId, origin, outcome, phase });
+    recordThreat(matchId, {
+      side: threatSide,
+      playerId: threatSide === "FOR" ? selectedPlayerId ?? undefined : undefined,
+      origin,
+      outcome,
+      phase,
+    });
     setSelectedPlayerId(null);
     setOrigin(null);
     setPhase(null);
+  };
+
+  const setThreatTeam = (side: ThreatSide) => {
+    setThreatSide(side);
+    setSelectedPlayerId(null);
+    setOrigin(null);
+    setPhase(
+      replay.flyingGoalkeeperActive ? "FLYING_GOALKEEPER" : null,
+    );
   };
 
   const setInteractionMode = (nextMode: InteractionMode) => {
@@ -199,6 +213,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           </p>
           <h1 className="text-xl font-bold">Directo: CD Alameda</h1>
         </div>
+
+        <MatchScoreboard score={chronologyReplay.score} />
 
         <div className="flex flex-wrap items-center gap-2">
           <span
@@ -261,6 +277,42 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         </div>
       </header>
 
+      <div className="mx-auto mb-4 grid max-w-7xl grid-cols-2 gap-2 sm:grid-cols-3">
+        <button
+          type="button"
+          onClick={() => toggleGameState(matchId, "SUPERIORITY")}
+          className={`rounded-xl border-2 px-3 py-3 text-sm font-black transition-all ${
+            replay.superiorityActive
+              ? "animate-pulse border-amber-200 bg-amber-400 text-slate-950 shadow-[0_0_24px_rgba(251,191,36,0.35)]"
+              : "border-gray-800 bg-gray-900 text-gray-500"
+          }`}
+          aria-pressed={replay.superiorityActive}
+        >
+          {replay.superiorityActive ? "⚡ SUPERIORIDAD ACTIVA" : "⚡ Superioridad"}
+        </button>
+        <button
+          type="button"
+          onClick={() => toggleGameState(matchId, "FLYING_GOALKEEPER")}
+          className={`rounded-xl border-2 px-3 py-3 text-sm font-black transition-all ${
+            replay.flyingGoalkeeperActive
+              ? "border-rose-300 bg-rose-600 text-white"
+              : "border-gray-800 bg-gray-900 text-gray-500"
+          }`}
+          aria-pressed={replay.flyingGoalkeeperActive}
+        >
+          ◇⁺ {replay.flyingGoalkeeperActive ? "P-J ACTIVO" : "Portero-jugador"}
+        </button>
+        <div
+          className={`col-span-2 rounded-xl border-2 px-3 py-3 text-center text-sm font-black sm:col-span-1 ${
+            replay.inferiorityActive
+              ? "border-red-300 bg-red-950 text-red-200"
+              : "border-gray-900 bg-gray-950 text-gray-700"
+          }`}
+        >
+          {replay.inferiorityActive ? "▼ INFERIORIDAD" : "5v5"}
+        </div>
+      </div>
+
       {session.lastError && (
         <div
           role="alert"
@@ -280,19 +332,42 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               <h2 className="font-bold">Pista interactiva</h2>
               <p className="text-sm text-gray-400">
                 {mode === "threat"
-                  ? selectedPlayerId
+                  ? threatSide === "AGAINST" || selectedPlayerId
                     ? origin
                       ? phase
                         ? "4. Selecciona el resultado de la amenaza"
                         : "3. Selecciona la fase o contexto"
                       : "2. Marca en la pista el origen del disparo"
-                    : "1. Selecciona al jugador que realiza la amenaza"
+                    : "1. Toca al jugador"
                   : selectedPlayerId
                     ? "Selecciona en el banquillo al jugador que entra"
                     : "Selecciona al jugador que sale"}
               </p>
             </div>
-            <div className="flex rounded-xl bg-gray-950 p-1">
+            <div className="flex flex-wrap justify-end gap-2">
+              {mode === "threat" && (
+                <div className="flex rounded-xl bg-gray-950 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setThreatTeam("FOR")}
+                    className={`rounded-lg px-3 py-2 text-xs font-bold ${
+                      threatSide === "FOR" ? "bg-cyan-600" : "text-gray-500"
+                    }`}
+                  >
+                    ↑ CDA
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setThreatTeam("AGAINST")}
+                    className={`rounded-lg px-3 py-2 text-xs font-bold ${
+                      threatSide === "AGAINST" ? "bg-rose-600" : "text-gray-500"
+                    }`}
+                  >
+                    ↓ RIV
+                  </button>
+                </div>
+              )}
+              <div className="flex rounded-xl bg-gray-950 p-1">
               <button
                 type="button"
                 onClick={() => setInteractionMode("threat")}
@@ -311,13 +386,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               >
                 Cambio
               </button>
+              </div>
             </div>
           </div>
 
           <div
             onClick={handleCourtClick}
             className={`relative min-h-[360px] overflow-hidden rounded-2xl border-4 border-white/80 bg-[#075a9c] sm:min-h-[440px] ${
-              mode === "threat" && selectedPlayerId
+              mode === "threat" &&
+              (threatSide === "AGAINST" || selectedPlayerId)
                 ? "cursor-crosshair"
                 : "cursor-default"
             }`}
@@ -325,8 +402,42 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           >
             <FutsalCourtMarkings />
 
-            {playersOnCourt.map((player, index) => {
+            {replay.onCourtPlayerIds.map((slotId, index) => {
               const position = PLAYER_POSITIONS[index] ?? PLAYER_POSITIONS[0];
+              if (slotId === INFERIORITY_SLOT_ID) {
+                const selected = selectedPlayerId === slotId;
+                return (
+                  <button
+                    key={slotId}
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (mode === "substitution") {
+                        selectPlayer(slotId);
+                      }
+                    }}
+                    className={`absolute z-10 flex min-h-24 w-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-2xl border-2 border-dashed px-2 py-2 text-center shadow-lg sm:w-28 ${
+                      selected
+                        ? "scale-110 border-white bg-red-500 text-white"
+                        : "border-red-300 bg-red-950/90 text-red-200"
+                    }`}
+                    style={position}
+                    aria-pressed={selected}
+                    aria-label="Plaza INFERIORIDAD"
+                  >
+                    <span className="text-3xl" aria-hidden="true">▼</span>
+                    <span className="mt-1 text-[10px] font-black tracking-wider">
+                      INFERIORIDAD
+                    </span>
+                  </button>
+                );
+              }
+              const player = session.players.find(
+                (candidate) => candidate.id === slotId,
+              );
+              if (!player) {
+                return null;
+              }
               const selected = selectedPlayerId === player.id;
               const minutes = replay.playerMinutes[player.id];
               return (
@@ -335,7 +446,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   type="button"
                   onClick={(event) => {
                     event.stopPropagation();
-                    selectPlayer(player.id);
+                    if (mode === "substitution" || threatSide === "FOR") {
+                      selectPlayer(player.id);
+                    }
                   }}
                   className={`absolute z-10 flex min-h-24 w-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-2xl border-2 px-2 py-2 text-center shadow-lg transition-all sm:w-28 ${
                     selected
@@ -383,7 +496,11 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 <button
                   key={option.value}
                   type="button"
-                  disabled={mode !== "threat" || !selectedPlayerId || !origin}
+                  disabled={
+                    mode !== "threat" ||
+                    (threatSide === "FOR" && !selectedPlayerId) ||
+                    !origin
+                  }
                   onClick={() => setPhase(option.value)}
                   title={option.label}
                   aria-label={option.label}
@@ -406,7 +523,12 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               <button
                 key={option.value}
                 type="button"
-                disabled={mode !== "threat" || !selectedPlayerId || !origin || !phase}
+                disabled={
+                  mode !== "threat" ||
+                  (threatSide === "FOR" && !selectedPlayerId) ||
+                  !origin ||
+                  !phase
+                }
                 onClick={() => finishThreat(option.value)}
                 className={`rounded-xl px-2 py-3 text-sm font-bold shadow-md transition-colors disabled:cursor-not-allowed disabled:bg-gray-800 disabled:text-gray-600 ${option.className}`}
               >
@@ -447,50 +569,29 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               ))}
             </div>
           </div>
+
+          <DisciplineControls
+            players={session.players}
+            onCourtPlayerIds={replay.onCourtPlayerIds}
+            dismissedPlayerIds={replay.dismissedPlayerIds}
+            discipline={chronologyReplay.discipline}
+            onFoul={(side) => recordFoul(matchId, side)}
+            onCard={(side, color, playerId) =>
+              recordCard(matchId, side, color, playerId)
+            }
+          />
         </section>
 
-        <aside className="flex min-h-[320px] flex-col rounded-2xl bg-gray-900 p-4 shadow-xl lg:max-h-[720px]">
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <h2 className="font-bold">Cronología</h2>
-              <p className="text-xs text-gray-500">Orden total y alineación reconstruida</p>
-            </div>
-            <span className="rounded-full bg-gray-800 px-2 py-1 text-xs text-gray-400">
-              {recentEvents.length} eventos
-            </span>
-          </div>
-
-          <div className="flex-1 space-y-2 overflow-y-auto pr-1">
-            {recentEvents.length === 0 && (
-              <div className="rounded-xl border border-dashed border-gray-700 p-5 text-center text-sm text-gray-500">
-                Las amenazas y cambios aparecerán aquí inmediatamente.
-              </div>
-            )}
-            {recentEvents.map((entry) => (
-              <article key={entry.event.id} className="rounded-xl bg-gray-800 p-3 text-sm">
-                <div className="mb-1 flex items-start justify-between gap-2">
-                  <span className="font-mono font-bold text-green-400">
-                    P{entry.event.period} · {entry.event.minute}&apos; · #{entry.event.order}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => softDeleteEvent(matchId, entry.event.id)}
-                    className="text-xs text-gray-500 hover:text-red-300"
-                    aria-label={`Eliminar ${eventDescription(entry, session.players)}`}
-                  >
-                    Eliminar
-                  </button>
-                </div>
-                <p className="font-semibold text-gray-100">
-                  {eventDescription(entry, session.players)}
-                </p>
-                <p className="mt-1 text-xs text-gray-500">
-                  En pista: {entry.lineupPlayerIds.map((id) => playerName(session.players, id)).join(" · ")}
-                </p>
-              </article>
-            ))}
-          </div>
-        </aside>
+        <RecentEventsPanel
+          events={recentEvents}
+          timeline={chronologyReplay.timeline}
+          players={session.players}
+          onDelete={(eventId) => softDeleteEvent(matchId, eventId)}
+          onRestore={(eventId) => restoreEvent(matchId, eventId)}
+          onSave={(eventId, target, changes) =>
+            editAndReorderEvent(matchId, eventId, target, changes)
+          }
+        />
       </main>
     </div>
   );

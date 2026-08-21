@@ -13,13 +13,11 @@ export interface Match {
   id: string;
   date: string;
   opponent: string;
-  homeScore: number;
-  awayScore: number;
-  isSuperiority: boolean;
   status: "pending" | "ongoing" | "finished";
 }
 
 export const MATCH_EVENT_SCHEMA_VERSION = 1 as const;
+export const INFERIORITY_SLOT_ID = "slot:inferiority" as const;
 
 export interface EventPosition {
   period: number;
@@ -48,10 +46,25 @@ export interface SubstitutionEvent extends MatchEventBase {
   playerInId: string;
 }
 
+export type GameStateKind = "SUPERIORITY" | "FLYING_GOALKEEPER";
+export type GameContext =
+  | "EVEN"
+  | "SUPERIORITY"
+  | "INFERIORITY"
+  | "FLYING_GOALKEEPER";
+
+export interface GameStateChangedEvent extends MatchEventBase {
+  type: "game_state_changed";
+  state: GameStateKind;
+  active: boolean;
+}
+
 export type LiveThreatOutcome = "GOL" | "PARADA" | "FUERA";
 export type LegacyThreatOutcome = "BLOQUEADO";
 export type ThreatOutcome = LiveThreatOutcome | LegacyThreatOutcome;
 export type ThreatSide = "FOR" | "AGAINST";
+export type DisciplineSide = ThreatSide;
+export type CardColor = "YELLOW" | "RED";
 export type ThreatPhase =
   | "POSITIONAL"
   | "TRANSITION"
@@ -93,10 +106,25 @@ export type ThreatRecordedEvent =
   | LiveThreatRecordedEvent
   | LegacyThreatImportedEvent;
 
+export interface FoulRecordedEvent extends MatchEventBase {
+  type: "foul_recorded";
+  side: DisciplineSide;
+}
+
+export interface CardRecordedEvent extends MatchEventBase {
+  type: "card_recorded";
+  side: DisciplineSide;
+  color: CardColor;
+  playerId?: string;
+}
+
 export type MatchEvent =
   | LineupInitializedEvent
   | SubstitutionEvent
-  | ThreatRecordedEvent;
+  | ThreatRecordedEvent
+  | GameStateChangedEvent
+  | FoulRecordedEvent
+  | CardRecordedEvent;
 
 export type MatchEventType = MatchEvent["type"];
 
@@ -104,6 +132,7 @@ export interface TimelineEntry {
   event: MatchEvent;
   lineupPlayerIds: string[];
   benchPlayerIds: string[];
+  gameContexts: GameContext[];
 }
 
 export interface ReplayIssue {
@@ -119,7 +148,10 @@ export interface ReplayIssue {
     | "INVALID_COORDINATES"
     | "INVALID_POSITION"
     | "DUPLICATE_ORDER"
-    | "MATCH_ID_MISMATCH";
+    | "MATCH_ID_MISMATCH"
+    | "INVALID_CARD_PLAYER"
+    | "DISMISSED_PLAYER_ACTIVE"
+    | "INVALID_INFERIORITY_SLOT";
   message: string;
 }
 
@@ -128,7 +160,29 @@ export interface ReplayResult {
   benchPlayerIds: string[];
   timeline: TimelineEntry[];
   playerMinutes: Record<string, PlayerMinutes>;
+  score: Score;
+  discipline: DisciplineSummary;
+  superiorityActive: boolean;
+  flyingGoalkeeperActive: boolean;
+  inferiorityActive: boolean;
+  dismissedPlayerIds: string[];
   issues: ReplayIssue[];
+}
+
+export interface Score {
+  for: number;
+  against: number;
+}
+
+export interface DisciplineTeamSummary {
+  fouls: number;
+  yellowCards: number;
+  redCards: number;
+}
+
+export interface DisciplineSummary {
+  for: DisciplineTeamSummary;
+  against: DisciplineTeamSummary;
 }
 
 export interface PlayerMinutes {

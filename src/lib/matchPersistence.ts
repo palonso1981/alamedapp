@@ -104,6 +104,23 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
       typeof value.playerInId === "string"
     );
   }
+  if (value.type === "game_state_changed") {
+    return (
+      (value.state === "SUPERIORITY" ||
+        value.state === "FLYING_GOALKEEPER") &&
+      typeof value.active === "boolean"
+    );
+  }
+  if (value.type === "foul_recorded") {
+    return value.side === "FOR" || value.side === "AGAINST";
+  }
+  if (value.type === "card_recorded") {
+    return (
+      (value.side === "FOR" || value.side === "AGAINST") &&
+      (value.color === "YELLOW" || value.color === "RED") &&
+      (value.playerId === undefined || typeof value.playerId === "string")
+    );
+  }
   if (value.type !== "threat_recorded") {
     return false;
   }

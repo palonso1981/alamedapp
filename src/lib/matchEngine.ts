@@ -1,5 +1,13 @@
 import {
+  CardColor,
+  CardRecordedEvent,
+  DisciplineSide,
   EventPosition,
+  FoulRecordedEvent,
+  GameContext,
+  GameStateChangedEvent,
+  GameStateKind,
+  INFERIORITY_SLOT_ID,
   LegacyThreatImportedEvent,
   LineupInitializedEvent,
   LiveThreatPhase,
@@ -61,6 +69,21 @@ export interface SubstitutionEventInput extends EventFactoryBase {
   playerInId: string;
 }
 
+export interface GameStateEventInput extends EventFactoryBase {
+  state: GameStateKind;
+  active: boolean;
+}
+
+export interface FoulEventInput extends EventFactoryBase {
+  side: DisciplineSide;
+}
+
+export interface CardEventInput extends EventFactoryBase {
+  side: DisciplineSide;
+  color: CardColor;
+  playerId?: string;
+}
+
 interface ThreatEventInput extends EventFactoryBase {
   side: ThreatSide;
   playerId?: string;
@@ -89,6 +112,9 @@ export interface EventEditChanges {
   threat?: Partial<
     Pick<LiveThreatRecordedEvent, "side" | "playerId" | "origin" | "phase">
   > & { outcome?: ThreatOutcome };
+  gameState?: Partial<Pick<GameStateChangedEvent, "state" | "active">>;
+  foul?: Partial<Pick<FoulRecordedEvent, "side">>;
+  card?: Partial<Pick<CardRecordedEvent, "side" | "color" | "playerId">>;
 }
 
 function createId(): string {
@@ -129,6 +155,35 @@ export function createSubstitutionEvent(
     type: "substitution",
     playerOutId: input.playerOutId,
     playerInId: input.playerInId,
+  };
+}
+
+export function createGameStateEvent(
+  input: GameStateEventInput,
+): GameStateChangedEvent {
+  return {
+    ...eventBase(input),
+    type: "game_state_changed",
+    state: input.state,
+    active: input.active,
+  };
+}
+
+export function createFoulEvent(input: FoulEventInput): FoulRecordedEvent {
+  return {
+    ...eventBase(input),
+    type: "foul_recorded",
+    side: input.side,
+  };
+}
+
+export function createCardEvent(input: CardEventInput): CardRecordedEvent {
+  return {
+    ...eventBase(input),
+    type: "card_recorded",
+    side: input.side,
+    color: input.color,
+    playerId: input.playerId,
   };
 }
 
@@ -234,6 +289,30 @@ function issue(
   issues.push({ eventId: event.id, code, message });
 }
 
+function gameContexts(
+  onCourtPlayerIds: string[],
+  superiorityActive: boolean,
+  flyingGoalkeeperActive: boolean,
+): GameContext[] {
+  const contexts: GameContext[] = [];
+  const inferiorityActive = onCourtPlayerIds.includes(INFERIORITY_SLOT_ID);
+
+  if (!superiorityActive && !inferiorityActive) {
+    contexts.push("EVEN");
+  } else {
+    if (superiorityActive) {
+      contexts.push("SUPERIORITY");
+    }
+    if (inferiorityActive) {
+      contexts.push("INFERIORITY");
+    }
+  }
+  if (flyingGoalkeeperActive) {
+    contexts.push("FLYING_GOALKEEPER");
+  }
+  return contexts;
+}
+
 export function replayMatch(
   players: Player[],
   events: MatchEvent[],
@@ -244,6 +323,14 @@ export function replayMatch(
   let onCourtPlayerIds: string[] = [];
   let benchPlayerIds: string[] = [];
   let hasLineup = false;
+  let superiorityActive = false;
+  let flyingGoalkeeperActive = false;
+  const dismissedPlayerIds = new Set<string>();
+  const score = { for: 0, against: 0 };
+  const discipline = {
+    for: { fouls: 0, yellowCards: 0, redCards: 0 },
+    against: { fouls: 0, yellowCards: 0, redCards: 0 },
+  };
   const periodDurationMinutes = options.periodDurationMinutes ?? 20;
   const totalMinutes = new Map(players.map((player) => [player.id, 0]));
   const enteredAt = new Map<string, number>();
@@ -260,6 +347,13 @@ export function replayMatch(
   );
   const matchIds = new Set(activeEvents.map((event) => event.matchId));
   const occupiedPositions = new Set<string>();
+
+  const refreshBench = () => {
+    benchPlayerIds = squadPlayerIds.filter(
+      (id) =>
+        !onCourtPlayerIds.includes(id) && !dismissedPlayerIds.has(id),
+    );
+  };
 
   if (matchIds.size > 1) {
     for (const event of activeEvents) {
@@ -294,7 +388,9 @@ export function replayMatch(
     if (hasLineup) {
       const elapsed = Math.max(0, eventElapsedMinute - lastElapsedMinute);
       for (const playerId of onCourtPlayerIds) {
-        totalMinutes.set(playerId, (totalMinutes.get(playerId) ?? 0) + elapsed);
+        if (playerIds.has(playerId)) {
+          totalMinutes.set(playerId, (totalMinutes.get(playerId) ?? 0) + elapsed);
+        }
       }
     }
     lastElapsedMinute = Math.max(lastElapsedMinute, eventElapsedMinute);
@@ -352,9 +448,7 @@ export function replayMatch(
 
       squadPlayerIds = [...event.squadPlayerIds];
       onCourtPlayerIds = [...event.onCourtPlayerIds];
-      benchPlayerIds = squadPlayerIds.filter(
-        (id) => !onCourtPlayerIds.includes(id),
-      );
+      refreshBench();
       enteredAt.clear();
       for (const playerId of onCourtPlayerIds) {
         enteredAt.set(playerId, eventElapsedMinute);
@@ -368,6 +462,7 @@ export function replayMatch(
         "No se puede aplicar un evento deportivo antes de iniciar la alineación.",
       );
     } else if (event.type === "substitution") {
+      const incomingIsInferiority = event.playerInId === INFERIORITY_SLOT_ID;
       if (!onCourtPlayerIds.includes(event.playerOutId)) {
         issue(
           issues,
@@ -376,7 +471,17 @@ export function replayMatch(
           "El jugador que sale no está en pista.",
         );
       }
-      if (!benchPlayerIds.includes(event.playerInId)) {
+      if (
+        incomingIsInferiority &&
+        onCourtPlayerIds.includes(INFERIORITY_SLOT_ID)
+      ) {
+        issue(
+          issues,
+          event,
+          "INVALID_INFERIORITY_SLOT",
+          "La plaza INFERIORIDAD ya está ocupando una posición.",
+        );
+      } else if (!incomingIsInferiority && !benchPlayerIds.includes(event.playerInId)) {
         issue(
           issues,
           event,
@@ -386,16 +491,18 @@ export function replayMatch(
       }
       if (
         onCourtPlayerIds.includes(event.playerOutId) &&
-        benchPlayerIds.includes(event.playerInId)
+        (incomingIsInferiority || benchPlayerIds.includes(event.playerInId)) &&
+        !(
+          incomingIsInferiority &&
+          onCourtPlayerIds.includes(INFERIORITY_SLOT_ID)
+        )
       ) {
         onCourtPlayerIds = onCourtPlayerIds.map((id) =>
           id === event.playerOutId ? event.playerInId : id,
         );
-        benchPlayerIds = benchPlayerIds.map((id) =>
-          id === event.playerInId ? event.playerOutId : id,
-        );
         enteredAt.delete(event.playerOutId);
         enteredAt.set(event.playerInId, eventElapsedMinute);
+        refreshBench();
       }
     } else if (event.type === "threat_recorded") {
       if (!validCoordinates(event.origin)) {
@@ -408,7 +515,9 @@ export function replayMatch(
       }
       if (
         event.side === "FOR" &&
-        (!event.playerId || !onCourtPlayerIds.includes(event.playerId))
+        (!event.playerId ||
+          !playerIds.has(event.playerId) ||
+          !onCourtPlayerIds.includes(event.playerId))
       ) {
         issue(
           issues,
@@ -417,13 +526,77 @@ export function replayMatch(
           "Una amenaza propia debe pertenecer a un jugador que estaba en pista.",
         );
       }
+      if (event.outcome === "GOL") {
+        score[event.side === "FOR" ? "for" : "against"] += 1;
+      }
+    } else if (event.type === "game_state_changed") {
+      if (event.state === "SUPERIORITY") {
+        superiorityActive = event.active;
+      } else {
+        flyingGoalkeeperActive = event.active;
+      }
+    } else if (event.type === "foul_recorded") {
+      discipline[event.side === "FOR" ? "for" : "against"].fouls += 1;
+    } else if (event.type === "card_recorded") {
+      const teamDiscipline =
+        discipline[event.side === "FOR" ? "for" : "against"];
+      if (event.color === "YELLOW") {
+        teamDiscipline.yellowCards += 1;
+      } else {
+        teamDiscipline.redCards += 1;
+      }
+      if (
+        event.side === "FOR" &&
+        (!event.playerId || !playerIds.has(event.playerId))
+      ) {
+        issue(
+          issues,
+          event,
+          "INVALID_CARD_PLAYER",
+          "Una tarjeta propia debe estar asociada a un jugador real.",
+        );
+      } else if (
+        event.side === "FOR" &&
+        event.color === "RED" &&
+        event.playerId
+      ) {
+        dismissedPlayerIds.add(event.playerId);
+        refreshBench();
+      }
     }
 
     timeline.push({
       event,
       lineupPlayerIds: [...onCourtPlayerIds],
       benchPlayerIds: [...benchPlayerIds],
+      gameContexts: gameContexts(
+        onCourtPlayerIds,
+        superiorityActive,
+        flyingGoalkeeperActive,
+      ),
     });
+  }
+
+  for (const playerId of onCourtPlayerIds) {
+    if (dismissedPlayerIds.has(playerId)) {
+      const dismissal = [...activeEvents]
+        .reverse()
+        .find(
+          (event) =>
+            event.type === "card_recorded" &&
+            event.side === "FOR" &&
+            event.color === "RED" &&
+            event.playerId === playerId,
+        );
+      if (dismissal) {
+        issue(
+          issues,
+          dismissal,
+          "DISMISSED_PLAYER_ACTIVE",
+          "Un jugador expulsado no puede permanecer en pista.",
+        );
+      }
+    }
   }
 
   const requestedCurrentMinute = options.currentClock
@@ -436,7 +609,9 @@ export function replayMatch(
   const currentElapsedMinute = Math.max(lastElapsedMinute, requestedCurrentMinute);
   const remainingElapsed = Math.max(0, currentElapsedMinute - lastElapsedMinute);
   for (const playerId of onCourtPlayerIds) {
-    totalMinutes.set(playerId, (totalMinutes.get(playerId) ?? 0) + remainingElapsed);
+    if (playerIds.has(playerId)) {
+      totalMinutes.set(playerId, (totalMinutes.get(playerId) ?? 0) + remainingElapsed);
+    }
   }
 
   const playerMinutes = Object.fromEntries(
@@ -460,6 +635,12 @@ export function replayMatch(
     benchPlayerIds,
     timeline,
     playerMinutes,
+    score,
+    discipline,
+    superiorityActive,
+    flyingGoalkeeperActive,
+    inferiorityActive: onCourtPlayerIds.includes(INFERIORITY_SLOT_ID),
+    dismissedPlayerIds: Array.from(dismissedPlayerIds),
     issues,
   };
 }
@@ -488,8 +669,20 @@ export function appendEvent(
   events: MatchEvent[],
   event: MatchEvent,
 ): MatchEvent[] {
-  assertSameMatch(events, event);
-  const next = sortEvents([...events, event]);
+  return appendEvents(players, events, [event]);
+}
+
+export function appendEvents(
+  players: Player[],
+  events: MatchEvent[],
+  appendedEvents: MatchEvent[],
+): MatchEvent[] {
+  const combined = [...events];
+  for (const event of appendedEvents) {
+    assertSameMatch(combined, event);
+    combined.push(event);
+  }
+  const next = sortEvents(combined);
   assertValidChronology(players, next);
   return next;
 }
@@ -557,6 +750,12 @@ export function editEvent(
       throw new Error("UNSPECIFIED solo está permitido en eventos importados.");
     }
     edited = { ...edited, ...changes.threat } as MatchEvent;
+  } else if (edited.type === "game_state_changed" && changes.gameState) {
+    edited = { ...edited, ...changes.gameState };
+  } else if (edited.type === "foul_recorded" && changes.foul) {
+    edited = { ...edited, ...changes.foul };
+  } else if (edited.type === "card_recorded" && changes.card) {
+    edited = { ...edited, ...changes.card };
   }
 
   const next = normalizeOrders(
