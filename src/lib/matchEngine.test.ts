@@ -312,7 +312,7 @@ test("replay calcula tramo activo y total acumulado tras varias sustituciones", 
   });
 
   assert.deepEqual(result.playerMinutes.p1, {
-    totalMinutes: 7,
+    totalMinutes: 6,
     currentStintMinutes: 2,
     onCourt: true,
   });
@@ -321,8 +321,36 @@ test("replay calcula tramo activo y total acumulado tras varias sustituciones", 
     currentStintMinutes: 0,
     onCourt: false,
   });
-  assert.equal(result.playerMinutes.p2.totalMinutes, 12);
-  assert.equal(result.playerMinutes.p2.currentStintMinutes, 12);
+  assert.equal(result.playerMinutes.p2.totalMinutes, 11);
+  assert.equal(result.playerMinutes.p2.currentStintMinutes, 11);
+});
+
+test("el minuto oficial inicial muestra cero y una entrada en 5 suma tres en 8", () => {
+  let events = initialLineup();
+  const initial = replayMatch(players, events, {
+    currentClock: { period: 1, minute: 1 },
+  });
+  assert.equal(initial.playerMinutes.p1.totalMinutes, 0);
+  assert.equal(initial.playerMinutes.p1.currentStintMinutes, 0);
+
+  events = appendEvent(
+    players,
+    events,
+    createSubstitutionEvent({
+      id: "sub-at-five",
+      matchId: "match-a",
+      position: { period: 1, minute: 5, order: 1 },
+      playerOutId: "p1",
+      playerInId: "p6",
+      now: 2,
+    }),
+  );
+  const atEight = replayMatch(players, events, {
+    currentClock: { period: 1, minute: 8 },
+  });
+  assert.equal(atEight.playerMinutes.p6.currentStintMinutes, 3);
+  assert.equal(atEight.playerMinutes.p6.totalMinutes, 3);
+  assert.equal(atEight.playerMinutes.p1.totalMinutes, 4);
 });
 
 test("persistencia local conserva sesión e historial y aísla cada matchId", () => {

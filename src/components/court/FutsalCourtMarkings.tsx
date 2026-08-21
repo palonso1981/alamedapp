@@ -30,11 +30,6 @@ export function FutsalCourtMarkings() {
         <circle cx="25" cy="25" r="0.7" />
         <circle cx="75" cy="25" r="0.7" />
       </g>
-      <g fill={substitution} fontSize="2.1" fontWeight="700" textAnchor="middle">
-        <text x="25" y="22.3">10 m</text>
-        <text x="75" y="22.3">10 m</text>
-      </g>
-
       <g fill="none" stroke={goal} strokeWidth="0.7" vectorEffect="non-scaling-stroke">
         <rect x="0.35" y="21.25" width="2.8" height="7.5" rx="0.4" />
         <rect x="96.85" y="21.25" width="2.8" height="7.5" rx="0.4" />
@@ -51,24 +46,13 @@ export function FutsalCourtMarkings() {
         strokeDasharray="1.4 1"
         vectorEffect="non-scaling-stroke"
       >
-        <line x1="31" y1="1" x2="44" y2="1" />
-        <line x1="56" y1="1" x2="69" y2="1" />
         <line x1="31" y1="49" x2="44" y2="49" />
         <line x1="56" y1="49" x2="69" y2="49" />
       </g>
       <g stroke={substitution} strokeWidth="0.7" vectorEffect="non-scaling-stroke">
         {[31, 44, 56, 69].map((x) => (
-          <g key={x}>
-            <line x1={x} y1="0" x2={x} y2="2.5" />
-            <line x1={x} y1="47.5" x2={x} y2="50" />
-          </g>
+          <line key={x} x1={x} y1="47" x2={x} y2="50" />
         ))}
-      </g>
-      <g fill={substitution} fontSize="1.8" fontWeight="700" textAnchor="middle">
-        <text x="37.5" y="4">ZONA CAMBIOS</text>
-        <text x="62.5" y="4">ZONA CAMBIOS</text>
-        <text x="37.5" y="47">ZONA CAMBIOS</text>
-        <text x="62.5" y="47">ZONA CAMBIOS</text>
       </g>
     </svg>
   );

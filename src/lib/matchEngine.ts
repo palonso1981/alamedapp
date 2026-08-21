@@ -24,12 +24,16 @@ export interface ReplayOptions {
   periodDurationMinutes?: number;
 }
 
-function elapsedMinute(
+function participationMinute(
   period: number,
   minute: number,
   periodDurationMinutes: number,
 ): number {
-  return Math.max(0, period - 1) * periodDurationMinutes + Math.max(0, minute);
+  // El minuto oficial identifica el intervalo en curso: al mostrar 1' todavía
+  // han transcurrido 0 minutos completos de participación.
+  const completedPeriods = Math.max(0, period - 1) * periodDurationMinutes;
+  const elapsedInPeriod = Math.max(0, minute - 1);
+  return completedPeriods + elapsedInPeriod;
 }
 
 export class MatchIntegrityError extends Error {
@@ -276,7 +280,7 @@ export function replayMatch(
   }
 
   for (const event of activeEvents) {
-    const eventElapsedMinute = elapsedMinute(
+    const eventElapsedMinute = participationMinute(
       event.period,
       event.minute,
       periodDurationMinutes,
@@ -417,7 +421,7 @@ export function replayMatch(
   }
 
   const requestedCurrentMinute = options.currentClock
-    ? elapsedMinute(
+    ? participationMinute(
         options.currentClock.period,
         options.currentClock.minute,
         periodDurationMinutes,

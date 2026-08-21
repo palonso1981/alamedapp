@@ -3,6 +3,7 @@
 import { MouseEvent, useEffect, useMemo, useState } from "react";
 
 import { FutsalCourtMarkings } from "../../../../components/court/FutsalCourtMarkings";
+import { PlayerAvatar } from "../../../../components/player/PlayerAvatar";
 import { replayMatch } from "../../../../lib/matchEngine";
 import { useMatchStore } from "../../../../store/useMatchStore";
 import {
@@ -31,16 +32,41 @@ const OUTCOME_OPTIONS: Array<{
   { value: "FUERA", label: "↗ Fuera", className: "bg-slate-600 hover:bg-slate-500" },
 ];
 
-const PHASE_OPTIONS: Array<{ value: LiveThreatPhase; label: string }> = [
-  { value: "POSITIONAL", label: "Posicional" },
-  { value: "TRANSITION", label: "Transición" },
-  { value: "SET_PIECE_CORNER", label: "ABP córner" },
-  { value: "SET_PIECE_FREE_KICK", label: "ABP falta" },
-  { value: "SET_PIECE_KICK_IN", label: "ABP banda" },
-  { value: "FLYING_GOALKEEPER", label: "Portero-jugador" },
-  { value: "PENALTY", label: "Penalti" },
-  { value: "DOUBLE_PENALTY", label: "Doble penalti" },
+const PHASE_OPTIONS: Array<{
+  value: LiveThreatPhase;
+  label: string;
+  shortLabel: string;
+  icon: string;
+  tone: string;
+}> = [
+  { value: "POSITIONAL", label: "Posicional", shortLabel: "Pos.", icon: "▦", tone: "cyan" },
+  { value: "TRANSITION", label: "Transición", shortLabel: "Trans.", icon: "➜", tone: "cyan" },
+  { value: "SET_PIECE_CORNER", label: "ABP córner", shortLabel: "Córner", icon: "⌜", tone: "violet" },
+  { value: "SET_PIECE_FREE_KICK", label: "ABP falta", shortLabel: "Falta", icon: "●↗", tone: "violet" },
+  { value: "SET_PIECE_KICK_IN", label: "ABP banda", shortLabel: "Banda", icon: "↥", tone: "violet" },
+  { value: "FLYING_GOALKEEPER", label: "Portero-jugador", shortLabel: "P-J", icon: "◇⁺", tone: "rose" },
+  { value: "PENALTY", label: "Penalti", shortLabel: "Penalti", icon: "6m", tone: "amber" },
+  { value: "DOUBLE_PENALTY", label: "Doble penalti", shortLabel: "Doble", icon: "10m", tone: "amber" },
 ];
+
+const PHASE_TONES: Record<string, { idle: string; active: string }> = {
+  cyan: {
+    idle: "border-cyan-900/80 bg-cyan-950/40 hover:border-cyan-500",
+    active: "border-cyan-200 bg-cyan-500 text-slate-950",
+  },
+  violet: {
+    idle: "border-violet-900/80 bg-violet-950/40 hover:border-violet-500",
+    active: "border-violet-200 bg-violet-500 text-white",
+  },
+  rose: {
+    idle: "border-rose-900/80 bg-rose-950/40 hover:border-rose-500",
+    active: "border-rose-200 bg-rose-500 text-white",
+  },
+  amber: {
+    idle: "border-amber-900/80 bg-amber-950/40 hover:border-amber-500",
+    active: "border-amber-200 bg-amber-400 text-slate-950",
+  },
+};
 
 type InteractionMode = "threat" | "substitution";
 
@@ -270,7 +296,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
 
           <div
             onClick={handleCourtClick}
-            className={`relative min-h-[360px] overflow-hidden rounded-2xl border-4 border-white/80 bg-emerald-800 sm:min-h-[440px] ${
+            className={`relative min-h-[360px] overflow-hidden rounded-2xl border-4 border-white/80 bg-[#075a9c] sm:min-h-[440px] ${
               mode === "threat" && selectedPlayerId
                 ? "cursor-crosshair"
                 : "cursor-default"
@@ -291,7 +317,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                     event.stopPropagation();
                     selectPlayer(player.id);
                   }}
-                  className={`absolute z-10 flex min-h-20 w-28 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-2xl border-2 px-2 py-2 text-center shadow-lg transition-all sm:w-32 ${
+                  className={`absolute z-10 flex min-h-24 w-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-2xl border-2 px-2 py-2 text-center shadow-lg transition-all sm:w-28 ${
                     selected
                       ? "scale-110 border-yellow-200 bg-yellow-500 text-gray-950 ring-4 ring-yellow-300/30"
                       : "border-white/60 bg-gray-900/90 hover:bg-gray-800"
@@ -299,10 +325,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   style={position}
                   aria-pressed={selected}
                 >
-                  <span className="text-lg font-black">#{player.number}</span>
-                  <span className="max-w-full truncate text-xs font-semibold">{player.name}</span>
-                  <span className={`mt-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${selected ? "bg-black/15" : "bg-emerald-950 text-emerald-300"}`}>
-                    {minutes.currentStintMinutes}&apos; activo · {minutes.totalMinutes}&apos; total
+                  <PlayerAvatar player={player} selected={selected} />
+                  <span className="mt-1 max-w-full truncate text-xs font-semibold">{player.name}</span>
+                  <span className="mt-1 flex items-baseline gap-1.5" aria-label={`${minutes.currentStintMinutes} minutos en el tramo actual; ${minutes.totalMinutes} minutos acumulados`}>
+                    <span className={`text-base font-black ${selected ? "text-slate-950" : "text-cyan-300"}`} title="Tramo actual">
+                      ◷ {minutes.currentStintMinutes}&apos;
+                    </span>
+                    <span className={`text-[10px] font-semibold ${selected ? "text-slate-700" : "text-slate-400"}`} title="Acumulado">
+                      (Σ {minutes.totalMinutes}&apos;)
+                    </span>
                   </span>
                 </button>
               );
@@ -317,32 +348,34 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             )}
           </div>
 
-          <div className="mt-3 rounded-xl bg-gray-950 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">
-                Fase / contexto
-              </h3>
+          <div className="mt-3 rounded-xl bg-gray-950 p-2.5">
+            <div className="mb-2 flex min-h-5 items-center justify-between gap-2 px-1">
+              <h3 className="sr-only">Fase o contexto</h3>
+              <span className="text-lg text-slate-500" aria-hidden="true">◎</span>
               {phase && (
                 <span className="text-xs font-semibold text-amber-300">
                   {phaseLabel(phase)}
                 </span>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid grid-cols-4 gap-1.5 lg:grid-cols-8">
               {PHASE_OPTIONS.map((option) => (
                 <button
                   key={option.value}
                   type="button"
                   disabled={mode !== "threat" || !selectedPlayerId || !origin}
                   onClick={() => setPhase(option.value)}
-                  className={`rounded-lg border px-2 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-600 ${
+                  title={option.label}
+                  aria-label={option.label}
+                  className={`flex aspect-square min-h-14 flex-col items-center justify-center rounded-xl border px-1 py-1.5 font-semibold transition-all disabled:cursor-not-allowed disabled:border-gray-800 disabled:bg-gray-900 disabled:text-gray-700 ${
                     phase === option.value
-                      ? "border-amber-300 bg-amber-500 text-gray-950"
-                      : "border-gray-700 bg-gray-800 hover:border-amber-500"
+                      ? PHASE_TONES[option.tone].active
+                      : PHASE_TONES[option.tone].idle
                   }`}
                   aria-pressed={phase === option.value}
                 >
-                  {option.label}
+                  <span className="text-xl font-black leading-none" aria-hidden="true">{option.icon}</span>
+                  <span className="mt-1 text-[10px] leading-none">{option.shortLabel}</span>
                 </button>
               ))}
             </div>
@@ -381,10 +414,14 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   }}
                   className="min-w-28 rounded-xl border-2 border-gray-700 bg-gray-800 p-3 text-left font-semibold transition-colors enabled:border-emerald-500 enabled:hover:bg-emerald-950 disabled:cursor-not-allowed disabled:opacity-45"
                 >
-                  <span className="block text-lg">#{player.number}</span>
-                  <span className="text-sm">{player.name}</span>
-                  <span className="mt-1 block text-xs font-bold text-emerald-300">
-                    {replay.playerMinutes[player.id].totalMinutes}&apos; total
+                  <span className="flex items-center gap-3">
+                    <PlayerAvatar player={player} compact />
+                    <span>
+                      <span className="block text-sm">{player.name}</span>
+                      <span className="mt-0.5 block text-xs font-bold text-cyan-300" aria-label={`${replay.playerMinutes[player.id].totalMinutes} minutos acumulados`} title="Acumulado">
+                        Σ {replay.playerMinutes[player.id].totalMinutes}&apos;
+                      </span>
+                    </span>
                   </span>
                 </button>
               ))}

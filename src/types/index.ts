@@ -4,6 +4,7 @@ export interface Player {
   id: string;
   name: string;
   number: number;
+  photoUrl?: string;
   position?: string;
   dominantFoot?: DominantFoot;
 }

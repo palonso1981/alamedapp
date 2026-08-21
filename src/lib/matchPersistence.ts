@@ -58,7 +58,8 @@ function isPlayer(value: unknown): value is Player {
     isObject(value) &&
     typeof value.id === "string" &&
     typeof value.name === "string" &&
-    typeof value.number === "number"
+    typeof value.number === "number" &&
+    (value.photoUrl === undefined || typeof value.photoUrl === "string")
   );
 }
 
