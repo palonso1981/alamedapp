@@ -209,7 +209,7 @@ export function RecentEventsPanel({
   };
 
   return (
-    <aside className="flex min-h-[320px] flex-col rounded-2xl bg-gray-900 p-4 shadow-xl lg:max-h-[780px]">
+    <aside className="flex min-h-0 flex-col rounded-2xl bg-gray-900 p-3 shadow-xl sm:p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
           <h2 className="font-bold">Recientes</h2>
@@ -220,7 +220,7 @@ export function RecentEventsPanel({
         </span>
       </div>
 
-      <div className="flex-1 space-y-2 overflow-y-auto pr-1">
+      <div className="grid flex-1 gap-2 md:grid-cols-2 lg:grid-cols-5">
         {events.length === 0 && (
           <div className="rounded-xl border border-dashed border-gray-700 p-5 text-center text-sm text-gray-500">
             Los últimos eventos aparecerán aquí.

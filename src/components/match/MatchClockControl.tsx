@@ -116,12 +116,12 @@ export function MatchClockControl({
         />
         <button
           type="button"
-          onClick={onDecrement}
-          disabled={atStart}
-          className="min-h-16 rounded-xl border border-slate-700 bg-slate-800 text-2xl font-black transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-25"
-          aria-label="Restar un minuto"
+          onClick={onIncrement}
+          disabled={atEnd}
+          className="min-h-20 rounded-xl bg-emerald-500 text-3xl font-black text-slate-950 shadow-[0_0_22px_rgba(16,185,129,0.25)] transition active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-600 disabled:shadow-none"
+          aria-label="Sumar un minuto"
         >
-          −1
+          +1
         </button>
         <output
           className="grid min-h-20 place-items-center rounded-xl bg-cyan-950 font-mono text-5xl font-black leading-none text-cyan-200"
@@ -131,12 +131,12 @@ export function MatchClockControl({
         </output>
         <button
           type="button"
-          onClick={onIncrement}
-          disabled={atEnd}
-          className="min-h-20 rounded-xl bg-emerald-500 text-3xl font-black text-slate-950 shadow-[0_0_22px_rgba(16,185,129,0.25)] transition active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-600 disabled:shadow-none"
-          aria-label="Sumar un minuto"
+          onClick={onDecrement}
+          disabled={atStart}
+          className="min-h-16 rounded-xl border border-slate-700 bg-slate-800 text-2xl font-black transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-25"
+          aria-label="Restar un minuto"
         >
-          +1
+          −1
         </button>
         <button
           type="button"

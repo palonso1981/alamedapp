@@ -26,6 +26,11 @@ import {
   matchStorageKey,
   saveMatchSession,
 } from "./matchPersistence";
+import {
+  IDLE_LIVE_INTERACTION,
+  reduceLiveInteraction,
+  showsThreatControls,
+} from "./liveInteraction";
 import { DEMO_PLAYERS, useMatchStore } from "../store/useMatchStore";
 import {
   INFERIORITY_SLOT_ID,
@@ -1159,6 +1164,155 @@ test("persistencia local conserva el reloj independiente de P1 y P2", () => {
   assert.equal(restored?.minute, 8);
   assert.deepEqual(restored?.periodMinutes, { 1: 20, 2: 8 });
   assert.deepEqual(restored?.events, session.events);
+});
+
+test("interacción jugador en pista y banquillo produce sustitución y replay", () => {
+  let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+    type: "COURT_PLAYER_TAPPED",
+    playerId: "p1",
+  });
+  transition = reduceLiveInteraction(transition.state, {
+    type: "BENCH_PLAYER_TAPPED",
+    playerId: "p6",
+  });
+  assert.deepEqual(transition.state, IDLE_LIVE_INTERACTION);
+  assert.deepEqual(transition.effect, {
+    type: "RECORD_SUBSTITUTION",
+    playerOutId: "p1",
+    playerInId: "p6",
+  });
+
+  useMatchStore.setState({ matches: {} });
+  const matchId = "intent-substitution";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  actions.setClock(matchId, 1, 5);
+  if (transition.effect?.type === "RECORD_SUBSTITUTION") {
+    actions.swapPlayer(
+      matchId,
+      transition.effect.playerOutId,
+      transition.effect.playerInId,
+    );
+  }
+  actions.setClock(matchId, 1, 8);
+  const session = useMatchStore.getState().matches[matchId];
+  const replay = replayMatch(session.players, session.events, {
+    currentClock: { period: 1, minute: 8 },
+  });
+  assert.ok(replay.onCourtPlayerIds.includes("p6"));
+  assert.ok(replay.benchPlayerIds.includes("p1"));
+  assert.equal(replay.playerMinutes.p6.currentStintMinutes, 3);
+});
+
+test("jugador y pista preparan amenaza CDA con autor sin guardar antes de completarla", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "intent-for-threat";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  const initialEventCount = useMatchStore.getState().matches[matchId].events.length;
+
+  let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+    type: "COURT_PLAYER_TAPPED",
+    playerId: "p2",
+  });
+  transition = reduceLiveInteraction(transition.state, {
+    type: "COURT_TAPPED",
+    origin: { x: 0.72, y: 0.31 },
+  });
+  assert.equal(transition.state.kind, "THREAT_PENDING");
+  assert.equal(showsThreatControls(transition.state), true);
+  assert.equal(useMatchStore.getState().matches[matchId].events.length, initialEventCount);
+
+  transition = reduceLiveInteraction(transition.state, {
+    type: "OUTCOME_SELECTED",
+    outcome: "GOL",
+  });
+  assert.equal(transition.effect, undefined);
+  transition = reduceLiveInteraction(transition.state, {
+    type: "PHASE_SELECTED",
+    phase: "POSITIONAL",
+  });
+  assert.deepEqual(transition.effect, {
+    type: "RECORD_THREAT",
+    side: "FOR",
+    playerId: "p2",
+    origin: { x: 0.72, y: 0.31 },
+    outcome: "GOL",
+    phase: "POSITIONAL",
+  });
+  if (transition.effect?.type === "RECORD_THREAT") {
+    actions.recordThreat(matchId, transition.effect);
+  }
+  const threat = useMatchStore
+    .getState()
+    .matches[matchId].events.find((event) => event.type === "threat_recorded");
+  assert.equal(threat?.type, "threat_recorded");
+  if (threat?.type === "threat_recorded") {
+    assert.equal(threat.side, "FOR");
+    assert.equal(threat.playerId, "p2");
+  }
+});
+
+test("tocar pista directamente prepara amenaza rival sin jugador", () => {
+  let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+    type: "COURT_TAPPED",
+    origin: { x: 0.2, y: 0.6 },
+  });
+  assert.deepEqual(transition.state, {
+    kind: "THREAT_PENDING",
+    side: "AGAINST",
+    playerId: undefined,
+    origin: { x: 0.2, y: 0.6 },
+    phase: null,
+    outcome: null,
+  });
+  transition = reduceLiveInteraction(transition.state, {
+    type: "PHASE_SELECTED",
+    phase: "TRANSITION",
+  });
+  transition = reduceLiveInteraction(transition.state, {
+    type: "OUTCOME_SELECTED",
+    outcome: "PARADA",
+  });
+  assert.equal(transition.effect?.type, "RECORD_THREAT");
+  if (transition.effect?.type === "RECORD_THREAT") {
+    assert.equal(transition.effect.side, "AGAINST");
+    assert.equal(transition.effect.playerId, undefined);
+  }
+});
+
+test("selección puede cambiarse o cancelarse sin cronología ni controles permanentes", () => {
+  let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+    type: "COURT_PLAYER_TAPPED",
+    playerId: "p1",
+  });
+  assert.equal(showsThreatControls(transition.state), false);
+  transition = reduceLiveInteraction(transition.state, {
+    type: "COURT_PLAYER_TAPPED",
+    playerId: "p3",
+  });
+  assert.deepEqual(transition.state, {
+    kind: "PLAYER_SELECTED",
+    playerId: "p3",
+  });
+  transition = reduceLiveInteraction(transition.state, {
+    type: "COURT_TAPPED",
+    origin: { x: 0.4, y: 0.4 },
+  });
+  assert.equal(showsThreatControls(transition.state), true);
+  transition = reduceLiveInteraction(transition.state, { type: "CANCEL" });
+  assert.deepEqual(transition, { state: IDLE_LIVE_INTERACTION });
+  assert.equal(showsThreatControls(transition.state), false);
+
+  transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+    type: "COURT_PLAYER_TAPPED",
+    playerId: "p1",
+  });
+  transition = reduceLiveInteraction(transition.state, {
+    type: "COURT_PLAYER_TAPPED",
+    playerId: "p1",
+  });
+  assert.deepEqual(transition.state, IDLE_LIVE_INTERACTION);
 });
 
 test("Zustand aplica expulsión e inferioridad atómicamente y undo/redo recalcula", () => {

@@ -28,6 +28,7 @@ interface DisciplineControlsProps {
     playerId?: string,
     causesInferiority?: boolean,
   ) => void;
+  onInteractionStart?: () => void;
 }
 
 function playerList(players: Player[], ids: string[]): Player[] {
@@ -45,6 +46,7 @@ export function DisciplineControls({
   period,
   onFoul,
   onCard,
+  onInteractionStart,
 }: DisciplineControlsProps) {
   const [intent, setIntent] = useState<DisciplineIntent | null>(null);
   const [redDecisionPlayer, setRedDecisionPlayer] = useState<Player | null>(
@@ -65,6 +67,7 @@ export function DisciplineControls({
   };
 
   const chooseIntent = (nextIntent: DisciplineIntent) => {
+    onInteractionStart?.();
     if (nextIntent.kind === "CARD" && nextIntent.side === "AGAINST") {
       onCard("AGAINST", nextIntent.color);
       reset();
@@ -98,7 +101,7 @@ export function DisciplineControls({
       : "🟥 CDA · ¿quién?";
 
   return (
-    <section className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/80 p-3">
+    <section className="h-full rounded-2xl border border-slate-800 bg-slate-950/80 p-3 shadow-xl">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
@@ -114,7 +117,7 @@ export function DisciplineControls({
 
       {!intent && (
         <div className="space-y-2">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
             <button
               type="button"
               onClick={() => chooseIntent({ kind: "FOUL", side: "FOR" })}
@@ -145,7 +148,7 @@ export function DisciplineControls({
             </button>
           </div>
 
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-4 gap-2 lg:grid-cols-2">
             {([
               ["FOR", "YELLOW", "🟨 CDA"],
               ["AGAINST", "YELLOW", "🟨 RIV"],
@@ -183,7 +186,7 @@ export function DisciplineControls({
             </button>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-2">
             {courtPlayers.map((player) => (
               <button
                 key={player.id}
@@ -202,7 +205,7 @@ export function DisciplineControls({
               <span className="mb-2 block text-[9px] font-bold uppercase tracking-widest text-slate-600">
                 Banquillo
               </span>
-              <div className="flex gap-2 overflow-x-auto pb-1">
+              <div className="flex gap-2 overflow-x-auto pb-1 lg:grid lg:grid-cols-2">
                 {benchPlayers.map((player) => (
                   <button
                     key={player.id}

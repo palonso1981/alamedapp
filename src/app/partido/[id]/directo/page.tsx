@@ -3,6 +3,7 @@
 import { MouseEvent, useEffect, useMemo, useState } from "react";
 
 import { FutsalCourtMarkings } from "../../../../components/court/FutsalCourtMarkings";
+import { BenchPanel } from "../../../../components/match/BenchPanel";
 import { DisciplineControls } from "../../../../components/match/DisciplineControls";
 import { HistoryControls } from "../../../../components/match/HistoryControls";
 import {
@@ -12,10 +13,13 @@ import {
 import { MatchScoreboard } from "../../../../components/match/MatchScoreboard";
 import { RecentEventsPanel } from "../../../../components/match/RecentEventsPanel";
 import { PlayerAvatar } from "../../../../components/player/PlayerAvatar";
+import { eventDescription } from "../../../../lib/eventPresentation";
 import {
-  eventDescription,
-  phaseLabel,
-} from "../../../../lib/eventPresentation";
+  IDLE_LIVE_INTERACTION,
+  LiveInteractionAction,
+  LiveInteractionState,
+  reduceLiveInteraction,
+} from "../../../../lib/liveInteraction";
 import { replayMatch, sortEvents } from "../../../../lib/matchEngine";
 import { useMatchStore } from "../../../../store/useMatchStore";
 import {
@@ -23,9 +27,7 @@ import {
   LiveThreatOutcome,
   LiveThreatPhase,
   MatchEvent,
-  NormalizedCoordinates,
   Player,
-  ThreatSide,
 } from "../../../../types";
 
 const CLOCK_SIDE_STORAGE_KEY = "alamedapp:directo-clock-side:v1";
@@ -85,8 +87,6 @@ const PHASE_TONES: Record<string, { idle: string; active: string }> = {
   },
 };
 
-type InteractionMode = "threat" | "substitution";
-
 function undoTarget(
   events: MatchEvent[],
   previousEvents: MatchEvent[] | undefined,
@@ -136,11 +136,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const redo = useMatchStore((state) => state.redo);
   const clearError = useMatchStore((state) => state.clearError);
 
-  const [mode, setMode] = useState<InteractionMode>("threat");
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
-  const [origin, setOrigin] = useState<NormalizedCoordinates | null>(null);
-  const [phase, setPhase] = useState<LiveThreatPhase | null>(null);
-  const [threatSide, setThreatSide] = useState<ThreatSide>("FOR");
+  const [interaction, setInteraction] = useState<LiveInteractionState>(
+    IDLE_LIVE_INTERACTION,
+  );
+  const [feedback, setFeedback] = useState<string | null>(null);
   const [clockSide, setClockSide] = useState<ClockSide>("right");
 
   useEffect(() => {
@@ -152,12 +151,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     ensureMatch(matchId);
-    setMode("threat");
-    setSelectedPlayerId(null);
-    setOrigin(null);
-    setPhase(null);
-    setThreatSide("FOR");
+    setInteraction(IDLE_LIVE_INTERACTION);
+    setFeedback(null);
   }, [ensureMatch, matchId]);
+
+  useEffect(() => {
+    if (!feedback) return;
+    const timeout = window.setTimeout(() => setFeedback(null), 1_800);
+    return () => window.clearTimeout(timeout);
+  }, [feedback]);
 
   const replay = useMemo(
     () =>
@@ -205,79 +207,76 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const undoDescription = targetForUndo
     ? `${eventDescription(targetForUndo, session.players, targetUndoEntry)} ${targetForUndo.minute}'`
     : "última acción";
+  const selectedPlayerId =
+    interaction.kind === "PLAYER_SELECTED"
+      ? interaction.playerId
+      : interaction.kind === "THREAT_PENDING"
+        ? interaction.playerId ?? null
+        : null;
+  const pendingThreat =
+    interaction.kind === "THREAT_PENDING" ? interaction : null;
+  const substitutionSourceLabel =
+    interaction.kind === "PLAYER_SELECTED"
+      ? interaction.playerId === INFERIORITY_SLOT_ID
+        ? "INFERIORIDAD"
+        : session.players.find(
+            (player) => player.id === interaction.playerId,
+          )?.name
+      : undefined;
 
   const updateClockSide = (side: ClockSide) => {
     setClockSide(side);
     window.localStorage.setItem(CLOCK_SIDE_STORAGE_KEY, side);
   };
 
-  const selectPlayer = (playerId: string) => {
+  const applyInteraction = (action: LiveInteractionAction) => {
     clearError(matchId);
-    setSelectedPlayerId((current) => (current === playerId ? null : playerId));
-    setOrigin(null);
-    setPhase(
-      replay.flyingGoalkeeperActive ? "FLYING_GOALKEEPER" : null,
-    );
+    const transition = reduceLiveInteraction(interaction, action);
+    const effect = transition.effect;
+    setInteraction(transition.state);
+
+    if (effect?.type === "RECORD_SUBSTITUTION") {
+      swapPlayer(
+        matchId,
+        effect.playerOutId,
+        effect.playerInId,
+      );
+      const playerOut = session.players.find(
+        (player) => player.id === effect.playerOutId,
+      );
+      const playerIn = session.players.find(
+        (player) => player.id === effect.playerInId,
+      );
+      setFeedback(
+        `✓ ${playerOut?.name ?? "INFERIORIDAD"} → ${playerIn?.name ?? "jugador"}`,
+      );
+    } else if (effect?.type === "RECORD_THREAT") {
+      recordThreat(matchId, effect);
+      const actor = effect.playerId
+        ? session.players.find(
+            (player) => player.id === effect.playerId,
+          )?.name
+        : "RIV";
+      setFeedback(`✓ ${effect.outcome} · ${actor ?? "CDA"}`);
+    }
   };
 
   const handleCourtClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (
-      mode !== "threat" ||
-      (threatSide === "FOR" && !selectedPlayerId)
-    ) {
-      return;
-    }
     const bounds = event.currentTarget.getBoundingClientRect();
     const x = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
     const y = Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height));
-    setOrigin({ x, y });
-    setPhase(
-      replay.flyingGoalkeeperActive ? "FLYING_GOALKEEPER" : null,
-    );
-  };
-
-  const finishThreat = (outcome: LiveThreatOutcome) => {
-    if (
-      (threatSide === "FOR" && !selectedPlayerId) ||
-      !origin ||
-      !phase
-    ) {
-      return;
-    }
-    recordThreat(matchId, {
-      side: threatSide,
-      playerId: threatSide === "FOR" ? selectedPlayerId ?? undefined : undefined,
-      origin,
-      outcome,
-      phase,
+    applyInteraction({
+      type: "COURT_TAPPED",
+      origin: { x, y },
+      defaultPhase: replay.flyingGoalkeeperActive
+        ? "FLYING_GOALKEEPER"
+        : undefined,
     });
-    setSelectedPlayerId(null);
-    setOrigin(null);
-    setPhase(null);
-  };
-
-  const setThreatTeam = (side: ThreatSide) => {
-    clearError(matchId);
-    setMode("threat");
-    setThreatSide(side);
-    setSelectedPlayerId(null);
-    setOrigin(null);
-    setPhase(
-      replay.flyingGoalkeeperActive ? "FLYING_GOALKEEPER" : null,
-    );
-  };
-
-  const setInteractionMode = (nextMode: InteractionMode) => {
-    clearError(matchId);
-    setMode(nextMode);
-    setSelectedPlayerId(null);
-    setOrigin(null);
-    setPhase(null);
   };
 
   return (
     <div
-      className={`min-h-screen bg-gray-950 p-3 pb-28 font-sans text-white sm:p-4 sm:pb-4 ${
+      className={`min-h-screen overflow-x-hidden bg-gray-950 p-3 pb-28 font-sans text-white sm:p-4 sm:pb-4 ${
         clockSide === "left" ? "sm:pl-28" : "sm:pr-28"
       }`}
     >
@@ -288,8 +287,19 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         onSideChange={updateClockSide}
         onIncrement={() => incrementMinute(matchId)}
         onDecrement={() => decrementMinute(matchId)}
-        onPeriodChange={(period) => changePeriod(matchId, period)}
+        onPeriodChange={(period) => {
+          setInteraction(IDLE_LIVE_INTERACTION);
+          changePeriod(matchId, period);
+        }}
       />
+      {feedback && (
+        <div
+          role="status"
+          className="pointer-events-none fixed left-1/2 top-3 z-50 -translate-x-1/2 rounded-full border border-emerald-300/50 bg-emerald-950/95 px-4 py-2 text-sm font-black text-emerald-100 shadow-2xl"
+        >
+          {feedback}
+        </div>
+      )}
       <header className="mx-auto mb-4 flex max-w-7xl flex-wrap items-center justify-between gap-3 border-b border-gray-700 pb-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400">
@@ -324,15 +334,24 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           canUndo={session.past.length > 0}
           canRedo={session.future.length > 0}
           undoDescription={undoDescription}
-          onUndo={() => undo(matchId)}
-          onRedo={() => redo(matchId)}
+          onUndo={() => {
+            setInteraction(IDLE_LIVE_INTERACTION);
+            undo(matchId);
+          }}
+          onRedo={() => {
+            setInteraction(IDLE_LIVE_INTERACTION);
+            redo(matchId);
+          }}
         />
       </div>
 
       <div className="mx-auto mb-4 grid max-w-7xl grid-cols-2 gap-2 sm:grid-cols-3">
         <button
           type="button"
-          onClick={() => toggleGameState(matchId, "SUPERIORITY")}
+          onClick={() => {
+            setInteraction(IDLE_LIVE_INTERACTION);
+            toggleGameState(matchId, "SUPERIORITY");
+          }}
           className={`rounded-xl border-2 px-3 py-3 text-sm font-black transition-all ${
             replay.superiorityActive
               ? "animate-pulse border-amber-200 bg-amber-400 text-slate-950 shadow-[0_0_24px_rgba(251,191,36,0.35)]"
@@ -344,7 +363,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         </button>
         <button
           type="button"
-          onClick={() => toggleGameState(matchId, "FLYING_GOALKEEPER")}
+          onClick={() => {
+            setInteraction(IDLE_LIVE_INTERACTION);
+            toggleGameState(matchId, "FLYING_GOALKEEPER");
+          }}
           className={`rounded-xl border-2 px-3 py-3 text-sm font-black transition-all ${
             replay.flyingGoalkeeperActive
               ? "border-rose-300 bg-rose-600 text-white"
@@ -377,77 +399,60 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      <main className="mx-auto grid max-w-7xl gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <section className="rounded-2xl bg-gray-900 p-3 shadow-xl sm:p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="font-bold">Pista interactiva</h2>
-              <p className="text-sm text-gray-400">
-                {mode === "threat"
-                  ? threatSide === "AGAINST" || selectedPlayerId
-                    ? origin
-                      ? phase
-                        ? "4. Selecciona el resultado de la amenaza"
-                        : "3. Selecciona la fase o contexto"
-                      : "2. Marca en la pista el origen del disparo"
-                    : "1. Toca al jugador"
-                  : selectedPlayerId
-                    ? "Selecciona en el banquillo al jugador que entra"
-                    : "Selecciona al jugador que sale"}
-              </p>
+      <main className="mx-auto grid max-w-screen-2xl gap-3 md:grid-cols-2 lg:grid-cols-[210px_minmax(0,1fr)_230px]">
+        <div className="order-2 min-w-0 md:col-span-1 lg:order-1 lg:col-start-1 lg:row-start-1">
+          <BenchPanel
+            players={bench}
+            playerMinutes={replay.playerMinutes}
+            replacementForLabel={substitutionSourceLabel}
+            onPlayerTap={(playerId) =>
+              applyInteraction({ type: "BENCH_PLAYER_TAPPED", playerId })
+            }
+          />
+        </div>
+
+        <section className="order-1 min-w-0 rounded-2xl bg-gray-900 p-3 shadow-xl md:col-span-2 sm:p-4 lg:order-2 lg:col-span-1 lg:col-start-2 lg:row-start-1">
+          <div className="mb-3 flex min-h-12 items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="font-bold">Pista</h2>
+              {interaction.kind === "IDLE" ? (
+                <div className="mt-1 flex gap-3 text-lg text-slate-500" aria-label="Jugador a pista para ataque; jugador a banquillo para cambio; pista directamente para rival">
+                  <span title="Jugador → pista">●→◎</span>
+                  <span title="Jugador → banquillo">●→⇄</span>
+                  <span title="Pista → rival">◎→↓</span>
+                </div>
+              ) : interaction.kind === "PLAYER_SELECTED" ? (
+                <p className="truncate text-sm font-bold text-amber-300">
+                  {substitutionSourceLabel} <span aria-hidden="true">→ ◎ / ⇄</span>
+                </p>
+              ) : (
+                <p className={`text-sm font-black ${pendingThreat?.side === "FOR" ? "text-cyan-300" : "text-rose-300"}`}>
+                  {pendingThreat?.side === "FOR" ? "↑ CDA" : "↓ RIV"} · ◎
+                </p>
+              )}
             </div>
-            <div className="grid w-full grid-cols-[1fr_1fr_0.85fr] gap-2 sm:w-auto sm:min-w-[520px]">
+            {interaction.kind !== "IDLE" && (
               <button
                 type="button"
-                onClick={() => setThreatTeam("FOR")}
-                className={`min-h-16 rounded-2xl border-2 px-3 text-left transition-all ${
-                  mode === "threat" && threatSide === "FOR"
-                    ? "border-cyan-200 bg-cyan-500 text-slate-950 shadow-lg"
-                    : "border-cyan-900 bg-cyan-950/50 text-cyan-200"
-                }`}
-                aria-pressed={mode === "threat" && threatSide === "FOR"}
+                onClick={() => applyInteraction({ type: "CANCEL" })}
+                className="grid min-h-11 min-w-11 place-items-center rounded-xl bg-slate-800 text-2xl text-slate-300"
+                aria-label="Cancelar acción pendiente"
               >
-                <span className="block text-2xl font-black leading-none" aria-hidden="true">↑ ⚽</span>
-                <span className="mt-1 block text-xs font-black uppercase tracking-wider">CDA</span>
+                ×
               </button>
-              <button
-                type="button"
-                onClick={() => setThreatTeam("AGAINST")}
-                className={`min-h-16 rounded-2xl border-2 px-3 text-left transition-all ${
-                  mode === "threat" && threatSide === "AGAINST"
-                    ? "border-rose-200 bg-rose-600 text-white shadow-lg"
-                    : "border-rose-900 bg-rose-950/50 text-rose-200"
-                }`}
-                aria-pressed={mode === "threat" && threatSide === "AGAINST"}
-              >
-                <span className="block text-2xl font-black leading-none" aria-hidden="true">↓ ⚽</span>
-                <span className="mt-1 block text-xs font-black uppercase tracking-wider">Rival</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setInteractionMode("substitution")}
-                className={`ml-1 min-h-16 rounded-2xl border-2 px-3 text-left transition-all ${
-                  mode === "substitution"
-                    ? "border-amber-200 bg-amber-500 text-slate-950 shadow-lg"
-                    : "border-amber-900 bg-amber-950/40 text-amber-200"
-                }`}
-                aria-pressed={mode === "substitution"}
-              >
-                <span className="block text-2xl font-black leading-none" aria-hidden="true">↔</span>
-                <span className="mt-1 block text-xs font-black uppercase tracking-wider">Cambio</span>
-              </button>
-            </div>
+            )}
           </div>
 
           <div
             onClick={handleCourtClick}
-            className={`relative min-h-[360px] overflow-hidden rounded-2xl border-4 border-white/80 bg-[#075a9c] sm:min-h-[440px] ${
-              mode === "threat" &&
-              (threatSide === "AGAINST" || selectedPlayerId)
-                ? "cursor-crosshair"
-                : "cursor-default"
+            className={`relative min-h-[350px] cursor-crosshair overflow-hidden rounded-2xl border-4 bg-[#075a9c] sm:min-h-[440px] ${
+              pendingThreat?.side === "AGAINST"
+                ? "border-rose-300/90 shadow-[0_0_24px_rgba(244,63,94,0.14)]"
+                : interaction.kind === "PLAYER_SELECTED"
+                  ? "border-amber-200/90 shadow-[0_0_24px_rgba(251,191,36,0.14)]"
+                  : "border-white/80"
             }`}
-            aria-label="Pista de fútbol sala. Selecciona el origen del disparo."
+            aria-label="Pista de fútbol sala. Toca directamente para amenaza rival o selecciona antes un jugador CDA."
           >
             <FutsalCourtMarkings />
 
@@ -461,9 +466,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      if (mode === "substitution") {
-                        selectPlayer(slotId);
-                      }
+                      applyInteraction({
+                        type: "COURT_PLAYER_TAPPED",
+                        playerId: slotId,
+                      });
                     }}
                     className={`absolute z-10 flex min-h-24 w-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-2xl border-2 border-dashed px-2 py-2 text-center shadow-lg sm:w-28 ${
                       selected
@@ -484,9 +490,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               const player = session.players.find(
                 (candidate) => candidate.id === slotId,
               );
-              if (!player) {
-                return null;
-              }
+              if (!player) return null;
               const selected = selectedPlayerId === player.id;
               const minutes = replay.playerMinutes[player.id];
               return (
@@ -495,9 +499,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   type="button"
                   onClick={(event) => {
                     event.stopPropagation();
-                    if (mode === "substitution" || threatSide === "FOR") {
-                      selectPlayer(player.id);
-                    }
+                    applyInteraction({
+                      type: "COURT_PLAYER_TAPPED",
+                      playerId: player.id,
+                    });
                   }}
                   className={`absolute z-10 flex min-h-24 w-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-2xl border-2 px-2 py-2 text-center shadow-lg transition-all sm:w-28 ${
                     selected
@@ -521,138 +526,109 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               );
             })}
 
-            {origin && (
+            {pendingThreat && (
               <div
-                className="pointer-events-none absolute z-20 h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-white bg-red-500 shadow-[0_0_0_6px_rgba(239,68,68,0.3)]"
-                style={{ left: `${origin.x * 100}%`, top: `${origin.y * 100}%` }}
+                className={`pointer-events-none absolute z-20 h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-white shadow-[0_0_0_6px_rgba(255,255,255,0.22)] ${
+                  pendingThreat.side === "FOR" ? "bg-cyan-400" : "bg-rose-500"
+                }`}
+                style={{ left: `${pendingThreat.origin.x * 100}%`, top: `${pendingThreat.origin.y * 100}%` }}
                 aria-hidden="true"
               />
             )}
           </div>
 
-          <div className="mt-3 rounded-xl bg-gray-950 p-2.5">
-            <div className="mb-2 flex min-h-5 items-center justify-between gap-2 px-1">
-              <h3 className="sr-only">Fase o contexto</h3>
-              <span className="text-lg text-slate-500" aria-hidden="true">◎</span>
-              {phase && (
-                <span className="text-xs font-semibold text-amber-300">
-                  {phaseLabel(phase)}
-                </span>
-              )}
-            </div>
-            <div className="grid gap-2 lg:grid-cols-[1.15fr_1.35fr_auto]">
-              {(["PRIMARY", "SECONDARY", "RARE"] as const).map((tier) => (
-                <div
-                  key={tier}
-                  className={
-                    tier === "PRIMARY"
-                      ? "grid grid-cols-2 gap-2"
-                      : tier === "SECONDARY"
-                        ? "grid grid-cols-4 gap-1.5"
-                        : "grid grid-cols-2 gap-1.5"
-                  }
-                >
-                  {PHASE_OPTIONS.filter((option) => option.tier === tier).map(
-                    (option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        disabled={
-                          mode !== "threat" ||
-                          (threatSide === "FOR" && !selectedPlayerId) ||
-                          !origin
-                        }
-                        onClick={() => setPhase(option.value)}
-                        title={option.label}
-                        aria-label={option.label}
-                        className={`flex flex-col items-center justify-center rounded-xl border font-semibold transition-all disabled:cursor-not-allowed disabled:border-gray-800 disabled:bg-gray-900 disabled:text-gray-700 ${
-                          tier === "PRIMARY"
-                            ? "min-h-20 px-2 py-2"
-                            : tier === "SECONDARY"
-                              ? "min-h-16 px-1 py-1.5"
-                              : "min-h-11 min-w-14 px-1 py-1"
-                        } ${
-                          phase === option.value
-                            ? PHASE_TONES[option.tone].active
-                            : PHASE_TONES[option.tone].idle
-                        }`}
-                        aria-pressed={phase === option.value}
-                      >
-                        <span
-                          className={
-                            tier === "PRIMARY"
-                              ? "text-3xl font-black leading-none"
-                              : tier === "SECONDARY"
-                                ? "text-xl font-black leading-none"
-                                : "text-xs font-black leading-none"
-                          }
-                          aria-hidden="true"
-                        >
-                          {option.icon}
-                        </span>
-                        <span className={`${tier === "PRIMARY" ? "mt-2 text-xs" : "mt-1 text-[10px]"} leading-none`}>
-                          {option.shortLabel}
-                        </span>
-                      </button>
-                    ),
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            {OUTCOME_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                disabled={
-                  mode !== "threat" ||
-                  (threatSide === "FOR" && !selectedPlayerId) ||
-                  !origin ||
-                  !phase
-                }
-                onClick={() => finishThreat(option.value)}
-                className={`rounded-xl px-2 py-3 text-sm font-bold shadow-md transition-colors disabled:cursor-not-allowed disabled:bg-gray-800 disabled:text-gray-600 ${option.className}`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-4 rounded-xl bg-gray-950 p-3">
-            <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-gray-400">
-              Banquillo
-            </h3>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {bench.map((player) => (
-                <button
-                  key={player.id}
-                  type="button"
-                  disabled={mode !== "substitution" || !selectedPlayerId}
-                  onClick={() => {
-                    if (selectedPlayerId) {
-                      swapPlayer(matchId, selectedPlayerId, player.id);
-                      setSelectedPlayerId(null);
-                      setMode("threat");
+          {pendingThreat && (
+            <section
+              className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-2.5 shadow-xl"
+              aria-label="Completar amenaza"
+            >
+              <div className="grid grid-cols-3 gap-2">
+                {OUTCOME_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() =>
+                      applyInteraction({
+                        type: "OUTCOME_SELECTED",
+                        outcome: option.value,
+                      })
                     }
-                  }}
-                  className="min-w-28 rounded-xl border-2 border-gray-700 bg-gray-800 p-3 text-left font-semibold transition-colors enabled:border-emerald-500 enabled:hover:bg-emerald-950 disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  <span className="flex items-center gap-3">
-                    <PlayerAvatar player={player} compact />
-                    <span>
-                      <span className="block text-sm">{player.name}</span>
-                      <span className="mt-0.5 block text-xs font-bold text-cyan-300" aria-label={`${replay.playerMinutes[player.id].totalMinutes} minutos acumulados`} title="Acumulado">
-                        {replay.playerMinutes[player.id].totalMinutes}&apos;
-                      </span>
-                    </span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
+                    className={`min-h-16 rounded-xl px-2 text-sm font-black shadow-md transition-all ${
+                      pendingThreat.outcome === option.value
+                        ? "ring-4 ring-white/70"
+                        : ""
+                    } ${option.className}`}
+                    aria-pressed={pendingThreat.outcome === option.value}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
 
+              <div className="mt-2 grid gap-2 lg:grid-cols-[1.15fr_1.35fr_auto]">
+                {(["PRIMARY", "SECONDARY", "RARE"] as const).map((tier) => (
+                  <div
+                    key={tier}
+                    className={
+                      tier === "PRIMARY"
+                        ? "grid grid-cols-2 gap-2"
+                        : tier === "SECONDARY"
+                          ? "grid grid-cols-4 gap-1.5"
+                          : "grid grid-cols-2 gap-1.5"
+                    }
+                  >
+                    {PHASE_OPTIONS.filter((option) => option.tier === tier).map(
+                      (option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() =>
+                            applyInteraction({
+                              type: "PHASE_SELECTED",
+                              phase: option.value,
+                            })
+                          }
+                          title={option.label}
+                          aria-label={option.label}
+                          className={`flex flex-col items-center justify-center rounded-xl border font-semibold transition-all ${
+                            tier === "PRIMARY"
+                              ? "min-h-20 px-2 py-2"
+                              : tier === "SECONDARY"
+                                ? "min-h-16 px-1 py-1.5"
+                                : "min-h-11 min-w-14 px-1 py-1"
+                          } ${
+                            pendingThreat.phase === option.value
+                              ? PHASE_TONES[option.tone].active
+                              : PHASE_TONES[option.tone].idle
+                          }`}
+                          aria-pressed={pendingThreat.phase === option.value}
+                        >
+                          <span
+                            className={
+                              tier === "PRIMARY"
+                                ? "text-3xl font-black leading-none"
+                                : tier === "SECONDARY"
+                                  ? "text-xl font-black leading-none"
+                                  : "text-xs font-black leading-none"
+                            }
+                            aria-hidden="true"
+                          >
+                            {option.icon}
+                          </span>
+                          <span className={`${tier === "PRIMARY" ? "mt-2 text-xs" : "mt-1 text-[10px]"} leading-none`}>
+                            {option.shortLabel}
+                          </span>
+                        </button>
+                      ),
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </section>
+
+        <div className="order-3 min-w-0 md:col-span-1 lg:col-start-3 lg:row-start-1">
           <DisciplineControls
             players={session.players}
             onCourtPlayerIds={replay.onCourtPlayerIds}
@@ -660,41 +636,34 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             discipline={chronologyReplay.discipline}
             periodDiscipline={periodDiscipline}
             period={session.period}
+            onInteractionStart={() => setInteraction(IDLE_LIVE_INTERACTION)}
             onFoul={(side, playerId) => recordFoul(matchId, side, playerId)}
             onCard={(side, color, playerId, causesInferiority) =>
-              recordCard(
+              recordCard(matchId, side, color, playerId, causesInferiority)
+            }
+          />
+        </div>
+
+        <div className="order-4 min-w-0 md:col-span-2 lg:col-span-3">
+          <RecentEventsPanel
+            events={recentEvents}
+            timeline={chronologyReplay.timeline}
+            players={session.players}
+            onDelete={(eventId) => softDeleteEvent(matchId, eventId)}
+            onRestore={(eventId) => restoreEvent(matchId, eventId)}
+            onSave={(eventId, target, changes) =>
+              editAndReorderEvent(matchId, eventId, target, changes)
+            }
+            onMoveWithinMinute={(eventId, targetEventId, placement) =>
+              moveEventWithinMinute(
                 matchId,
-                side,
-                color,
-                playerId,
-                causesInferiority,
+                eventId,
+                targetEventId,
+                placement,
               )
             }
           />
-        </section>
-
-        <RecentEventsPanel
-          events={recentEvents}
-          timeline={chronologyReplay.timeline}
-          players={session.players}
-          onDelete={(eventId) => softDeleteEvent(matchId, eventId)}
-          onRestore={(eventId) => restoreEvent(matchId, eventId)}
-          onSave={(eventId, target, changes) =>
-            editAndReorderEvent(matchId, eventId, target, changes)
-          }
-          onMoveWithinMinute={(
-            eventId,
-            targetEventId,
-            placement,
-          ) =>
-            moveEventWithinMinute(
-              matchId,
-              eventId,
-              targetEventId,
-              placement,
-            )
-          }
-        />
+        </div>
       </main>
     </div>
   );
