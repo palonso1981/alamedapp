@@ -10,8 +10,11 @@ import {
   createLineupInitializedEvent,
   createLiveThreatEvent,
   createSubstitutionEvent,
+  deriveGlobalMinute,
   editEvent,
   MatchIntegrityError,
+  moveEventWithinMinute,
+  normalizeMatchClock,
   reorderEvent,
   replayMatch,
   restoreEvent,
@@ -540,7 +543,7 @@ test("expulsión propia usa INFERIORIDAD sin identidad ni minutos individuales",
   assert.equal(replay.inferiorityActive, true);
   assert.equal(replay.onCourtPlayerIds.length, 5);
   assert.ok(replay.onCourtPlayerIds.includes(INFERIORITY_SLOT_ID));
-  assert.ok(!replay.benchPlayerIds.includes("p1"));
+  assert.ok(replay.benchPlayerIds.includes("p1"));
   assert.ok(replay.dismissedPlayerIds.includes("p1"));
   assert.equal(replay.playerMinutes.p1.totalMinutes, 4);
   assert.equal(replay.playerMinutes[INFERIORITY_SLOT_ID], undefined);
@@ -578,6 +581,7 @@ test("faltas y tarjetas se recalculan al editar y eliminar", () => {
       matchId: "match-a",
       position: { period: 1, minute: 2, order: 1 },
       side: "FOR",
+      playerId: "p1",
       now: 2,
     }),
     createFoulEvent({
@@ -585,6 +589,7 @@ test("faltas y tarjetas se recalculan al editar y eliminar", () => {
       matchId: "match-a",
       position: { period: 1, minute: 2, order: 2 },
       side: "AGAINST",
+      playerId: "p2",
       now: 3,
     }),
     createCardEvent({
@@ -626,6 +631,224 @@ test("faltas y tarjetas se recalculan al editar y eliminar", () => {
   });
 });
 
+test("faltas guardan jugador y numeración por periodo derivada del orden", () => {
+  let events = initialLineup();
+  events = appendEvents(players, events, [
+    createFoulEvent({
+      id: "foul-1",
+      matchId: "match-a",
+      position: { period: 1, minute: 5, order: 1 },
+      side: "FOR",
+      playerId: "p1",
+      now: 2,
+    }),
+    createFoulEvent({
+      id: "foul-2",
+      matchId: "match-a",
+      position: { period: 1, minute: 5, order: 2 },
+      side: "FOR",
+      playerId: "p2",
+      now: 3,
+    }),
+    createFoulEvent({
+      id: "foul-3",
+      matchId: "match-a",
+      position: { period: 1, minute: 5, order: 3 },
+      side: "FOR",
+      playerId: "p3",
+      now: 4,
+    }),
+    createFoulEvent({
+      id: "foul-period-2",
+      matchId: "match-a",
+      position: { period: 2, minute: 1, order: 1 },
+      side: "FOR",
+      playerId: "p4",
+      now: 5,
+    }),
+  ]);
+
+  let replay = replayMatch(players, events);
+  assert.deepEqual(
+    replay.timeline
+      .flatMap((entry) =>
+        entry.event.type === "foul_recorded"
+          ? [[entry.event.id, entry.event.playerId, entry.periodFoulNumber]]
+          : [],
+      ),
+    [
+      ["foul-1", "p1", 1],
+      ["foul-2", "p2", 2],
+      ["foul-3", "p3", 3],
+      ["foul-period-2", "p4", 1],
+    ],
+  );
+  assert.equal(replay.disciplineByPeriod[1].for.fouls, 3);
+  assert.equal(replay.disciplineByPeriod[2].for.fouls, 1);
+
+  events = moveEventWithinMinute(
+    players,
+    events,
+    "foul-3",
+    "foul-1",
+    "BEFORE",
+    6,
+  );
+  replay = replayMatch(players, events);
+  assert.deepEqual(
+    replay.timeline
+      .filter(
+        (entry) =>
+          entry.event.type === "foul_recorded" && entry.event.period === 1,
+      )
+      .map((entry) => [entry.event.id, entry.periodFoulNumber]),
+    [
+      ["foul-3", 1],
+      ["foul-1", 2],
+      ["foul-2", 3],
+    ],
+  );
+
+  events = editEvent(
+    players,
+    events,
+    "foul-1",
+    { foul: { playerId: "p5" } },
+    7,
+  );
+  events = softDeleteEvent(players, events, "foul-3", 8);
+  replay = replayMatch(players, events);
+  assert.deepEqual(
+    replay.timeline.flatMap((entry) =>
+      entry.event.type === "foul_recorded" && entry.event.period === 1
+        ? [[entry.event.id, entry.event.playerId, entry.periodFoulNumber]]
+        : [],
+    ),
+    [
+      ["foul-1", "p5", 1],
+      ["foul-2", "p2", 2],
+    ],
+  );
+
+  events = restoreEvent(players, events, "foul-3", 9);
+  events = reorderEvent(
+    players,
+    events,
+    "foul-1",
+    { period: 2, minute: 1, order: 2 },
+    10,
+  );
+  replay = replayMatch(players, events);
+  assert.equal(replay.disciplineByPeriod[1].for.fouls, 2);
+  assert.equal(replay.disciplineByPeriod[2].for.fouls, 2);
+});
+
+test("una roja no altera la alineación salvo que exista sustitución a inferioridad", () => {
+  let events = initialLineup();
+  events = appendEvents(players, events, [
+    createCardEvent({
+      id: "bench-red",
+      matchId: "match-a",
+      position: { period: 1, minute: 2, order: 1 },
+      side: "FOR",
+      color: "RED",
+      playerId: "p6",
+      now: 2,
+    }),
+    createCardEvent({
+      id: "court-red-only",
+      matchId: "match-a",
+      position: { period: 1, minute: 3, order: 1 },
+      side: "FOR",
+      color: "RED",
+      playerId: "p1",
+      now: 3,
+    }),
+  ]);
+
+  let replay = replayMatch(players, events);
+  assert.equal(replay.inferiorityActive, false);
+  assert.deepEqual(replay.onCourtPlayerIds, ["p1", "p2", "p3", "p4", "p5"]);
+  assert.ok(replay.benchPlayerIds.includes("p6"));
+  assert.equal(replay.discipline.for.redCards, 2);
+
+  events = appendEvents(players, events, [
+    createCardEvent({
+      id: "court-red-with-reduction",
+      matchId: "match-a",
+      position: { period: 1, minute: 4, order: 1 },
+      side: "FOR",
+      color: "RED",
+      playerId: "p2",
+      now: 4,
+    }),
+    createSubstitutionEvent({
+      id: "red-reduction",
+      matchId: "match-a",
+      position: { period: 1, minute: 4, order: 2 },
+      playerOutId: "p2",
+      playerInId: INFERIORITY_SLOT_ID,
+      now: 5,
+    }),
+  ]);
+  replay = replayMatch(players, events);
+  assert.equal(replay.inferiorityActive, true);
+  assert.ok(replay.onCourtPlayerIds.includes(INFERIORITY_SLOT_ID));
+  assert.ok(replay.benchPlayerIds.includes("p2"));
+  assert.equal(replay.discipline.for.redCards, 3);
+});
+
+test("las amenazas preparan secuencias causales sin convertir la continuación en fase", () => {
+  let events = initialLineup();
+  const root = createLiveThreatEvent({
+    id: "sequence-root",
+    matchId: "match-a",
+    position: { period: 1, minute: 6, order: 1 },
+    side: "FOR",
+    playerId: "p1",
+    origin: { x: 0.7, y: 0.4 },
+    outcome: "PARADA",
+    phase: "POSITIONAL",
+    now: 2,
+  });
+  const continuation = createLiveThreatEvent({
+    id: "sequence-child",
+    matchId: "match-a",
+    position: { period: 1, minute: 6, order: 2 },
+    side: "FOR",
+    playerId: "p2",
+    origin: { x: 0.8, y: 0.5 },
+    outcome: "FUERA",
+    phase: "POSITIONAL",
+    sequenceId: root.sequenceId,
+    parentEventId: root.id,
+    now: 3,
+  });
+  events = appendEvents(players, events, [root, continuation]);
+  assert.equal(continuation.sequenceId, root.id);
+  assert.equal(continuation.parentEventId, root.id);
+  assert.equal(replayMatch(players, events).issues.length, 0);
+
+  const invalidContinuation = createLiveThreatEvent({
+    id: "invalid-sequence-child",
+    matchId: "match-a",
+    position: { period: 1, minute: 6, order: 3 },
+    side: "FOR",
+    playerId: "p3",
+    origin: { x: 0.75, y: 0.5 },
+    outcome: "GOL",
+    phase: "POSITIONAL",
+    parentEventId: root.id,
+    now: 4,
+  });
+  assert.throws(
+    () => appendEvent(players, events, invalidContinuation),
+    (error) =>
+      error instanceof MatchIntegrityError &&
+      error.issues.some((issue) => issue.code === "INVALID_EVENT_LINK"),
+  );
+});
+
 test("persistencia local conserva sesión e historial y aísla cada matchId", () => {
   const storage = new MemoryStorage();
   const initialEventsA = initialLineup("match-a");
@@ -643,6 +866,7 @@ test("persistencia local conserva sesión e historial y aísla cada matchId", ()
       matchId: "match-a",
       position: { period: 1, minute: 8, order: 1 },
       side: "AGAINST",
+      playerId: "p3",
       now: 3,
     }),
   ]);
@@ -651,6 +875,7 @@ test("persistencia local conserva sesión e historial y aísla cada matchId", ()
     players,
     period: 1,
     minute: 8,
+    periodMinutes: { 1: 8, 2: 0 },
     events: eventsA,
     past: [initialEventsA],
     future: [],
@@ -662,6 +887,7 @@ test("persistencia local conserva sesión e historial y aísla cada matchId", ()
     ...sessionA,
     matchId: "match-b",
     minute: 3,
+    periodMinutes: { 1: 3, 2: 0 },
     events: initialLineup("match-b"),
     past: [],
   };
@@ -673,11 +899,13 @@ test("persistencia local conserva sesión e historial y aísla cada matchId", ()
   const restoredA = loadMatchSession("match-a", storage);
   const restoredB = loadMatchSession("match-b", storage);
   assert.equal(restoredA?.minute, 8);
+  assert.deepEqual(restoredA?.periodMinutes, { 1: 8, 2: 0 });
   assert.equal(restoredA?.events[0].matchId, "match-a");
   assert.equal(restoredA?.events.length, 3);
   assert.equal(restoredA?.past.length, 1);
   assert.equal(restoredA?.lastSavedAt, 100);
   assert.equal(restoredB?.minute, 3);
+  assert.deepEqual(restoredB?.periodMinutes, { 1: 3, 2: 0 });
   assert.equal(restoredB?.events[0].matchId, "match-b");
 
   assert.equal(
@@ -700,6 +928,52 @@ test("persistencia local conserva sesión e historial y aísla cada matchId", ()
       .against.fouls,
     0,
   );
+});
+
+test("persistencia migra faltas locales antiguas sin destruir la sesión", () => {
+  const storage = new MemoryStorage();
+  const oldFoul = {
+    id: "old-foul",
+    matchId: "legacy-local",
+    schemaVersion: 1,
+    period: 1,
+    minute: 3,
+    order: 1,
+    createdAt: 2,
+    updatedAt: 2,
+    deletedAt: null,
+    type: "foul_recorded",
+    side: "FOR",
+  };
+  storage.setItem(
+    matchStorageKey("legacy-local"),
+    JSON.stringify({
+      storageVersion: 1,
+      savedAt: 10,
+      session: {
+        matchId: "legacy-local",
+        players,
+        period: 1,
+        minute: 3,
+        events: [initialLineup("legacy-local")[0], oldFoul],
+        past: [],
+        future: [],
+      },
+    }),
+  );
+
+  const restored = loadMatchSession("legacy-local", storage);
+  assert.ok(restored);
+  assert.deepEqual(restored.periodMinutes, { 1: 3, 2: 0 });
+  const migratedFoul = restored.events.find(
+    (event) => event.type === "foul_recorded",
+  );
+  assert.equal(migratedFoul?.type, "foul_recorded");
+  if (migratedFoul?.type === "foul_recorded") {
+    assert.equal(migratedFoul.source, "legacy_local");
+    assert.equal(migratedFoul.playerId, undefined);
+  }
+  assert.equal(replayMatch(restored.players, restored.events).issues.length, 0);
 });
 
 test("Zustand aísla partidos y soporta undo/redo", () => {
@@ -778,13 +1052,122 @@ test("el reloj retrocede hasta cero sin alterar eventos y permite inserción ret
   assert.equal(session.events.length, 3);
 });
 
+test("el reloj reglamentario limita cada periodo a 0-20 sin tocar eventos", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "bounded-clock";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  actions.setClock(matchId, 1, 20);
+  actions.recordThreat(matchId, {
+    side: "FOR",
+    playerId: "p1",
+    origin: { x: 0.7, y: 0.5 },
+    outcome: "GOL",
+    phase: "POSITIONAL",
+  });
+  const eventsAtLimit = useMatchStore.getState().matches[matchId].events;
+
+  actions.incrementMinute(matchId);
+  actions.incrementMinute(matchId);
+  let session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.period, 1);
+  assert.equal(session.minute, 20);
+  assert.deepEqual(session.events, eventsAtLimit);
+
+  actions.setClock(matchId, 1, -50);
+  actions.decrementMinute(matchId);
+  session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.minute, 0);
+  assert.deepEqual(session.events, eventsAtLimit);
+
+  actions.setClock(matchId, 99, 99);
+  session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.period, 2);
+  assert.equal(session.minute, 20);
+  assert.deepEqual(session.events, eventsAtLimit);
+});
+
+test("cambiar P1/P2 conserva cronología y recuerda el minuto de cada periodo", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "period-switch";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  actions.setClock(matchId, 1, 17);
+  actions.recordFoul(matchId, "FOR", "p1");
+  const p1Events = useMatchStore.getState().matches[matchId].events;
+
+  actions.changePeriod(matchId, 2);
+  let session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.period, 2);
+  assert.equal(session.minute, 0);
+  assert.deepEqual(session.events, p1Events);
+
+  actions.setClock(matchId, 2, 8);
+  actions.recordThreat(matchId, {
+    side: "AGAINST",
+    origin: { x: 0.2, y: 0.4 },
+    outcome: "FUERA",
+    phase: "TRANSITION",
+  });
+  const eventsAcrossPeriods = useMatchStore.getState().matches[matchId].events;
+
+  actions.changePeriod(matchId, 1);
+  session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.minute, 17);
+  assert.deepEqual(session.events, eventsAcrossPeriods);
+
+  actions.changePeriod(matchId, 2);
+  session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.minute, 8);
+  assert.deepEqual(session.periodMinutes, { 1: 17, 2: 8 });
+  assert.deepEqual(session.events, eventsAcrossPeriods);
+  assert.equal(replayMatch(session.players, session.events).issues.length, 0);
+});
+
+test("el minuto global se deriva de periodo y minuto sin persistir otra verdad", () => {
+  assert.equal(deriveGlobalMinute(1, 0), 0);
+  assert.equal(deriveGlobalMinute(1, 1), 1);
+  assert.equal(deriveGlobalMinute(1, 20), 20);
+  assert.equal(deriveGlobalMinute(2, 0), 20);
+  assert.equal(deriveGlobalMinute(2, 1), 21);
+  assert.equal(deriveGlobalMinute(2, 8), 28);
+  assert.equal(deriveGlobalMinute(2, 20), 40);
+  assert.equal(deriveGlobalMinute(3, 5, 10), 25);
+  assert.deepEqual(normalizeMatchClock(0, -1), { period: 1, minute: 0 });
+  assert.deepEqual(normalizeMatchClock(3, 21), { period: 2, minute: 20 });
+});
+
+test("persistencia local conserva el reloj independiente de P1 y P2", () => {
+  const storage = new MemoryStorage();
+  const session: MatchSession = {
+    matchId: "persisted-clock",
+    players,
+    period: 2,
+    minute: 8,
+    periodMinutes: { 1: 20, 2: 8 },
+    events: initialLineup("persisted-clock"),
+    past: [],
+    future: [],
+    lastError: null,
+    persistenceStatus: "idle",
+    lastSavedAt: null,
+  };
+
+  assert.equal(saveMatchSession(session, storage, 500).ok, true);
+  const restored = loadMatchSession("persisted-clock", storage);
+  assert.equal(restored?.period, 2);
+  assert.equal(restored?.minute, 8);
+  assert.deepEqual(restored?.periodMinutes, { 1: 20, 2: 8 });
+  assert.deepEqual(restored?.events, session.events);
+});
+
 test("Zustand aplica expulsión e inferioridad atómicamente y undo/redo recalcula", () => {
   useMatchStore.setState({ matches: {} });
   const matchId = "atomic-red";
   const actions = useMatchStore.getState();
   actions.ensureMatch(matchId);
   actions.setClock(matchId, 1, 5);
-  actions.recordCard(matchId, "FOR", "RED", "p1");
+  actions.recordCard(matchId, "FOR", "RED", "p1", true);
 
   let session = useMatchStore.getState().matches[matchId];
   assert.equal(session.events.length, 3);
@@ -805,6 +1188,85 @@ test("Zustand aplica expulsión e inferioridad atómicamente y undo/redo recalcu
   replay = replayMatch(session.players, session.events);
   assert.equal(replay.inferiorityActive, true);
   assert.equal(replay.discipline.for.redCards, 1);
+});
+
+test("Zustand mantiene roja de pista o banquillo independiente de inferioridad", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "independent-red";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  actions.setClock(matchId, 1, 4);
+
+  actions.recordCard(matchId, "FOR", "RED", "p6", false);
+  actions.recordCard(matchId, "FOR", "RED", "p1", false);
+
+  const session = useMatchStore.getState().matches[matchId];
+  const replay = replayMatch(session.players, session.events);
+  assert.equal(session.events.length, 3);
+  assert.equal(replay.inferiorityActive, false);
+  assert.ok(replay.onCourtPlayerIds.includes("p1"));
+  assert.ok(replay.benchPlayerIds.includes("p6"));
+  assert.equal(replay.discipline.for.redCards, 2);
+});
+
+test("drag por order y undo/redo renumeran faltas dentro del mismo minuto", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "foul-drag";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  actions.setClock(matchId, 1, 6);
+  actions.recordFoul(matchId, "FOR", "p1");
+  actions.recordFoul(matchId, "FOR", "p2");
+  actions.recordFoul(matchId, "FOR", "p3");
+
+  let session = useMatchStore.getState().matches[matchId];
+  const fouls = session.events.filter(
+    (event) => event.type === "foul_recorded",
+  );
+  actions.moveEventWithinMinute(
+    matchId,
+    fouls[2].id,
+    fouls[0].id,
+    "BEFORE",
+  );
+
+  session = useMatchStore.getState().matches[matchId];
+  let replay = replayMatch(session.players, session.events);
+  assert.deepEqual(
+    replay.timeline
+      .flatMap((entry) =>
+        entry.event.type === "foul_recorded"
+          ? [[entry.event.playerId, entry.periodFoulNumber]]
+          : [],
+      ),
+    [
+      ["p3", 1],
+      ["p1", 2],
+      ["p2", 3],
+    ],
+  );
+
+  actions.undo(matchId);
+  session = useMatchStore.getState().matches[matchId];
+  replay = replayMatch(session.players, session.events);
+  assert.deepEqual(
+    replay.timeline
+      .flatMap((entry) =>
+        entry.event.type === "foul_recorded" ? [entry.event.playerId] : [],
+      ),
+    ["p1", "p2", "p3"],
+  );
+
+  actions.redo(matchId);
+  session = useMatchStore.getState().matches[matchId];
+  replay = replayMatch(session.players, session.events);
+  assert.deepEqual(
+    replay.timeline
+      .flatMap((entry) =>
+        entry.event.type === "foul_recorded" ? [entry.event.playerId] : [],
+      ),
+    ["p3", "p1", "p2"],
+  );
 });
 
 test("Zustand recalcula marcador con goles propios/recibidos y undo/redo", () => {

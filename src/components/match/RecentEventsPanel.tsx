@@ -1,8 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { PointerEvent, useRef, useState } from "react";
 
-import { EventEditChanges } from "../../lib/matchEngine";
+import {
+  EventEditChanges,
+  normalizeMatchClock,
+  REGULATION_MATCH_CLOCK,
+} from "../../lib/matchEngine";
 import {
   contextLabel,
   eventDescription,
@@ -35,6 +39,7 @@ interface EventDraft {
   phase?: LiveThreatPhase;
   cardColor?: "YELLOW" | "RED";
   stateActive?: boolean;
+  playerId?: string;
 }
 
 interface RecentEventsPanelProps {
@@ -47,6 +52,11 @@ interface RecentEventsPanelProps {
     eventId: string,
     target: EventPosition,
     changes: EventEditChanges,
+  ) => void;
+  onMoveWithinMinute: (
+    eventId: string,
+    targetEventId: string,
+    placement: "BEFORE" | "AFTER",
   ) => void;
 }
 
@@ -61,6 +71,9 @@ function draftFor(event: MatchEvent): EventDraft {
     draft.phase = event.phase;
   } else if (event.type === "card_recorded") {
     draft.cardColor = event.color;
+    draft.playerId = event.playerId;
+  } else if (event.type === "foul_recorded") {
+    draft.playerId = event.playerId;
   } else if (event.type === "game_state_changed") {
     draft.stateActive = event.active;
   }
@@ -77,7 +90,15 @@ function editChanges(event: MatchEvent, draft: EventDraft): EventEditChanges {
     };
   }
   if (event.type === "card_recorded") {
-    return { card: { color: draft.cardColor ?? event.color } };
+    return {
+      card: {
+        color: draft.cardColor ?? event.color,
+        playerId: draft.playerId ?? event.playerId,
+      },
+    };
+  }
+  if (event.type === "foul_recorded") {
+    return { foul: { playerId: draft.playerId ?? event.playerId } };
   }
   if (event.type === "game_state_changed") {
     return { gameState: { active: draft.stateActive ?? event.active } };
@@ -92,13 +113,99 @@ export function RecentEventsPanel({
   onDelete,
   onRestore,
   onSave,
+  onMoveWithinMinute,
 }: RecentEventsPanelProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<EventDraft | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    eventId: string;
+    placement: "BEFORE" | "AFTER";
+  } | null>(null);
+  const dragRef = useRef<{
+    eventId: string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
 
   const startEditing = (event: MatchEvent) => {
     setEditingId(event.id);
     setDraft(draftFor(event));
+  };
+
+  const resetDrag = () => {
+    dragRef.current = null;
+    setDraggingId(null);
+    setDropTarget(null);
+  };
+
+  const handlePointerDown = (
+    pointer: PointerEvent<HTMLButtonElement>,
+    event: MatchEvent,
+  ) => {
+    pointer.currentTarget.setPointerCapture(pointer.pointerId);
+    dragRef.current = {
+      eventId: event.id,
+      pointerId: pointer.pointerId,
+      startX: pointer.clientX,
+      startY: pointer.clientY,
+    };
+  };
+
+  const handlePointerMove = (pointer: PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== pointer.pointerId) return;
+    const distance = Math.hypot(
+      pointer.clientX - drag.startX,
+      pointer.clientY - drag.startY,
+    );
+    if (!draggingId && distance < 10) return;
+    if (!draggingId) setDraggingId(drag.eventId);
+
+    const source = events.find((event) => event.id === drag.eventId);
+    const targetElement = document
+      .elementFromPoint(pointer.clientX, pointer.clientY)
+      ?.closest<HTMLElement>("[data-event-id]");
+    const target = events.find(
+      (event) => event.id === targetElement?.dataset.eventId,
+    );
+    if (
+      !source ||
+      !target ||
+      source.id === target.id ||
+      source.period !== target.period ||
+      source.minute !== target.minute ||
+      target.deletedAt !== null
+    ) {
+      setDropTarget(null);
+      return;
+    }
+    const bounds = targetElement?.getBoundingClientRect();
+    const appearsBefore = bounds
+      ? pointer.clientY < bounds.top + bounds.height / 2
+      : true;
+    setDropTarget({
+      eventId: target.id,
+      // La lista se pinta en orden descendente: arriba equivale a más tarde.
+      placement: appearsBefore ? "AFTER" : "BEFORE",
+    });
+    pointer.preventDefault();
+  };
+
+  const handlePointerUp = (pointer: PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (drag && draggingId && dropTarget) {
+      onMoveWithinMinute(
+        drag.eventId,
+        dropTarget.eventId,
+        dropTarget.placement,
+      );
+    }
+    if (pointer.currentTarget.hasPointerCapture(pointer.pointerId)) {
+      pointer.currentTarget.releasePointerCapture(pointer.pointerId);
+    }
+    resetDrag();
   };
 
   return (
@@ -127,7 +234,12 @@ export function RecentEventsPanel({
           return (
             <article
               key={event.id}
+              data-event-id={event.id}
               className={`rounded-xl border p-3 text-sm ${
+                dropTarget?.eventId === event.id
+                  ? "border-cyan-300 ring-2 ring-cyan-400/40"
+                  : ""
+              } ${
                 deleted
                   ? "border-dashed border-gray-700 bg-gray-950/70 opacity-60"
                   : "border-gray-800 bg-gray-800"
@@ -139,7 +251,7 @@ export function RecentEventsPanel({
                     P{event.period} · {event.minute}&apos; · #{event.order}
                   </span>
                   <p className="truncate font-semibold text-gray-100">
-                    {eventDescription(event, players)}
+                    {eventDescription(event, players, entry)}
                   </p>
                 </div>
                 <div className="flex shrink-0 gap-1">
@@ -155,6 +267,20 @@ export function RecentEventsPanel({
                     <>
                       <button
                         type="button"
+                        onPointerDown={(pointer) =>
+                          handlePointerDown(pointer, event)
+                        }
+                        onPointerMove={handlePointerMove}
+                        onPointerUp={handlePointerUp}
+                        onPointerCancel={resetDrag}
+                        className="grid min-h-10 min-w-10 touch-none place-items-center rounded-lg bg-gray-950 text-xl text-gray-400 active:cursor-grabbing"
+                        aria-label={`Reordenar ${eventDescription(event, players, entry)}`}
+                        title="Arrastra dentro del mismo minuto"
+                      >
+                        ⠿
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => startEditing(event)}
                         className="rounded-lg bg-gray-700 px-2 py-1 text-xs font-bold hover:bg-gray-600"
                       >
@@ -164,7 +290,7 @@ export function RecentEventsPanel({
                         type="button"
                         onClick={() => onDelete(event.id)}
                         className="rounded-lg px-2 py-1 text-xs text-gray-400 hover:bg-red-950 hover:text-red-200"
-                        aria-label={`Eliminar ${eventDescription(event, players)}`}
+                        aria-label={`Eliminar ${eventDescription(event, players, entry)}`}
                       >
                         ×
                       </button>
@@ -195,6 +321,13 @@ export function RecentEventsPanel({
                         <input
                           type="number"
                           min={field === "period" || field === "order" ? 1 : 0}
+                          max={
+                            field === "period"
+                              ? REGULATION_MATCH_CLOCK.regulationPeriods
+                              : field === "minute"
+                                ? REGULATION_MATCH_CLOCK.periodDurationMinutes
+                                : undefined
+                          }
                           value={draft[field]}
                           onChange={(change) =>
                             setDraft({
@@ -261,6 +394,26 @@ export function RecentEventsPanel({
                     </div>
                   )}
 
+                  {(event.type === "foul_recorded" ||
+                    (event.type === "card_recorded" && event.side === "FOR")) && (
+                    <label className="block text-[9px] uppercase text-gray-500">
+                      Jugador CDA
+                      <select
+                        value={draft.playerId ?? ""}
+                        onChange={(change) =>
+                          setDraft({ ...draft, playerId: change.target.value })
+                        }
+                        className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-2 py-2 text-xs text-white"
+                      >
+                        {players.map((player) => (
+                          <option key={player.id} value={player.id}>
+                            {player.number}. {player.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+
                   {event.type === "game_state_changed" && (
                     <button
                       type="button"
@@ -279,11 +432,14 @@ export function RecentEventsPanel({
                     <button
                       type="button"
                       onClick={() => {
+                        const clock = normalizeMatchClock(
+                          draft.period,
+                          draft.minute,
+                        );
                         onSave(
                           event.id,
                           {
-                            period: Math.max(1, Math.trunc(draft.period)),
-                            minute: Math.max(0, Math.trunc(draft.minute)),
+                            ...clock,
                             order: Math.max(1, Math.trunc(draft.order)),
                           },
                           editChanges(event, draft),

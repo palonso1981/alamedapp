@@ -1,6 +1,7 @@
 import {
   CardColor,
   CardRecordedEvent,
+  DisciplineSummary,
   DisciplineSide,
   EventPosition,
   FoulRecordedEvent,
@@ -26,6 +27,48 @@ import {
 } from "../types";
 
 export const MAX_ON_COURT = 5;
+
+export interface MatchClockConfig {
+  regulationPeriods: number;
+  periodDurationMinutes: number;
+}
+
+export const REGULATION_MATCH_CLOCK: Readonly<MatchClockConfig> = {
+  regulationPeriods: 2,
+  periodDurationMinutes: 20,
+};
+
+export function normalizeMatchClock(
+  period: number,
+  minute: number,
+  config: MatchClockConfig = REGULATION_MATCH_CLOCK,
+): Pick<EventPosition, "period" | "minute"> {
+  const regulationPeriods = Math.max(1, Math.trunc(config.regulationPeriods));
+  const periodDurationMinutes = Math.max(
+    1,
+    Math.trunc(config.periodDurationMinutes),
+  );
+  return {
+    period: Math.min(regulationPeriods, Math.max(1, Math.trunc(period))),
+    minute: Math.min(periodDurationMinutes, Math.max(0, Math.trunc(minute))),
+  };
+}
+
+/**
+ * Proyecta el reloj por periodo sobre una línea temporal continua. El valor no
+ * se persiste: siempre se deriva del periodo y minuto oficiales.
+ * P2 0' representa el punto global 20; P2 1', el minuto global 21.
+ */
+export function deriveGlobalMinute(
+  period: number,
+  minute: number,
+  periodDurationMinutes = REGULATION_MATCH_CLOCK.periodDurationMinutes,
+): number {
+  const duration = Math.max(1, Math.trunc(periodDurationMinutes));
+  const safePeriod = Math.max(1, Math.trunc(period));
+  const safeMinute = Math.min(duration, Math.max(0, Math.trunc(minute)));
+  return (safePeriod - 1) * duration + safeMinute;
+}
 
 export interface ReplayOptions {
   currentClock?: Pick<EventPosition, "period" | "minute">;
@@ -76,6 +119,7 @@ export interface GameStateEventInput extends EventFactoryBase {
 
 export interface FoulEventInput extends EventFactoryBase {
   side: DisciplineSide;
+  playerId: string;
 }
 
 export interface CardEventInput extends EventFactoryBase {
@@ -88,6 +132,8 @@ interface ThreatEventInput extends EventFactoryBase {
   side: ThreatSide;
   playerId?: string;
   origin: NormalizedCoordinates;
+  sequenceId?: string;
+  parentEventId?: string;
 }
 
 export interface LiveThreatEventInput extends ThreatEventInput {
@@ -113,7 +159,7 @@ export interface EventEditChanges {
     Pick<LiveThreatRecordedEvent, "side" | "playerId" | "origin" | "phase">
   > & { outcome?: ThreatOutcome };
   gameState?: Partial<Pick<GameStateChangedEvent, "state" | "active">>;
-  foul?: Partial<Pick<FoulRecordedEvent, "side">>;
+  foul?: Partial<Pick<FoulRecordedEvent, "side" | "playerId">>;
   card?: Partial<Pick<CardRecordedEvent, "side" | "color" | "playerId">>;
 }
 
@@ -174,6 +220,8 @@ export function createFoulEvent(input: FoulEventInput): FoulRecordedEvent {
     ...eventBase(input),
     type: "foul_recorded",
     side: input.side,
+    source: "live",
+    playerId: input.playerId,
   };
 }
 
@@ -196,8 +244,9 @@ export function createLiveThreatEvent(
   if (!input.phase || (input.phase as ThreatPhase) === "UNSPECIFIED") {
     throw new Error("La captura V1 requiere una fase válida.");
   }
+  const base = eventBase(input);
   return {
-    ...eventBase(input),
+    ...base,
     type: "threat_recorded",
     source: "live",
     side: input.side,
@@ -205,14 +254,17 @@ export function createLiveThreatEvent(
     origin: { ...input.origin },
     phase: input.phase,
     outcome: input.outcome,
+    sequenceId: input.sequenceId ?? base.id,
+    parentEventId: input.parentEventId,
   };
 }
 
 export function createLegacyThreatEvent(
   input: LegacyThreatEventInput,
 ): LegacyThreatImportedEvent {
+  const base = eventBase(input);
   return {
-    ...eventBase(input),
+    ...base,
     type: "threat_recorded",
     source: "legacy_import",
     side: input.side,
@@ -220,6 +272,8 @@ export function createLegacyThreatEvent(
     origin: { ...input.origin },
     phase: input.phase ?? "UNSPECIFIED",
     outcome: input.outcome,
+    sequenceId: input.sequenceId ?? base.id,
+    parentEventId: input.parentEventId,
   };
 }
 
@@ -313,6 +367,13 @@ function gameContexts(
   return contexts;
 }
 
+function emptyDiscipline(): DisciplineSummary {
+  return {
+    for: { fouls: 0, yellowCards: 0, redCards: 0 },
+    against: { fouls: 0, yellowCards: 0, redCards: 0 },
+  };
+}
+
 export function replayMatch(
   players: Player[],
   events: MatchEvent[],
@@ -327,11 +388,11 @@ export function replayMatch(
   let flyingGoalkeeperActive = false;
   const dismissedPlayerIds = new Set<string>();
   const score = { for: 0, against: 0 };
-  const discipline = {
-    for: { fouls: 0, yellowCards: 0, redCards: 0 },
-    against: { fouls: 0, yellowCards: 0, redCards: 0 },
-  };
-  const periodDurationMinutes = options.periodDurationMinutes ?? 20;
+  const discipline = emptyDiscipline();
+  const disciplineByPeriod: Record<number, DisciplineSummary> = {};
+  const periodDurationMinutes =
+    options.periodDurationMinutes ??
+    REGULATION_MATCH_CLOCK.periodDurationMinutes;
   const totalMinutes = new Map(players.map((player) => [player.id, 0]));
   const enteredAt = new Map<string, number>();
   let lastElapsedMinute = 0;
@@ -347,11 +408,11 @@ export function replayMatch(
   );
   const matchIds = new Set(activeEvents.map((event) => event.matchId));
   const occupiedPositions = new Set<string>();
+  const eventsById = new Map(events.map((event) => [event.id, event]));
 
   const refreshBench = () => {
     benchPlayerIds = squadPlayerIds.filter(
-      (id) =>
-        !onCourtPlayerIds.includes(id) && !dismissedPlayerIds.has(id),
+      (id) => !onCourtPlayerIds.includes(id),
     );
   };
 
@@ -380,6 +441,7 @@ export function replayMatch(
   }
 
   for (const event of activeEvents) {
+    let periodFoulNumber: number | undefined;
     const eventElapsedMinute = participationMinute(
       event.period,
       event.minute,
@@ -529,6 +591,27 @@ export function replayMatch(
       if (event.outcome === "GOL") {
         score[event.side === "FOR" ? "for" : "against"] += 1;
       }
+      if (event.parentEventId) {
+        const parent = eventsById.get(event.parentEventId);
+        const parentSequenceId =
+          parent?.type === "threat_recorded"
+            ? parent.sequenceId ?? parent.id
+            : null;
+        if (
+          !parent ||
+          parent.type !== "threat_recorded" ||
+          parent.matchId !== event.matchId ||
+          compareEventPosition(parent, event) >= 0 ||
+          (event.sequenceId ?? event.id) !== parentSequenceId
+        ) {
+          issue(
+            issues,
+            event,
+            "INVALID_EVENT_LINK",
+            "La continuación debe apuntar a una amenaza anterior de la misma secuencia.",
+          );
+        }
+      }
     } else if (event.type === "game_state_changed") {
       if (event.state === "SUPERIORITY") {
         superiorityActive = event.active;
@@ -536,14 +619,43 @@ export function replayMatch(
         flyingGoalkeeperActive = event.active;
       }
     } else if (event.type === "foul_recorded") {
-      discipline[event.side === "FOR" ? "for" : "against"].fouls += 1;
+      if (
+        event.source === "live" &&
+        (!event.playerId || !squadPlayerIds.includes(event.playerId))
+      ) {
+        issue(
+          issues,
+          event,
+          "INVALID_FOUL_PLAYER",
+          "Una falta en directo debe identificar al jugador CDA implicado.",
+        );
+      } else if (event.playerId && !squadPlayerIds.includes(event.playerId)) {
+        issue(
+          issues,
+          event,
+          "INVALID_FOUL_PLAYER",
+          "La falta referencia a un jugador que no pertenece a la convocatoria.",
+        );
+      }
+      const teamKey = event.side === "FOR" ? "for" : "against";
+      discipline[teamKey].fouls += 1;
+      const periodDiscipline =
+        disciplineByPeriod[event.period] ?? emptyDiscipline();
+      periodDiscipline[teamKey].fouls += 1;
+      disciplineByPeriod[event.period] = periodDiscipline;
+      periodFoulNumber = periodDiscipline[teamKey].fouls;
     } else if (event.type === "card_recorded") {
       const teamDiscipline =
         discipline[event.side === "FOR" ? "for" : "against"];
+      const periodTeamDiscipline = (
+        disciplineByPeriod[event.period] ??= emptyDiscipline()
+      )[event.side === "FOR" ? "for" : "against"];
       if (event.color === "YELLOW") {
         teamDiscipline.yellowCards += 1;
+        periodTeamDiscipline.yellowCards += 1;
       } else {
         teamDiscipline.redCards += 1;
+        periodTeamDiscipline.redCards += 1;
       }
       if (
         event.side === "FOR" &&
@@ -561,7 +673,6 @@ export function replayMatch(
         event.playerId
       ) {
         dismissedPlayerIds.add(event.playerId);
-        refreshBench();
       }
     }
 
@@ -574,29 +685,8 @@ export function replayMatch(
         superiorityActive,
         flyingGoalkeeperActive,
       ),
+      periodFoulNumber,
     });
-  }
-
-  for (const playerId of onCourtPlayerIds) {
-    if (dismissedPlayerIds.has(playerId)) {
-      const dismissal = [...activeEvents]
-        .reverse()
-        .find(
-          (event) =>
-            event.type === "card_recorded" &&
-            event.side === "FOR" &&
-            event.color === "RED" &&
-            event.playerId === playerId,
-        );
-      if (dismissal) {
-        issue(
-          issues,
-          dismissal,
-          "DISMISSED_PLAYER_ACTIVE",
-          "Un jugador expulsado no puede permanecer en pista.",
-        );
-      }
-    }
   }
 
   const requestedCurrentMinute = options.currentClock
@@ -637,6 +727,7 @@ export function replayMatch(
     playerMinutes,
     score,
     discipline,
+    disciplineByPeriod,
     superiorityActive,
     flyingGoalkeeperActive,
     inferiorityActive: onCourtPlayerIds.includes(INFERIORITY_SLOT_ID),
@@ -855,4 +946,70 @@ export function reorderEvent(
   );
   assertValidChronology(players, next);
   return sortEvents(next);
+}
+
+export type SameMinutePlacement = "BEFORE" | "AFTER";
+
+/**
+ * Mueve un evento respecto a otro sin permitir que el gesto cambie periodo o
+ * minuto. BEFORE/AFTER se expresan en orden cronológico ascendente.
+ */
+export function moveEventWithinMinute(
+  players: Player[],
+  events: MatchEvent[],
+  eventId: string,
+  targetEventId: string,
+  placement: SameMinutePlacement,
+  now = Date.now(),
+): MatchEvent[] {
+  const current = events.find((event) => event.id === eventId);
+  const target = events.find((event) => event.id === targetEventId);
+  if (!current || !target) {
+    throw new Error("No existe alguno de los eventos que se quiere reordenar.");
+  }
+  if (current.deletedAt !== null || target.deletedAt !== null) {
+    throw new Error("No se pueden arrastrar eventos eliminados.");
+  }
+  if (
+    current.period !== target.period ||
+    current.minute !== target.minute
+  ) {
+    throw new Error("Arrastrar solo reordena eventos del mismo periodo y minuto.");
+  }
+  if (current.id === target.id) {
+    return events;
+  }
+
+  const group = sortEvents(
+    events.filter(
+      (event) =>
+        event.deletedAt === null &&
+        event.period === current.period &&
+        event.minute === current.minute,
+    ),
+  );
+  const withoutCurrent = group.filter((event) => event.id !== current.id);
+  const targetIndex = withoutCurrent.findIndex(
+    (event) => event.id === target.id,
+  );
+  withoutCurrent.splice(
+    placement === "BEFORE" ? targetIndex : targetIndex + 1,
+    0,
+    current,
+  );
+
+  const nextOrders = new Map(
+    withoutCurrent.map((event, index) => [event.id, index + 1]),
+  );
+  const next = sortEvents(
+    events.map((event) => {
+      const nextOrder = nextOrders.get(event.id);
+      if (nextOrder === undefined || nextOrder === event.order) {
+        return event;
+      }
+      return { ...event, order: nextOrder, updatedAt: now };
+    }),
+  );
+  assertValidChronology(players, next);
+  return next;
 }

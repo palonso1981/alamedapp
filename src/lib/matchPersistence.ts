@@ -1,4 +1,8 @@
-import { assertValidChronology } from "./matchEngine";
+import {
+  assertValidChronology,
+  normalizeMatchClock,
+  REGULATION_MATCH_CLOCK,
+} from "./matchEngine";
 import {
   MATCH_EVENT_SCHEMA_VERSION,
   MatchEvent,
@@ -19,6 +23,7 @@ interface PersistedMatchSession {
   players: Player[];
   period: number;
   minute: number;
+  periodMinutes: Record<number, number>;
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];
@@ -112,7 +117,12 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
     );
   }
   if (value.type === "foul_recorded") {
-    return value.side === "FOR" || value.side === "AGAINST";
+    return (
+      (value.side === "FOR" || value.side === "AGAINST") &&
+      (value.source === "live" || value.source === "legacy_local") &&
+      (value.playerId === undefined || typeof value.playerId === "string") &&
+      (value.source !== "live" || typeof value.playerId === "string")
+    );
   }
   if (value.type === "card_recorded") {
     return (
@@ -139,6 +149,9 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
   const commonThreat =
     (value.side === "FOR" || value.side === "AGAINST") &&
     (value.playerId === undefined || typeof value.playerId === "string") &&
+    (value.sequenceId === undefined || typeof value.sequenceId === "string") &&
+    (value.parentEventId === undefined ||
+      typeof value.parentEventId === "string") &&
     isOrigin(value.origin) &&
     validPhase;
 
@@ -154,6 +167,81 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
     commonThreat &&
     ["GOL", "PARADA", "FUERA", "BLOQUEADO"].includes(String(value.outcome))
   );
+}
+
+function migrateEvent(value: unknown): unknown {
+  if (!isObject(value)) {
+    return value;
+  }
+  if (value.type === "foul_recorded" && value.source === undefined) {
+    return { ...value, source: "legacy_local" };
+  }
+  if (value.type === "threat_recorded" && value.sequenceId === undefined) {
+    return { ...value, sequenceId: value.id };
+  }
+  return value;
+}
+
+function migrateEventList(value: unknown): unknown {
+  return Array.isArray(value) ? value.map(migrateEvent) : value;
+}
+
+function migratePersistedSession(value: unknown): unknown {
+  if (!isObject(value)) {
+    return value;
+  }
+  const clock = normalizeMatchClock(
+    typeof value.period === "number" ? value.period : 1,
+    typeof value.minute === "number" ? value.minute : 0,
+  );
+  const persistedPeriodMinutes = isObject(value.periodMinutes)
+    ? value.periodMinutes
+    : {};
+  const periodMinutes = Object.fromEntries(
+    Array.from(
+      { length: REGULATION_MATCH_CLOCK.regulationPeriods },
+      (_, index) => index + 1,
+    ).map((period) => {
+      const candidate = persistedPeriodMinutes[String(period)];
+      const minute =
+        typeof candidate === "number"
+          ? normalizeMatchClock(period, candidate).minute
+          : period === clock.period
+            ? clock.minute
+            : 0;
+      return [period, minute];
+    }),
+  );
+  return {
+    ...value,
+    ...clock,
+    periodMinutes,
+    events: migrateEventList(value.events),
+    past: Array.isArray(value.past)
+      ? value.past.map(migrateEventList)
+      : value.past,
+    future: Array.isArray(value.future)
+      ? value.future.map(migrateEventList)
+      : value.future,
+  };
+}
+
+function validPeriodMinutes(value: unknown): value is Record<number, number> {
+  if (!isObject(value)) {
+    return false;
+  }
+  return Array.from(
+    { length: REGULATION_MATCH_CLOCK.regulationPeriods },
+    (_, index) => index + 1,
+  ).every((period) => {
+    const minute = value[String(period)];
+    return (
+      typeof minute === "number" &&
+      Number.isInteger(minute) &&
+      minute >= 0 &&
+      minute <= REGULATION_MATCH_CLOCK.periodDurationMinutes
+    );
+  });
 }
 
 function isEventList(value: unknown, matchId: string): value is MatchEvent[] {
@@ -172,9 +260,13 @@ function validPersistedSession(
     typeof value.period !== "number" ||
     !Number.isInteger(value.period) ||
     value.period < 1 ||
+    value.period > REGULATION_MATCH_CLOCK.regulationPeriods ||
     typeof value.minute !== "number" ||
     !Number.isInteger(value.minute) ||
     value.minute < 0 ||
+    value.minute > REGULATION_MATCH_CLOCK.periodDurationMinutes ||
+    !validPeriodMinutes(value.periodMinutes) ||
+    value.periodMinutes[value.period] !== value.minute ||
     !isEventList(value.events, expectedMatchId) ||
     !Array.isArray(value.past) ||
     !value.past.every((events) => isEventList(events, expectedMatchId)) ||
@@ -220,6 +312,7 @@ export function saveMatchSession(
       players: session.players,
       period: session.period,
       minute: session.minute,
+      periodMinutes: session.periodMinutes,
       events: session.events,
       past: session.past,
       future: session.future,
@@ -252,17 +345,20 @@ export function loadMatchSession(
       return null;
     }
     const envelope: unknown = JSON.parse(raw);
+    const migratedSession = isObject(envelope)
+      ? migratePersistedSession(envelope.session)
+      : null;
     if (
       !isObject(envelope) ||
       envelope.storageVersion !== MATCH_LOCAL_STORAGE_VERSION ||
       typeof envelope.savedAt !== "number" ||
-      !validPersistedSession(envelope.session, matchId)
+      !validPersistedSession(migratedSession, matchId)
     ) {
       return null;
     }
 
     return {
-      ...envelope.session,
+      ...migratedSession,
       lastError: null,
       persistenceStatus: "saved",
       lastSavedAt: envelope.savedAt,

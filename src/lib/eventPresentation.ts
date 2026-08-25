@@ -3,6 +3,7 @@ import {
   INFERIORITY_SLOT_ID,
   MatchEvent,
   Player,
+  TimelineEntry,
 } from "../types";
 
 const PHASE_LABELS: Record<string, string> = {
@@ -32,7 +33,11 @@ export function playerLabel(players: Player[], playerId?: string): string {
   return player ? `${player.number}. ${player.name}` : playerId;
 }
 
-export function eventDescription(event: MatchEvent, players: Player[]): string {
+export function eventDescription(
+  event: MatchEvent,
+  players: Player[],
+  entry?: TimelineEntry,
+): string {
   if (event.type === "substitution") {
     return `↔ ${playerLabel(players, event.playerOutId)} → ${playerLabel(players, event.playerInId)}`;
   }
@@ -45,7 +50,14 @@ export function eventDescription(event: MatchEvent, players: Player[]): string {
     return `${event.active ? "▶" : "■"} ${state}`;
   }
   if (event.type === "foul_recorded") {
-    return `Falta ${event.side === "FOR" ? "propia" : "rival"}`;
+    const number = entry?.periodFoulNumber
+      ? `F${entry.periodFoulNumber}`
+      : "F";
+    const direction = event.side === "FOR" ? "cometida" : "recibida";
+    const player = event.playerId
+      ? playerLabel(players, event.playerId)
+      : "sin identificar";
+    return `${number} · ${player} · ${direction}`;
   }
   if (event.type === "card_recorded") {
     const card = event.color === "YELLOW" ? "🟨" : "🟥";

@@ -12,9 +12,12 @@ import {
   editEvent as editChronologyEvent,
   EventEditChanges,
   getNextOrder,
+  moveEventWithinMinute as moveChronologyEventWithinMinute,
+  normalizeMatchClock,
   replayMatch,
   reorderEvent as reorderChronologyEvent,
   restoreEvent as restoreChronologyEvent,
+  SameMinutePlacement,
   softDeleteEvent as softDeleteChronologyEvent,
 } from "../lib/matchEngine";
 import { loadMatchSession, saveMatchSession } from "../lib/matchPersistence";
@@ -57,6 +60,8 @@ interface RecordThreatInput {
   origin: NormalizedCoordinates;
   outcome: LiveThreatOutcome;
   phase: LiveThreatPhase;
+  sequenceId?: string;
+  parentEventId?: string;
 }
 
 interface MatchState {
@@ -65,14 +70,20 @@ interface MatchState {
   incrementMinute: (matchId: string) => void;
   decrementMinute: (matchId: string) => void;
   setClock: (matchId: string, period: number, minute: number) => void;
+  changePeriod: (matchId: string, period: number) => void;
   recordThreat: (matchId: string, input: RecordThreatInput) => void;
   toggleGameState: (matchId: string, state: GameStateKind) => void;
-  recordFoul: (matchId: string, side: DisciplineSide) => void;
+  recordFoul: (
+    matchId: string,
+    side: DisciplineSide,
+    playerId: string,
+  ) => void;
   recordCard: (
     matchId: string,
     side: DisciplineSide,
     color: CardColor,
     playerId?: string,
+    causesInferiority?: boolean,
   ) => void;
   swapPlayer: (matchId: string, playerOutId: string, playerInId: string) => void;
   editEvent: (
@@ -86,6 +97,12 @@ interface MatchState {
     matchId: string,
     eventId: string,
     target: EventPosition,
+  ) => void;
+  moveEventWithinMinute: (
+    matchId: string,
+    eventId: string,
+    targetEventId: string,
+    placement: SameMinutePlacement,
   ) => void;
   editAndReorderEvent: (
     matchId: string,
@@ -111,12 +128,29 @@ function createSession(matchId: string): MatchSession {
     players,
     period: 1,
     minute: 1,
+    periodMinutes: { 1: 1, 2: 0 },
     events: [lineup],
     past: [],
     future: [],
     lastError: null,
     persistenceStatus: "idle",
     lastSavedAt: null,
+  };
+}
+
+function withClock(
+  session: MatchSession,
+  period: number,
+  minute: number,
+): MatchSession {
+  const clock = normalizeMatchClock(period, minute);
+  return {
+    ...session,
+    ...clock,
+    periodMinutes: {
+      ...session.periodMinutes,
+      [clock.period]: clock.minute,
+    },
   };
 }
 
@@ -213,27 +247,35 @@ export const useMatchStore = create<MatchState>((set) => ({
 
   incrementMinute: (matchId) =>
     set((state) =>
-      updateAndPersistSession(state, matchId, (session) => ({
-        ...session,
-        minute: session.minute + 1,
-      })),
+      updateAndPersistSession(state, matchId, (session) =>
+        withClock(session, session.period, session.minute + 1),
+      ),
     ),
 
   decrementMinute: (matchId) =>
     set((state) =>
-      updateAndPersistSession(state, matchId, (session) => ({
-        ...session,
-        minute: Math.max(0, session.minute - 1),
-      })),
+      updateAndPersistSession(state, matchId, (session) =>
+        withClock(session, session.period, session.minute - 1),
+      ),
     ),
 
   setClock: (matchId, period, minute) =>
     set((state) =>
-      updateAndPersistSession(state, matchId, (session) => ({
-        ...session,
-        period: Math.max(1, Math.trunc(period)),
-        minute: Math.max(0, Math.trunc(minute)),
-      })),
+      updateAndPersistSession(state, matchId, (session) =>
+        withClock(session, period, minute),
+      ),
+    ),
+
+  changePeriod: (matchId, period) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => {
+        const targetPeriod = normalizeMatchClock(period, 0).period;
+        return withClock(
+          session,
+          targetPeriod,
+          session.periodMinutes[targetPeriod] ?? 0,
+        );
+      }),
     ),
 
   recordThreat: (matchId, input) =>
@@ -256,6 +298,8 @@ export const useMatchStore = create<MatchState>((set) => ({
             origin: input.origin,
             outcome: input.outcome,
             phase: input.phase,
+            sequenceId: input.sequenceId,
+            parentEventId: input.parentEventId,
           });
           return appendEvent(session.players, session.events, event);
         }),
@@ -292,7 +336,7 @@ export const useMatchStore = create<MatchState>((set) => ({
       ),
     ),
 
-  recordFoul: (matchId, side) =>
+  recordFoul: (matchId, side, playerId) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -308,13 +352,20 @@ export const useMatchStore = create<MatchState>((set) => ({
               ),
             },
             side,
+            playerId,
           });
           return appendEvent(session.players, session.events, event);
         }),
       ),
     ),
 
-  recordCard: (matchId, side, color, playerId) =>
+  recordCard: (
+    matchId,
+    side,
+    color,
+    playerId,
+    causesInferiority = false,
+  ) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -335,8 +386,14 @@ export const useMatchStore = create<MatchState>((set) => ({
             playerId,
           });
 
-          if (side !== "FOR" || color !== "RED") {
+          if (!causesInferiority) {
             return appendEvent(session.players, session.events, card);
+          }
+
+          if (side !== "FOR" || color !== "RED") {
+            throw new Error(
+              "Solo una roja propia puede asociarse a una reducción del quinteto.",
+            );
           }
 
           const replay = replayMatch(session.players, session.events, {
@@ -424,12 +481,33 @@ export const useMatchStore = create<MatchState>((set) => ({
   reorderEvent: (matchId, eventId, target) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
-        command(session, () =>
-          reorderChronologyEvent(
+        command(session, () => {
+          const clock = normalizeMatchClock(target.period, target.minute);
+          return reorderChronologyEvent(
             session.players,
             session.events,
             eventId,
-            target,
+            { ...clock, order: Math.max(1, Math.trunc(target.order)) },
+          );
+        }),
+      ),
+    ),
+
+  moveEventWithinMinute: (
+    matchId,
+    eventId,
+    targetEventId,
+    placement,
+  ) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) =>
+        command(session, () =>
+          moveChronologyEventWithinMinute(
+            session.players,
+            session.events,
+            eventId,
+            targetEventId,
+            placement,
           ),
         ),
       ),
@@ -439,11 +517,12 @@ export const useMatchStore = create<MatchState>((set) => ({
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
+          const clock = normalizeMatchClock(target.period, target.minute);
           const reordered = reorderChronologyEvent(
             session.players,
             session.events,
             eventId,
-            target,
+            { ...clock, order: Math.max(1, Math.trunc(target.order)) },
           );
           return editChronologyEvent(
             session.players,

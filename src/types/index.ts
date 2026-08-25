@@ -87,6 +87,13 @@ interface ThreatEventData {
   playerId?: string;
   origin: NormalizedCoordinates;
   phase: ThreatPhase;
+  /**
+   * Identifica una secuencia causal de amenazas. En una amenaza independiente
+   * coincide con su propio id; las continuaciones heredan el de la raíz.
+   */
+  sequenceId?: string;
+  /** Amenaza inmediatamente anterior que origina esta continuación. */
+  parentEventId?: string;
 }
 
 export interface LiveThreatRecordedEvent extends MatchEventBase, ThreatEventData {
@@ -109,6 +116,9 @@ export type ThreatRecordedEvent =
 export interface FoulRecordedEvent extends MatchEventBase {
   type: "foul_recorded";
   side: DisciplineSide;
+  source: "live" | "legacy_local";
+  /** Jugador CDA que comete (FOR) o recibe (AGAINST) la falta. */
+  playerId?: string;
 }
 
 export interface CardRecordedEvent extends MatchEventBase {
@@ -133,6 +143,8 @@ export interface TimelineEntry {
   lineupPlayerIds: string[];
   benchPlayerIds: string[];
   gameContexts: GameContext[];
+  /** Número de esta falta dentro de su lado y periodo, derivado por replay. */
+  periodFoulNumber?: number;
 }
 
 export interface ReplayIssue {
@@ -149,8 +161,9 @@ export interface ReplayIssue {
     | "INVALID_POSITION"
     | "DUPLICATE_ORDER"
     | "MATCH_ID_MISMATCH"
+    | "INVALID_FOUL_PLAYER"
     | "INVALID_CARD_PLAYER"
-    | "DISMISSED_PLAYER_ACTIVE"
+    | "INVALID_EVENT_LINK"
     | "INVALID_INFERIORITY_SLOT";
   message: string;
 }
@@ -162,6 +175,7 @@ export interface ReplayResult {
   playerMinutes: Record<string, PlayerMinutes>;
   score: Score;
   discipline: DisciplineSummary;
+  disciplineByPeriod: Record<number, DisciplineSummary>;
   superiorityActive: boolean;
   flyingGoalkeeperActive: boolean;
   inferiorityActive: boolean;
@@ -198,6 +212,8 @@ export interface MatchSession {
   players: Player[];
   period: number;
   minute: number;
+  /** Memoria operativa del minutero por periodo; no forma parte de la cronología. */
+  periodMinutes: Record<number, number>;
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];
