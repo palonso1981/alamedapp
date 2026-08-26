@@ -77,6 +77,7 @@ interface MatchState {
     matchId: string,
     side: DisciplineSide,
     playerId: string,
+    origin?: NormalizedCoordinates,
   ) => void;
   recordCard: (
     matchId: string,
@@ -336,7 +337,7 @@ export const useMatchStore = create<MatchState>((set) => ({
       ),
     ),
 
-  recordFoul: (matchId, side, playerId) =>
+  recordFoul: (matchId, side, playerId, origin) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -353,6 +354,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             },
             side,
             playerId,
+            origin,
           });
           return appendEvent(session.players, session.events, event);
         }),

@@ -121,6 +121,7 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
       (value.side === "FOR" || value.side === "AGAINST") &&
       (value.source === "live" || value.source === "legacy_local") &&
       (value.playerId === undefined || typeof value.playerId === "string") &&
+      (value.origin === undefined || isOrigin(value.origin)) &&
       (value.source !== "live" || typeof value.playerId === "string")
     );
   }

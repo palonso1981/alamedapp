@@ -5,14 +5,56 @@ import {
   ThreatSide,
 } from "../types";
 
+export type ThreatCaptureStep =
+  | "OUTCOME"
+  | "GOAL_TARGET"
+  | "DETAILS"
+  | "PHASE";
+
+export type ThreatCaptureFlowId =
+  | "FOR_ORIGIN_OUTCOME_PHASE"
+  | "AGAINST_ORIGIN_OUTCOME_PHASE";
+
+export interface ThreatCaptureFlowDefinition {
+  id: ThreatCaptureFlowId;
+  side: ThreatSide;
+  steps: readonly ThreatCaptureStep[];
+}
+
+/**
+ * Los recorridos son configuración de captura, no reglas del evento. El flujo
+ * rival puede sustituir sus pasos por GOAL_TARGET/DETAILS cuando llegue la
+ * portería defensiva sin alterar el recorrido ofensivo ni el replay.
+ */
+export const THREAT_CAPTURE_FLOWS: Readonly<
+  Record<ThreatSide, ThreatCaptureFlowDefinition>
+> = {
+  FOR: {
+    id: "FOR_ORIGIN_OUTCOME_PHASE",
+    side: "FOR",
+    steps: ["OUTCOME", "PHASE"],
+  },
+  AGAINST: {
+    id: "AGAINST_ORIGIN_OUTCOME_PHASE",
+    side: "AGAINST",
+    steps: ["OUTCOME", "PHASE"],
+  },
+};
+
 export type LiveInteractionState =
   | { kind: "IDLE" }
-  | { kind: "PLAYER_SELECTED"; playerId: string }
+  | {
+      kind: "PLAYER_SELECTED";
+      playerId: string;
+      location: "COURT" | "BENCH";
+    }
   | {
       kind: "THREAT_PENDING";
+      flowId: ThreatCaptureFlowId;
       side: ThreatSide;
       playerId?: string;
       origin: NormalizedCoordinates;
+      step: "OUTCOME" | "PHASE";
       phase: LiveThreatPhase | null;
       outcome: LiveThreatOutcome | null;
     };
@@ -20,11 +62,7 @@ export type LiveInteractionState =
 export type LiveInteractionAction =
   | { type: "COURT_PLAYER_TAPPED"; playerId: string }
   | { type: "BENCH_PLAYER_TAPPED"; playerId: string }
-  | {
-      type: "COURT_TAPPED";
-      origin: NormalizedCoordinates;
-      defaultPhase?: LiveThreatPhase;
-    }
+  | { type: "COURT_TAPPED"; origin: NormalizedCoordinates }
   | { type: "PHASE_SELECTED"; phase: LiveThreatPhase }
   | { type: "OUTCOME_SELECTED"; outcome: LiveThreatOutcome }
   | { type: "CANCEL" };
@@ -51,22 +89,25 @@ export interface LiveInteractionTransition {
 
 export const IDLE_LIVE_INTERACTION: LiveInteractionState = { kind: "IDLE" };
 
-function completeThreatIfReady(
-  state: Extract<LiveInteractionState, { kind: "THREAT_PENDING" }>,
-): LiveInteractionTransition {
-  if (!state.phase || !state.outcome) {
-    return { state };
+function startThreat(
+  side: ThreatSide,
+  origin: NormalizedCoordinates,
+  playerId?: string,
+): LiveInteractionState {
+  const flow = THREAT_CAPTURE_FLOWS[side];
+  const firstStep = flow.steps[0];
+  if (firstStep !== "OUTCOME") {
+    throw new Error(`El flujo ${flow.id} todavía no tiene capturador para ${firstStep}.`);
   }
   return {
-    state: IDLE_LIVE_INTERACTION,
-    effect: {
-      type: "RECORD_THREAT",
-      side: state.side,
-      playerId: state.playerId,
-      origin: state.origin,
-      phase: state.phase,
-      outcome: state.outcome,
-    },
+    kind: "THREAT_PENDING",
+    flowId: flow.id,
+    side,
+    playerId,
+    origin,
+    step: "OUTCOME",
+    phase: null,
+    outcome: null,
   };
 }
 
@@ -79,47 +120,61 @@ export function reduceLiveInteraction(
   }
 
   if (action.type === "COURT_PLAYER_TAPPED") {
-    if (state.kind === "PLAYER_SELECTED" && state.playerId === action.playerId) {
+    if (
+      state.kind === "PLAYER_SELECTED" &&
+      state.location === "COURT" &&
+      state.playerId === action.playerId
+    ) {
       return { state: IDLE_LIVE_INTERACTION };
     }
     return {
-      state: { kind: "PLAYER_SELECTED", playerId: action.playerId },
+      state: {
+        kind: "PLAYER_SELECTED",
+        playerId: action.playerId,
+        location: "COURT",
+      },
     };
   }
 
   if (action.type === "BENCH_PLAYER_TAPPED") {
-    if (state.kind !== "PLAYER_SELECTED") {
+    if (state.kind === "PLAYER_SELECTED" && state.location === "COURT") {
+      return {
+        state: IDLE_LIVE_INTERACTION,
+        effect: {
+          type: "RECORD_SUBSTITUTION",
+          playerOutId: state.playerId,
+          playerInId: action.playerId,
+        },
+      };
+    }
+    if (
+      state.kind === "PLAYER_SELECTED" &&
+      state.location === "BENCH" &&
+      state.playerId === action.playerId
+    ) {
       return { state: IDLE_LIVE_INTERACTION };
     }
     return {
-      state: IDLE_LIVE_INTERACTION,
-      effect: {
-        type: "RECORD_SUBSTITUTION",
-        playerOutId: state.playerId,
-        playerInId: action.playerId,
+      state: {
+        kind: "PLAYER_SELECTED",
+        playerId: action.playerId,
+        location: "BENCH",
       },
     };
   }
 
   if (action.type === "COURT_TAPPED") {
     if (state.kind === "THREAT_PENDING") {
-      return {
-        state: {
-          ...state,
-          origin: action.origin,
-        },
-      };
+      return { state: { ...state, origin: action.origin } };
     }
+    const ownThreat =
+      state.kind === "PLAYER_SELECTED" && state.location === "COURT";
     return {
-      state: {
-        kind: "THREAT_PENDING",
-        side: state.kind === "PLAYER_SELECTED" ? "FOR" : "AGAINST",
-        playerId:
-          state.kind === "PLAYER_SELECTED" ? state.playerId : undefined,
-        origin: action.origin,
-        phase: action.defaultPhase ?? null,
-        outcome: null,
-      },
+      state: startThreat(
+        ownThreat ? "FOR" : "AGAINST",
+        action.origin,
+        ownThreat ? state.playerId : undefined,
+      ),
     };
   }
 
@@ -127,11 +182,34 @@ export function reduceLiveInteraction(
     return { state };
   }
 
-  if (action.type === "PHASE_SELECTED") {
-    return completeThreatIfReady({ ...state, phase: action.phase });
+  if (action.type === "OUTCOME_SELECTED") {
+    if (state.step !== "OUTCOME") {
+      return { state };
+    }
+    return {
+      state: {
+        ...state,
+        outcome: action.outcome,
+        step: "PHASE",
+      },
+    };
   }
 
-  return completeThreatIfReady({ ...state, outcome: action.outcome });
+  if (state.step !== "PHASE" || !state.outcome) {
+    return { state };
+  }
+
+  return {
+    state: IDLE_LIVE_INTERACTION,
+    effect: {
+      type: "RECORD_THREAT",
+      side: state.side,
+      playerId: state.playerId,
+      origin: state.origin,
+      phase: action.phase,
+      outcome: state.outcome,
+    },
+  };
 }
 
 export function showsThreatControls(state: LiveInteractionState): boolean {

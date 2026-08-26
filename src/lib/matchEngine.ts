@@ -74,6 +74,12 @@ export interface ReplayOptions {
   currentClock?: Pick<EventPosition, "period" | "minute">;
   throughClock?: Pick<EventPosition, "period" | "minute">;
   periodDurationMinutes?: number;
+  foulAccumulationRules?: FoulAccumulationRules;
+}
+
+export interface FoulAccumulationRules {
+  /** Umbrales de la competición. Vacío por defecto: ninguna regla implícita. */
+  thresholds: readonly number[];
 }
 
 function participationMinute(
@@ -120,6 +126,7 @@ export interface GameStateEventInput extends EventFactoryBase {
 export interface FoulEventInput extends EventFactoryBase {
   side: DisciplineSide;
   playerId: string;
+  origin?: NormalizedCoordinates;
 }
 
 export interface CardEventInput extends EventFactoryBase {
@@ -159,7 +166,7 @@ export interface EventEditChanges {
     Pick<LiveThreatRecordedEvent, "side" | "playerId" | "origin" | "phase">
   > & { outcome?: ThreatOutcome };
   gameState?: Partial<Pick<GameStateChangedEvent, "state" | "active">>;
-  foul?: Partial<Pick<FoulRecordedEvent, "side" | "playerId">>;
+  foul?: Partial<Pick<FoulRecordedEvent, "side" | "playerId" | "origin">>;
   card?: Partial<Pick<CardRecordedEvent, "side" | "color" | "playerId">>;
 }
 
@@ -222,6 +229,7 @@ export function createFoulEvent(input: FoulEventInput): FoulRecordedEvent {
     side: input.side,
     source: "live",
     playerId: input.playerId,
+    origin: input.origin ? { ...input.origin } : undefined,
   };
 }
 
@@ -409,6 +417,13 @@ export function replayMatch(
   const matchIds = new Set(activeEvents.map((event) => event.matchId));
   const occupiedPositions = new Set<string>();
   const eventsById = new Map(events.map((event) => [event.id, event]));
+  const foulThresholds = Array.from(
+    new Set(
+      (options.foulAccumulationRules?.thresholds ?? [])
+        .map((value) => Math.trunc(value))
+        .filter((value) => value > 0),
+    ),
+  ).sort((a, b) => a - b);
 
   const refreshBench = () => {
     benchPlayerIds = squadPlayerIds.filter(
@@ -442,6 +457,9 @@ export function replayMatch(
 
   for (const event of activeEvents) {
     let periodFoulNumber: number | undefined;
+    let periodFoulsBefore: number | undefined;
+    let periodFoulsAfter: number | undefined;
+    let reachedFoulThresholds: number[] | undefined;
     const eventElapsedMinute = participationMinute(
       event.period,
       event.minute,
@@ -619,6 +637,14 @@ export function replayMatch(
         flyingGoalkeeperActive = event.active;
       }
     } else if (event.type === "foul_recorded") {
+      if (event.origin && !validCoordinates(event.origin)) {
+        issue(
+          issues,
+          event,
+          "INVALID_COORDINATES",
+          "La ubicación opcional de la falta debe usar coordenadas entre 0 y 1.",
+        );
+      }
       if (
         event.source === "live" &&
         (!event.playerId || !squadPlayerIds.includes(event.playerId))
@@ -641,9 +667,16 @@ export function replayMatch(
       discipline[teamKey].fouls += 1;
       const periodDiscipline =
         disciplineByPeriod[event.period] ?? emptyDiscipline();
+      periodFoulsBefore = periodDiscipline[teamKey].fouls;
       periodDiscipline[teamKey].fouls += 1;
       disciplineByPeriod[event.period] = periodDiscipline;
       periodFoulNumber = periodDiscipline[teamKey].fouls;
+      periodFoulsAfter = periodFoulNumber;
+      reachedFoulThresholds = foulThresholds.filter(
+        (threshold) =>
+          (periodFoulsBefore ?? 0) < threshold &&
+          (periodFoulsAfter ?? 0) >= threshold,
+      );
     } else if (event.type === "card_recorded") {
       const teamDiscipline =
         discipline[event.side === "FOR" ? "for" : "against"];
@@ -686,6 +719,9 @@ export function replayMatch(
         flyingGoalkeeperActive,
       ),
       periodFoulNumber,
+      periodFoulsBefore,
+      periodFoulsAfter,
+      reachedFoulThresholds,
     });
   }
 

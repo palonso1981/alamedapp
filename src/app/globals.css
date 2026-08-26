@@ -20,6 +20,26 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+.contextual-surface-frame {
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  top: var(--context-mobile-top);
+  bottom: var(--context-mobile-bottom);
+  max-height: calc(100% - 1rem);
+}
+
+@media (min-width: 640px) {
+  .contextual-surface-frame {
+    left: var(--context-left);
+    right: var(--context-right);
+    top: var(--context-top);
+    bottom: var(--context-bottom);
+    width: min(var(--context-width), calc(100% - 1rem));
+    transform: translateX(var(--context-translate-x));
+  }
+}
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;

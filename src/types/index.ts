@@ -119,6 +119,8 @@ export interface FoulRecordedEvent extends MatchEventBase {
   source: "live" | "legacy_local";
   /** Jugador CDA que comete (FOR) o recibe (AGAINST) la falta. */
   playerId?: string;
+  /** Posición opcional, normalizada y enriquecible tras el partido. */
+  origin?: NormalizedCoordinates;
 }
 
 export interface CardRecordedEvent extends MatchEventBase {
@@ -145,6 +147,12 @@ export interface TimelineEntry {
   gameContexts: GameContext[];
   /** Número de esta falta dentro de su lado y periodo, derivado por replay. */
   periodFoulNumber?: number;
+  /** Acumulado colectivo inmediatamente anterior, derivado por replay. */
+  periodFoulsBefore?: number;
+  /** Acumulado colectivo inmediatamente posterior, derivado por replay. */
+  periodFoulsAfter?: number;
+  /** Umbrales configurados alcanzados exactamente por esta falta. */
+  reachedFoulThresholds?: number[];
 }
 
 export interface ReplayIssue {

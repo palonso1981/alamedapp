@@ -31,6 +31,7 @@ import {
   reduceLiveInteraction,
   showsThreatControls,
 } from "./liveInteraction";
+import { contextualPlacement } from "./contextualPlacement";
 import { DEMO_PLAYERS, useMatchStore } from "../store/useMatchStore";
 import {
   INFERIORITY_SLOT_ID,
@@ -748,6 +749,53 @@ test("faltas guardan jugador y numeración por periodo derivada del orden", () =
   assert.equal(replay.disciplineByPeriod[2].for.fouls, 2);
 });
 
+test("faltas admiten ubicación opcional y umbrales configurables sin persistir derivados", () => {
+  let events = initialLineup();
+  events = appendEvents(players, events, [
+    createFoulEvent({
+      id: "foul-no-origin",
+      matchId: "match-a",
+      position: { period: 1, minute: 2, order: 1 },
+      side: "FOR",
+      playerId: "p1",
+      now: 2,
+    }),
+    createFoulEvent({
+      id: "foul-with-origin",
+      matchId: "match-a",
+      position: { period: 1, minute: 3, order: 1 },
+      side: "FOR",
+      playerId: "p2",
+      origin: { x: 0.18, y: 0.76 },
+      now: 3,
+    }),
+  ]);
+
+  const replay = replayMatch(players, events, {
+    foulAccumulationRules: { thresholds: [2, 5] },
+  });
+  const fouls = replay.timeline.filter(
+    (entry) => entry.event.type === "foul_recorded",
+  );
+  assert.equal(fouls[0].event.type === "foul_recorded" && fouls[0].event.origin, undefined);
+  assert.deepEqual(
+    fouls[1].event.type === "foul_recorded" && fouls[1].event.origin,
+    { x: 0.18, y: 0.76 },
+  );
+  assert.deepEqual(
+    fouls.map((entry) => [
+      entry.periodFoulsBefore,
+      entry.periodFoulsAfter,
+      entry.reachedFoulThresholds,
+    ]),
+    [
+      [0, 1, []],
+      [1, 2, [2]],
+    ],
+  );
+  assert.equal("periodFoulNumber" in events[1], false);
+});
+
 test("una roja no altera la alineación salvo que exista sustitución a inferioridad", () => {
   let events = initialLineup();
   events = appendEvents(players, events, [
@@ -872,6 +920,7 @@ test("persistencia local conserva sesión e historial y aísla cada matchId", ()
       position: { period: 1, minute: 8, order: 1 },
       side: "AGAINST",
       playerId: "p3",
+      origin: { x: 0.24, y: 0.62 },
       now: 3,
     }),
   ]);
@@ -907,6 +956,13 @@ test("persistencia local conserva sesión e historial y aísla cada matchId", ()
   assert.deepEqual(restoredA?.periodMinutes, { 1: 8, 2: 0 });
   assert.equal(restoredA?.events[0].matchId, "match-a");
   assert.equal(restoredA?.events.length, 3);
+  const restoredFoul = restoredA?.events.find(
+    (event) => event.type === "foul_recorded",
+  );
+  assert.deepEqual(
+    restoredFoul?.type === "foul_recorded" ? restoredFoul.origin : undefined,
+    { x: 0.24, y: 0.62 },
+  );
   assert.equal(restoredA?.past.length, 1);
   assert.equal(restoredA?.lastSavedAt, 100);
   assert.equal(restoredB?.minute, 3);
@@ -1260,9 +1316,11 @@ test("tocar pista directamente prepara amenaza rival sin jugador", () => {
   });
   assert.deepEqual(transition.state, {
     kind: "THREAT_PENDING",
+    flowId: "AGAINST_ORIGIN_OUTCOME_PHASE",
     side: "AGAINST",
     playerId: undefined,
     origin: { x: 0.2, y: 0.6 },
+    step: "OUTCOME",
     phase: null,
     outcome: null,
   });
@@ -1270,9 +1328,17 @@ test("tocar pista directamente prepara amenaza rival sin jugador", () => {
     type: "PHASE_SELECTED",
     phase: "TRANSITION",
   });
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "OUTCOME");
+  assert.equal(transition.effect, undefined);
   transition = reduceLiveInteraction(transition.state, {
     type: "OUTCOME_SELECTED",
     outcome: "PARADA",
+  });
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "PHASE");
+  assert.equal(transition.effect, undefined);
+  transition = reduceLiveInteraction(transition.state, {
+    type: "PHASE_SELECTED",
+    phase: "TRANSITION",
   });
   assert.equal(transition.effect?.type, "RECORD_THREAT");
   if (transition.effect?.type === "RECORD_THREAT") {
@@ -1294,6 +1360,7 @@ test("selección puede cambiarse o cancelarse sin cronología ni controles perma
   assert.deepEqual(transition.state, {
     kind: "PLAYER_SELECTED",
     playerId: "p3",
+    location: "COURT",
   });
   transition = reduceLiveInteraction(transition.state, {
     type: "COURT_TAPPED",
@@ -1313,6 +1380,52 @@ test("selección puede cambiarse o cancelarse sin cronología ni controles perma
     playerId: "p1",
   });
   assert.deepEqual(transition.state, IDLE_LIVE_INTERACTION);
+});
+
+test("banquillo neutro abre contexto propio y tras jugador en pista mantiene sustitución", () => {
+  let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+    type: "BENCH_PLAYER_TAPPED",
+    playerId: "p6",
+  });
+  assert.deepEqual(transition, {
+    state: { kind: "PLAYER_SELECTED", playerId: "p6", location: "BENCH" },
+  });
+  assert.equal(transition.effect, undefined);
+
+  transition = reduceLiveInteraction(transition.state, {
+    type: "BENCH_PLAYER_TAPPED",
+    playerId: "p6",
+  });
+  assert.deepEqual(transition.state, IDLE_LIVE_INTERACTION);
+
+  transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+    type: "COURT_PLAYER_TAPPED",
+    playerId: "p1",
+  });
+  transition = reduceLiveInteraction(transition.state, {
+    type: "BENCH_PLAYER_TAPPED",
+    playerId: "p6",
+  });
+  assert.deepEqual(transition.effect, {
+    type: "RECORD_SUBSTITUTION",
+    playerOutId: "p1",
+    playerInId: "p6",
+  });
+});
+
+test("la superficie contextual se orienta hacia el interior en centro y bordes", () => {
+  assert.deepEqual(contextualPlacement({ x: 0.5, y: 0.5 }), {
+    horizontal: "CENTER",
+    vertical: "ABOVE",
+  });
+  assert.deepEqual(contextualPlacement({ x: 0.01, y: 0.02 }), {
+    horizontal: "START",
+    vertical: "BELOW",
+  });
+  assert.deepEqual(contextualPlacement({ x: 0.99, y: 0.98 }), {
+    horizontal: "END",
+    vertical: "ABOVE",
+  });
 });
 
 test("Zustand aplica expulsión e inferioridad atómicamente y undo/redo recalcula", () => {

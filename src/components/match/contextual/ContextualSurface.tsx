@@ -1,0 +1,83 @@
+"use client";
+
+import { CSSProperties, MouseEvent, ReactNode } from "react";
+
+import { contextualPlacement } from "../../../lib/contextualPlacement";
+import { NormalizedCoordinates } from "../../../types";
+
+interface ContextualSurfaceProps {
+  anchor: NormalizedCoordinates;
+  children: ReactNode;
+  label: string;
+  onCancel: () => void;
+  compact?: boolean;
+}
+
+type ContextualStyle = CSSProperties & {
+  "--context-left": string;
+  "--context-right": string;
+  "--context-top": string;
+  "--context-bottom": string;
+  "--context-translate-x": string;
+  "--context-mobile-top": string;
+  "--context-mobile-bottom": string;
+  "--context-width": string;
+};
+
+export function ContextualSurface({
+  anchor,
+  children,
+  label,
+  onCancel,
+  compact = false,
+}: ContextualSurfaceProps) {
+  const placement = contextualPlacement(anchor);
+  const center = placement.horizontal === "CENTER";
+  const anchorGap = compact ? "4.25rem" : "2rem";
+  const style: ContextualStyle = {
+    "--context-left":
+      placement.horizontal === "START"
+        ? "0.5rem"
+        : center
+          ? `${anchor.x * 100}%`
+          : "auto",
+    "--context-right": placement.horizontal === "END" ? "0.5rem" : "auto",
+    "--context-top":
+      placement.vertical === "BELOW"
+        ? `calc(${anchor.y * 100}% + ${anchorGap})`
+        : "auto",
+    "--context-bottom":
+      placement.vertical === "ABOVE"
+        ? `calc(${(1 - anchor.y) * 100}% + ${anchorGap})`
+        : "auto",
+    "--context-translate-x": center ? "-50%" : "0",
+    "--context-mobile-top": anchor.y >= 0.5 ? "0.5rem" : "auto",
+    "--context-mobile-bottom": anchor.y < 0.5 ? "5.5rem" : "auto",
+    "--context-width": compact ? "13rem" : "25rem",
+  };
+
+  const stopPropagation = (event: MouseEvent<HTMLElement>) => {
+    event.stopPropagation();
+  };
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-30">
+      <section
+        className="contextual-surface-frame pointer-events-auto overflow-y-auto rounded-2xl border border-white/20 bg-slate-950/95 p-2.5 pr-12 shadow-2xl backdrop-blur-sm"
+        style={style}
+        aria-label={label}
+        onClick={stopPropagation}
+      >
+        <button
+          type="button"
+          onClick={onCancel}
+          className="absolute right-2 top-2 grid min-h-10 min-w-10 place-items-center rounded-xl bg-slate-800 text-xl font-bold text-slate-300"
+          aria-label="Cancelar acción pendiente"
+        >
+          ×
+        </button>
+        {children}
+      </section>
+    </div>
+  );
+}

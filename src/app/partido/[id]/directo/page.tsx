@@ -4,7 +4,9 @@ import { MouseEvent, useEffect, useMemo, useState } from "react";
 
 import { FutsalCourtMarkings } from "../../../../components/court/FutsalCourtMarkings";
 import { BenchPanel } from "../../../../components/match/BenchPanel";
-import { DisciplineControls } from "../../../../components/match/DisciplineControls";
+import { ContextualSurface } from "../../../../components/match/contextual/ContextualSurface";
+import { PlayerContextActions } from "../../../../components/match/contextual/PlayerContextActions";
+import { ThreatContextPicker } from "../../../../components/match/contextual/ThreatContextPicker";
 import { HistoryControls } from "../../../../components/match/HistoryControls";
 import {
   ClockSide,
@@ -12,6 +14,7 @@ import {
 } from "../../../../components/match/MatchClockControl";
 import { MatchScoreboard } from "../../../../components/match/MatchScoreboard";
 import { RecentEventsPanel } from "../../../../components/match/RecentEventsPanel";
+import { RivalDisciplineQuickActions } from "../../../../components/match/RivalDisciplineQuickActions";
 import { PlayerAvatar } from "../../../../components/player/PlayerAvatar";
 import { eventDescription } from "../../../../lib/eventPresentation";
 import {
@@ -24,8 +27,6 @@ import { replayMatch, sortEvents } from "../../../../lib/matchEngine";
 import { useMatchStore } from "../../../../store/useMatchStore";
 import {
   INFERIORITY_SLOT_ID,
-  LiveThreatOutcome,
-  LiveThreatPhase,
   MatchEvent,
   Player,
 } from "../../../../types";
@@ -33,59 +34,12 @@ import {
 const CLOCK_SIDE_STORAGE_KEY = "alamedapp:directo-clock-side:v1";
 
 const PLAYER_POSITIONS = [
-  { left: "11%", top: "50%" },
-  { left: "36%", top: "24%" },
-  { left: "36%", top: "76%" },
-  { left: "69%", top: "28%" },
-  { left: "69%", top: "72%" },
+  { x: 0.11, y: 0.5 },
+  { x: 0.36, y: 0.24 },
+  { x: 0.36, y: 0.76 },
+  { x: 0.69, y: 0.28 },
+  { x: 0.69, y: 0.72 },
 ];
-
-const OUTCOME_OPTIONS: Array<{
-  value: LiveThreatOutcome;
-  label: string;
-  className: string;
-}> = [
-  { value: "GOL", label: "⚽ Gol", className: "bg-emerald-600 hover:bg-emerald-500" },
-  { value: "PARADA", label: "🧤 Parada", className: "bg-sky-600 hover:bg-sky-500" },
-  { value: "FUERA", label: "↗ Fuera", className: "bg-slate-600 hover:bg-slate-500" },
-];
-
-const PHASE_OPTIONS: Array<{
-  value: LiveThreatPhase;
-  label: string;
-  shortLabel: string;
-  icon: string;
-  tone: string;
-  tier: "PRIMARY" | "SECONDARY" | "RARE";
-}> = [
-  { value: "POSITIONAL", label: "Posicional", shortLabel: "Pos.", icon: "▦", tone: "cyan", tier: "PRIMARY" },
-  { value: "TRANSITION", label: "Transición", shortLabel: "Trans.", icon: "➜", tone: "cyan", tier: "PRIMARY" },
-  { value: "SET_PIECE_KICK_IN", label: "ABP banda", shortLabel: "Banda", icon: "↥", tone: "violet", tier: "SECONDARY" },
-  { value: "SET_PIECE_CORNER", label: "ABP córner", shortLabel: "Córner", icon: "⌜", tone: "violet", tier: "SECONDARY" },
-  { value: "SET_PIECE_FREE_KICK", label: "ABP falta", shortLabel: "Falta", icon: "●↗", tone: "violet", tier: "SECONDARY" },
-  { value: "FLYING_GOALKEEPER", label: "Portero-jugador", shortLabel: "P-J", icon: "◇⁺", tone: "rose", tier: "SECONDARY" },
-  { value: "PENALTY", label: "Penalti", shortLabel: "6m", icon: "●", tone: "amber", tier: "RARE" },
-  { value: "DOUBLE_PENALTY", label: "Doble penalti", shortLabel: "10m", icon: "●", tone: "amber", tier: "RARE" },
-];
-
-const PHASE_TONES: Record<string, { idle: string; active: string }> = {
-  cyan: {
-    idle: "border-cyan-900/80 bg-cyan-950/40 hover:border-cyan-500",
-    active: "border-cyan-200 bg-cyan-500 text-slate-950",
-  },
-  violet: {
-    idle: "border-violet-900/80 bg-violet-950/40 hover:border-violet-500",
-    active: "border-violet-200 bg-violet-500 text-white",
-  },
-  rose: {
-    idle: "border-rose-900/80 bg-rose-950/40 hover:border-rose-500",
-    active: "border-rose-200 bg-rose-500 text-white",
-  },
-  amber: {
-    idle: "border-amber-900/80 bg-amber-950/40 hover:border-amber-500",
-    active: "border-amber-200 bg-amber-400 text-slate-950",
-  },
-};
 
 function undoTarget(
   events: MatchEvent[],
@@ -139,6 +93,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const [interaction, setInteraction] = useState<LiveInteractionState>(
     IDLE_LIVE_INTERACTION,
   );
+  const [redDecisionPlayerId, setRedDecisionPlayerId] = useState<string | null>(
+    null,
+  );
   const [feedback, setFeedback] = useState<string | null>(null);
   const [clockSide, setClockSide] = useState<ClockSide>("right");
 
@@ -152,6 +109,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     ensureMatch(matchId);
     setInteraction(IDLE_LIVE_INTERACTION);
+    setRedDecisionPlayerId(null);
     setFeedback(null);
   }, [ensureMatch, matchId]);
 
@@ -213,10 +171,23 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       : interaction.kind === "THREAT_PENDING"
         ? interaction.playerId ?? null
         : null;
+  const selectedCourtPlayerId =
+    interaction.kind === "PLAYER_SELECTED" && interaction.location === "COURT"
+      ? interaction.playerId
+      : null;
+  const selectedBenchPlayerId =
+    interaction.kind === "PLAYER_SELECTED" && interaction.location === "BENCH"
+      ? interaction.playerId
+      : null;
+  const selectedCourtAnchor = selectedCourtPlayerId
+    ? PLAYER_POSITIONS[
+        replay.onCourtPlayerIds.findIndex((id) => id === selectedCourtPlayerId)
+      ]
+    : undefined;
   const pendingThreat =
     interaction.kind === "THREAT_PENDING" ? interaction : null;
   const substitutionSourceLabel =
-    interaction.kind === "PLAYER_SELECTED"
+    interaction.kind === "PLAYER_SELECTED" && interaction.location === "COURT"
       ? interaction.playerId === INFERIORITY_SLOT_ID
         ? "INFERIORIDAD"
         : session.players.find(
@@ -231,6 +202,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
 
   const applyInteraction = (action: LiveInteractionAction) => {
     clearError(matchId);
+    setRedDecisionPlayerId(null);
     const transition = reduceLiveInteraction(interaction, action);
     const effect = transition.effect;
     setInteraction(transition.state);
@@ -268,10 +240,33 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     applyInteraction({
       type: "COURT_TAPPED",
       origin: { x, y },
-      defaultPhase: replay.flyingGoalkeeperActive
-        ? "FLYING_GOALKEEPER"
-        : undefined,
     });
+  };
+
+  const finishPlayerAction = (message: string) => {
+    setInteraction(IDLE_LIVE_INTERACTION);
+    setRedDecisionPlayerId(null);
+    setFeedback(message);
+  };
+
+  const recordPlayerFoul = (playerId: string, received: boolean) => {
+    recordFoul(matchId, received ? "AGAINST" : "FOR", playerId);
+    finishPlayerAction(received ? "✓ Falta recibida" : "✓ Falta cometida");
+  };
+
+  const recordPlayerCard = (
+    playerId: string,
+    color: "YELLOW" | "RED",
+    causesInferiority = false,
+  ) => {
+    recordCard(matchId, "FOR", color, playerId, causesInferiority);
+    finishPlayerAction(
+      color === "YELLOW"
+        ? "✓ Amarilla CDA"
+        : causesInferiority
+          ? "✓ Roja + 4v5"
+          : "✓ Roja CDA",
+    );
   };
 
   return (
@@ -308,7 +303,23 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           <h1 className="text-xl font-bold">Directo: CD Alameda</h1>
         </div>
 
-        <MatchScoreboard score={chronologyReplay.score} />
+        <div className="flex items-center gap-1.5">
+          <MatchScoreboard score={chronologyReplay.score} />
+          <RivalDisciplineQuickActions
+            yellowCards={chronologyReplay.discipline.against.yellowCards}
+            redCards={chronologyReplay.discipline.against.redCards}
+            onYellow={() => {
+              setInteraction(IDLE_LIVE_INTERACTION);
+              recordCard(matchId, "AGAINST", "YELLOW");
+              setFeedback("✓ Amarilla RIV");
+            }}
+            onRed={() => {
+              setInteraction(IDLE_LIVE_INTERACTION);
+              recordCard(matchId, "AGAINST", "RED");
+              setFeedback("✓ Roja RIV");
+            }}
+          />
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <span
@@ -387,6 +398,18 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
+      <div className="mx-auto mb-3 flex max-w-7xl justify-end gap-2 font-mono text-[11px] text-slate-500" aria-label={`Faltas del periodo ${session.period}`}>
+        <span className="rounded-full bg-slate-900 px-2 py-1 text-orange-300">
+          CDA F{periodDiscipline.for.fouls}
+        </span>
+        <span className="rounded-full bg-slate-900 px-2 py-1 text-sky-300">
+          RIV F{periodDiscipline.against.fouls}
+        </span>
+        <span className="rounded-full bg-slate-900 px-2 py-1 text-slate-400">
+          CDA {chronologyReplay.discipline.for.yellowCards}▮ {chronologyReplay.discipline.for.redCards}▮
+        </span>
+      </div>
+
       {session.lastError && (
         <div
           role="alert"
@@ -399,15 +422,19 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      <main className="mx-auto grid max-w-screen-2xl gap-3 md:grid-cols-2 lg:grid-cols-[210px_minmax(0,1fr)_230px]">
-        <div className="order-2 min-w-0 md:col-span-1 lg:order-1 lg:col-start-1 lg:row-start-1">
+      <main className="mx-auto grid max-w-screen-2xl gap-3 md:grid-cols-2 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <div className="order-2 min-w-0 md:col-span-2 lg:order-1 lg:col-span-1 lg:col-start-1 lg:row-start-1">
           <BenchPanel
             players={bench}
             playerMinutes={replay.playerMinutes}
             replacementForLabel={substitutionSourceLabel}
+            selectedPlayerId={selectedBenchPlayerId ?? undefined}
             onPlayerTap={(playerId) =>
               applyInteraction({ type: "BENCH_PLAYER_TAPPED", playerId })
             }
+            onYellow={(playerId) => recordPlayerCard(playerId, "YELLOW")}
+            onRed={(playerId) => recordPlayerCard(playerId, "RED")}
+            onCancel={() => applyInteraction({ type: "CANCEL" })}
           />
         </div>
 
@@ -421,9 +448,13 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   <span title="Jugador → banquillo">●→⇄</span>
                   <span title="Pista → rival">◎→↓</span>
                 </div>
-              ) : interaction.kind === "PLAYER_SELECTED" ? (
+              ) : interaction.kind === "PLAYER_SELECTED" && interaction.location === "COURT" ? (
                 <p className="truncate text-sm font-bold text-amber-300">
                   {substitutionSourceLabel} <span aria-hidden="true">→ ◎ / ⇄</span>
+                </p>
+              ) : interaction.kind === "PLAYER_SELECTED" ? (
+                <p className="truncate text-sm font-bold text-cyan-300">
+                  Banquillo · tarjeta
                 </p>
               ) : (
                 <p className={`text-sm font-black ${pendingThreat?.side === "FOR" ? "text-cyan-300" : "text-rose-300"}`}>
@@ -476,7 +507,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                         ? "scale-110 border-white bg-red-500 text-white"
                         : "border-red-300 bg-red-950/90 text-red-200"
                     }`}
-                    style={position}
+                    style={{ left: `${position.x * 100}%`, top: `${position.y * 100}%` }}
                     aria-pressed={selected}
                     aria-label="Plaza INFERIORIDAD"
                   >
@@ -509,7 +540,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                       ? "scale-110 border-yellow-200 bg-yellow-500 text-gray-950 ring-4 ring-yellow-300/30"
                       : "border-white/60 bg-gray-900/90 hover:bg-gray-800"
                   }`}
-                  style={position}
+                  style={{ left: `${position.x * 100}%`, top: `${position.y * 100}%` }}
                   aria-pressed={selected}
                 >
                   <PlayerAvatar player={player} selected={selected} />
@@ -526,6 +557,30 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               );
             })}
 
+            {selectedCourtPlayerId &&
+              selectedCourtPlayerId !== INFERIORITY_SLOT_ID &&
+              selectedCourtAnchor && (
+                <ContextualSurface
+                  anchor={selectedCourtAnchor}
+                  label="Acciones del jugador seleccionado"
+                  onCancel={() => applyInteraction({ type: "CANCEL" })}
+                  compact
+                >
+                  <PlayerContextActions
+                    location="COURT"
+                    redDecision={redDecisionPlayerId === selectedCourtPlayerId}
+                    onFoulCommitted={() => recordPlayerFoul(selectedCourtPlayerId, false)}
+                    onFoulReceived={() => recordPlayerFoul(selectedCourtPlayerId, true)}
+                    onYellow={() => recordPlayerCard(selectedCourtPlayerId, "YELLOW")}
+                    onRed={() => setRedDecisionPlayerId(selectedCourtPlayerId)}
+                    onRedOnly={() => recordPlayerCard(selectedCourtPlayerId, "RED")}
+                    onRedWithInferiority={() => recordPlayerCard(selectedCourtPlayerId, "RED", true)}
+                    onBack={() => setRedDecisionPlayerId(null)}
+                    onCancel={() => applyInteraction({ type: "CANCEL" })}
+                  />
+                </ContextualSurface>
+              )}
+
             {pendingThreat && (
               <div
                 className={`pointer-events-none absolute z-20 h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-white shadow-[0_0_0_6px_rgba(255,255,255,0.22)] ${
@@ -535,116 +590,23 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 aria-hidden="true"
               />
             )}
+
+            {pendingThreat && (
+              <ThreatContextPicker
+                threat={pendingThreat}
+                onOutcome={(outcome) =>
+                  applyInteraction({ type: "OUTCOME_SELECTED", outcome })
+                }
+                onPhase={(phase) =>
+                  applyInteraction({ type: "PHASE_SELECTED", phase })
+                }
+                onCancel={() => applyInteraction({ type: "CANCEL" })}
+              />
+            )}
           </div>
-
-          {pendingThreat && (
-            <section
-              className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-2.5 shadow-xl"
-              aria-label="Completar amenaza"
-            >
-              <div className="grid grid-cols-3 gap-2">
-                {OUTCOME_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() =>
-                      applyInteraction({
-                        type: "OUTCOME_SELECTED",
-                        outcome: option.value,
-                      })
-                    }
-                    className={`min-h-16 rounded-xl px-2 text-sm font-black shadow-md transition-all ${
-                      pendingThreat.outcome === option.value
-                        ? "ring-4 ring-white/70"
-                        : ""
-                    } ${option.className}`}
-                    aria-pressed={pendingThreat.outcome === option.value}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="mt-2 grid gap-2 lg:grid-cols-[1.15fr_1.35fr_auto]">
-                {(["PRIMARY", "SECONDARY", "RARE"] as const).map((tier) => (
-                  <div
-                    key={tier}
-                    className={
-                      tier === "PRIMARY"
-                        ? "grid grid-cols-2 gap-2"
-                        : tier === "SECONDARY"
-                          ? "grid grid-cols-4 gap-1.5"
-                          : "grid grid-cols-2 gap-1.5"
-                    }
-                  >
-                    {PHASE_OPTIONS.filter((option) => option.tier === tier).map(
-                      (option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() =>
-                            applyInteraction({
-                              type: "PHASE_SELECTED",
-                              phase: option.value,
-                            })
-                          }
-                          title={option.label}
-                          aria-label={option.label}
-                          className={`flex flex-col items-center justify-center rounded-xl border font-semibold transition-all ${
-                            tier === "PRIMARY"
-                              ? "min-h-20 px-2 py-2"
-                              : tier === "SECONDARY"
-                                ? "min-h-16 px-1 py-1.5"
-                                : "min-h-11 min-w-14 px-1 py-1"
-                          } ${
-                            pendingThreat.phase === option.value
-                              ? PHASE_TONES[option.tone].active
-                              : PHASE_TONES[option.tone].idle
-                          }`}
-                          aria-pressed={pendingThreat.phase === option.value}
-                        >
-                          <span
-                            className={
-                              tier === "PRIMARY"
-                                ? "text-3xl font-black leading-none"
-                                : tier === "SECONDARY"
-                                  ? "text-xl font-black leading-none"
-                                  : "text-xs font-black leading-none"
-                            }
-                            aria-hidden="true"
-                          >
-                            {option.icon}
-                          </span>
-                          <span className={`${tier === "PRIMARY" ? "mt-2 text-xs" : "mt-1 text-[10px]"} leading-none`}>
-                            {option.shortLabel}
-                          </span>
-                        </button>
-                      ),
-                    )}
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
         </section>
 
-        <div className="order-3 min-w-0 md:col-span-1 lg:col-start-3 lg:row-start-1">
-          <DisciplineControls
-            players={session.players}
-            onCourtPlayerIds={replay.onCourtPlayerIds}
-            benchPlayerIds={replay.benchPlayerIds}
-            discipline={chronologyReplay.discipline}
-            periodDiscipline={periodDiscipline}
-            period={session.period}
-            onInteractionStart={() => setInteraction(IDLE_LIVE_INTERACTION)}
-            onFoul={(side, playerId) => recordFoul(matchId, side, playerId)}
-            onCard={(side, color, playerId, causesInferiority) =>
-              recordCard(matchId, side, color, playerId, causesInferiority)
-            }
-          />
-        </div>
-
-        <div className="order-4 min-w-0 md:col-span-2 lg:col-span-3">
+        <div className="order-4 min-w-0 md:col-span-2 lg:col-span-2">
           <RecentEventsPanel
             events={recentEvents}
             timeline={chronologyReplay.timeline}

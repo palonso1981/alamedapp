@@ -14,6 +14,7 @@
     "src/lib/matchEngine.ts",
     "src/lib/matchEngine.test.ts",
     "src/lib/matchPersistence.ts",
+    "src/lib/contextualPlacement.ts",
     "src/store/useMatchStore.ts",
     "src/types/index.ts"
   ]
