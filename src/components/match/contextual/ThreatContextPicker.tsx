@@ -1,7 +1,8 @@
 "use client";
 
 import { LiveInteractionState } from "../../../lib/liveInteraction";
-import { LiveThreatOutcome, LiveThreatPhase } from "../../../types";
+import { GoalAssist, LiveThreatOutcome, LiveThreatPhase, Player } from "../../../types";
+import { PlayerAvatar } from "../../player/PlayerAvatar";
 import { ContextualSurface } from "./ContextualSurface";
 
 type PendingThreat = Extract<LiveInteractionState, { kind: "THREAT_PENDING" }>;
@@ -10,6 +11,9 @@ interface ThreatContextPickerProps {
   threat: PendingThreat;
   onOutcome: (outcome: LiveThreatOutcome) => void;
   onPhase: (phase: LiveThreatPhase) => void;
+  players: Player[];
+  assistCandidateIds: string[];
+  onAssist: (assist: GoalAssist) => void;
   onCancel: () => void;
 }
 
@@ -60,17 +64,23 @@ export function ThreatContextPicker({
   threat,
   onOutcome,
   onPhase,
+  players,
+  assistCandidateIds,
+  onAssist,
   onCancel,
 }: ThreatContextPickerProps) {
   return (
     <ContextualSurface
       anchor={threat.origin}
-      label={threat.step === "OUTCOME" ? "Consecuencia de la amenaza" : "Fase de la amenaza"}
+      label={threat.step === "OUTCOME" ? "Consecuencia de la amenaza" : threat.step === "PHASE" ? "Fase de la amenaza" : "Asistencia"}
       onCancel={onCancel}
     >
-      <div className="mb-2 flex items-center gap-1.5" aria-label={`Paso ${threat.step === "OUTCOME" ? 1 : 2} de 2`}>
+      <div className="mb-2 flex items-center gap-1.5" aria-label={`Paso ${threat.step === "OUTCOME" ? 1 : threat.step === "PHASE" ? 2 : 3} de ${threat.side === "FOR" && threat.outcome === "GOL" ? 3 : 2}`}>
         <span className="h-1.5 flex-1 rounded-full bg-cyan-400" />
-        <span className={`h-1.5 flex-1 rounded-full ${threat.step === "PHASE" ? "bg-cyan-400" : "bg-slate-700"}`} />
+        <span className={`h-1.5 flex-1 rounded-full ${threat.step !== "OUTCOME" ? "bg-cyan-400" : "bg-slate-700"}`} />
+        {threat.side === "FOR" && threat.outcome === "GOL" && (
+          <span className={`h-1.5 flex-1 rounded-full ${threat.step === "ASSIST" ? "bg-cyan-400" : "bg-slate-700"}`} />
+        )}
       </div>
 
       {threat.step === "OUTCOME" ? (
@@ -92,7 +102,7 @@ export function ThreatContextPicker({
             </button>
           ))}
         </div>
-      ) : (
+      ) : threat.step === "PHASE" ? (
         <div className="space-y-1.5">
           <div className="grid grid-cols-2 gap-2">
             {PHASES.filter((phase) => phase.tier === "PRIMARY").map((phase) => (
@@ -109,6 +119,26 @@ export function ThreatContextPicker({
               <PhaseButton key={phase.value} phase={phase} onPhase={onPhase} />
             ))}
           </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-2">
+          {assistCandidateIds.map((playerId) => {
+            const player = players.find((candidate) => candidate.id === playerId);
+            if (!player) return null;
+            return (
+              <button
+                key={player.id}
+                type="button"
+                onClick={() => onAssist({ status: "PLAYER", playerId: player.id })}
+                className="flex min-h-20 flex-col items-center justify-center rounded-xl border border-cyan-700 bg-cyan-950/80 px-1"
+              >
+                <PlayerAvatar player={player} compact />
+                <span className="mt-1 max-w-full truncate text-[10px] font-bold">{player.name}</span>
+              </button>
+            );
+          })}
+          <button type="button" onClick={() => onAssist({ status: "NONE" })} className="min-h-20 rounded-xl border border-slate-600 bg-slate-800 text-xs font-black">∅<span className="mt-1 block text-[9px]">SIN ASIST.</span></button>
+          <button type="button" onClick={() => onAssist({ status: "PENDING" })} className="min-h-20 rounded-xl border border-amber-500 bg-amber-950 text-2xl font-black text-amber-200">?<span className="mt-1 block text-[9px]">PENDIENTE</span></button>
         </div>
       )}
     </ContextualSurface>

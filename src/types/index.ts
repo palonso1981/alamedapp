@@ -9,6 +9,13 @@ export interface Player {
   dominantFoot?: DominantFoot;
 }
 
+export interface StaffMember {
+  id: string;
+  name: string;
+  role: string;
+  photoUrl?: string;
+}
+
 export interface Match {
   id: string;
   date: string;
@@ -32,6 +39,8 @@ interface MatchEventBase extends EventPosition {
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
+  /** Marca operativa: el evento sigue siendo válido y computable. */
+  pendingReview: boolean;
 }
 
 export interface LineupInitializedEvent extends MatchEventBase {
@@ -82,6 +91,11 @@ export interface NormalizedCoordinates {
   y: number;
 }
 
+export type GoalAssist =
+  | { status: "PLAYER"; playerId: string }
+  | { status: "NONE" }
+  | { status: "PENDING" };
+
 interface ThreatEventData {
   side: ThreatSide;
   playerId?: string;
@@ -94,6 +108,8 @@ interface ThreatEventData {
   sequenceId?: string;
   /** Amenaza inmediatamente anterior que origina esta continuación. */
   parentEventId?: string;
+  /** Solo se usa en goles CDA; nunca es una métrica agregada. */
+  assist?: GoalAssist;
 }
 
 export interface LiveThreatRecordedEvent extends MatchEventBase, ThreatEventData {
@@ -128,6 +144,7 @@ export interface CardRecordedEvent extends MatchEventBase {
   side: DisciplineSide;
   color: CardColor;
   playerId?: string;
+  staffId?: string;
 }
 
 export type MatchEvent =
@@ -172,6 +189,8 @@ export interface ReplayIssue {
     | "INVALID_FOUL_PLAYER"
     | "INVALID_CARD_PLAYER"
     | "INVALID_EVENT_LINK"
+    | "INVALID_ASSIST"
+    | "INVALID_CARD_TARGET"
     | "INVALID_INFERIORITY_SLOT";
   message: string;
 }
@@ -218,6 +237,7 @@ export type LocalPersistenceStatus = "idle" | "saved" | "error";
 export interface MatchSession {
   matchId: string;
   players: Player[];
+  staff: StaffMember[];
   period: number;
   minute: number;
   /** Memoria operativa del minutero por periodo; no forma parte de la cronología. */

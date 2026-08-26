@@ -26,6 +26,7 @@ import {
   DisciplineSide,
   EventPosition,
   GameStateKind,
+  GoalAssist,
   INFERIORITY_SLOT_ID,
   LiveThreatPhase,
   LiveThreatOutcome,
@@ -33,6 +34,7 @@ import {
   MatchSession,
   NormalizedCoordinates,
   Player,
+  StaffMember,
 } from "../types";
 
 const HISTORY_LIMIT = 100;
@@ -52,6 +54,16 @@ export const DEMO_PLAYERS: Player[] = [
   { id: "p6", name: "Álex", number: 11, dominantFoot: "RIGHT" },
   { id: "p7", name: "Marcos", number: 8, dominantFoot: "LEFT" },
   { id: "p8", name: "Leo", number: 9, dominantFoot: "RIGHT" },
+  { id: "p9", name: "Iván", number: 2, dominantFoot: "RIGHT" },
+  { id: "p10", name: "Sergio", number: 3, dominantFoot: "LEFT" },
+  { id: "p11", name: "Raúl", number: 12, dominantFoot: "RIGHT" },
+  { id: "p12", name: "Nico", number: 14, dominantFoot: "BOTH" },
+];
+
+export const DEMO_STAFF: StaffMember[] = [
+  { id: "staff-coach", name: "Entrenador", role: "Entrenador" },
+  { id: "staff-assistant", name: "Segundo", role: "Segundo entrenador" },
+  { id: "staff-delegate", name: "Delegado", role: "Delegado" },
 ];
 
 interface RecordThreatInput {
@@ -62,6 +74,7 @@ interface RecordThreatInput {
   phase: LiveThreatPhase;
   sequenceId?: string;
   parentEventId?: string;
+  assist?: GoalAssist;
 }
 
 interface MatchState {
@@ -85,6 +98,16 @@ interface MatchState {
     color: CardColor,
     playerId?: string,
     causesInferiority?: boolean,
+  ) => void;
+  recordStaffCard: (
+    matchId: string,
+    staffId: string,
+    color: CardColor,
+  ) => void;
+  setPendingReview: (
+    matchId: string,
+    eventId: string,
+    pendingReview: boolean,
   ) => void;
   swapPlayer: (matchId: string, playerOutId: string, playerInId: string) => void;
   editEvent: (
@@ -118,6 +141,7 @@ interface MatchState {
 
 function createSession(matchId: string): MatchSession {
   const players = DEMO_PLAYERS.map((player) => ({ ...player }));
+  const staff = DEMO_STAFF.map((member) => ({ ...member }));
   const lineup = createLineupInitializedEvent({
     matchId,
     position: { period: 1, minute: 0, order: 1 },
@@ -127,6 +151,7 @@ function createSession(matchId: string): MatchSession {
   return {
     matchId,
     players,
+    staff,
     period: 1,
     minute: 1,
     periodMinutes: { 1: 1, 2: 0 },
@@ -237,7 +262,15 @@ export const useMatchStore = create<MatchState>((set) => ({
       if (state.matches[matchId]) {
         return state;
       }
-      const session = loadMatchSession(matchId) ?? persistSession(createSession(matchId));
+      const loaded = loadMatchSession(matchId);
+      const session = loaded
+        ? loaded.staff.length > 0
+          ? loaded
+          : persistSession({
+              ...loaded,
+              staff: DEMO_STAFF.map((member) => ({ ...member })),
+            })
+        : persistSession(createSession(matchId));
       return {
         matches: {
           ...state.matches,
@@ -283,6 +316,9 @@ export const useMatchStore = create<MatchState>((set) => ({
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
+          if (input.side === "FOR" && input.outcome === "GOL" && !input.assist) {
+            throw new Error("Un gol CDA requiere decidir la asistencia.");
+          }
           const event = createLiveThreatEvent({
             matchId,
             position: {
@@ -301,6 +337,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             phase: input.phase,
             sequenceId: input.sequenceId,
             parentEventId: input.parentEventId,
+            assist: input.assist,
           });
           return appendEvent(session.players, session.events, event);
         }),
@@ -422,6 +459,40 @@ export const useMatchStore = create<MatchState>((set) => ({
             substitution,
           ]);
         }),
+      ),
+    ),
+
+  recordStaffCard: (matchId, staffId, color) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) =>
+        command(session, () => {
+          if (!session.staff.some((member) => member.id === staffId)) {
+            throw new Error("El miembro del cuerpo técnico no pertenece a la convocatoria.");
+          }
+          const card = createCardEvent({
+            matchId,
+            position: {
+              period: session.period,
+              minute: session.minute,
+              order: getNextOrder(session.events, session.period, session.minute),
+            },
+            side: "FOR",
+            color,
+            staffId,
+          });
+          return appendEvent(session.players, session.events, card);
+        }),
+      ),
+    ),
+
+  setPendingReview: (matchId, eventId, pendingReview) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) =>
+        command(session, () =>
+          editChronologyEvent(session.players, session.events, eventId, {
+            pendingReview,
+          }),
+        ),
       ),
     ),
 

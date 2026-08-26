@@ -21,6 +21,8 @@ type ContextualStyle = CSSProperties & {
   "--context-translate-x": string;
   "--context-mobile-top": string;
   "--context-mobile-bottom": string;
+  "--context-mobile-left": string;
+  "--context-mobile-right": string;
   "--context-width": string;
 };
 
@@ -53,6 +55,8 @@ export function ContextualSurface({
     "--context-translate-x": center ? "-50%" : "0",
     "--context-mobile-top": anchor.y >= 0.5 ? "0.5rem" : "auto",
     "--context-mobile-bottom": anchor.y < 0.5 ? "5.5rem" : "auto",
+    "--context-mobile-left": anchor.x >= 0.5 ? "0.5rem" : "auto",
+    "--context-mobile-right": anchor.x < 0.5 ? "0.5rem" : "auto",
     "--context-width": compact ? "13rem" : "25rem",
   };
 
@@ -63,19 +67,19 @@ export function ContextualSurface({
   return (
     <div className="pointer-events-none absolute inset-0 z-30">
       <section
-        className="contextual-surface-frame pointer-events-auto overflow-y-auto rounded-2xl border border-white/20 bg-slate-950/95 p-2.5 pr-12 shadow-2xl backdrop-blur-sm"
+        className={`contextual-surface-frame ${compact ? "contextual-surface-frame--compact p-2" : "p-2.5 pr-12"} pointer-events-auto overflow-y-auto rounded-2xl border border-white/20 bg-slate-950/95 shadow-2xl backdrop-blur-sm`}
         style={style}
         aria-label={label}
         onClick={stopPropagation}
       >
-        <button
+        {!compact && <button
           type="button"
           onClick={onCancel}
           className="absolute right-2 top-2 grid min-h-10 min-w-10 place-items-center rounded-xl bg-slate-800 text-xl font-bold text-slate-300"
           aria-label="Cancelar acción pendiente"
         >
           ×
-        </button>
+        </button>}
         {children}
       </section>
     </div>

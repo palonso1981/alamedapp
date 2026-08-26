@@ -8,6 +8,7 @@ import {
   GameContext,
   GameStateChangedEvent,
   GameStateKind,
+  GoalAssist,
   INFERIORITY_SLOT_ID,
   LegacyThreatImportedEvent,
   LineupInitializedEvent,
@@ -133,6 +134,7 @@ export interface CardEventInput extends EventFactoryBase {
   side: DisciplineSide;
   color: CardColor;
   playerId?: string;
+  staffId?: string;
 }
 
 interface ThreatEventInput extends EventFactoryBase {
@@ -146,6 +148,7 @@ interface ThreatEventInput extends EventFactoryBase {
 export interface LiveThreatEventInput extends ThreatEventInput {
   outcome: LiveThreatOutcome;
   phase: LiveThreatPhase;
+  assist?: GoalAssist;
 }
 
 export interface LegacyThreatEventInput extends ThreatEventInput {
@@ -156,6 +159,7 @@ export interface LegacyThreatEventInput extends ThreatEventInput {
 export interface EventEditChanges {
   period?: number;
   minute?: number;
+  pendingReview?: boolean;
   lineup?: Partial<
     Pick<LineupInitializedEvent, "squadPlayerIds" | "onCourtPlayerIds">
   >;
@@ -163,11 +167,14 @@ export interface EventEditChanges {
     Pick<SubstitutionEvent, "playerOutId" | "playerInId">
   >;
   threat?: Partial<
-    Pick<LiveThreatRecordedEvent, "side" | "playerId" | "origin" | "phase">
-  > & { outcome?: ThreatOutcome };
+    Pick<LiveThreatRecordedEvent, "side" | "playerId" | "origin" | "phase" | "sequenceId" | "parentEventId">
+  > & { outcome?: ThreatOutcome; assist?: GoalAssist | null };
   gameState?: Partial<Pick<GameStateChangedEvent, "state" | "active">>;
   foul?: Partial<Pick<FoulRecordedEvent, "side" | "playerId" | "origin">>;
-  card?: Partial<Pick<CardRecordedEvent, "side" | "color" | "playerId">>;
+  card?: Partial<Pick<CardRecordedEvent, "side" | "color">> & {
+    playerId?: string | null;
+    staffId?: string | null;
+  };
 }
 
 function createId(): string {
@@ -186,6 +193,7 @@ function eventBase(input: EventFactoryBase) {
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
+    pendingReview: false,
   } as const;
 }
 
@@ -240,6 +248,7 @@ export function createCardEvent(input: CardEventInput): CardRecordedEvent {
     side: input.side,
     color: input.color,
     playerId: input.playerId,
+    staffId: input.staffId,
   };
 }
 
@@ -264,6 +273,8 @@ export function createLiveThreatEvent(
     outcome: input.outcome,
     sequenceId: input.sequenceId ?? base.id,
     parentEventId: input.parentEventId,
+    assist: input.assist ? { ...input.assist } : undefined,
+    pendingReview: input.assist?.status === "PENDING",
   };
 }
 
@@ -282,6 +293,7 @@ export function createLegacyThreatEvent(
     outcome: input.outcome,
     sequenceId: input.sequenceId ?? base.id,
     parentEventId: input.parentEventId,
+    assist: undefined,
   };
 }
 
@@ -606,6 +618,22 @@ export function replayMatch(
           "Una amenaza propia debe pertenecer a un jugador que estaba en pista.",
         );
       }
+      if (event.assist) {
+        const assistIsCompatible =
+          event.side === "FOR" &&
+          event.outcome === "GOL" &&
+          (event.assist.status !== "PLAYER" ||
+            (event.assist.playerId !== event.playerId &&
+              onCourtPlayerIds.includes(event.assist.playerId)));
+        if (!assistIsCompatible) {
+          issue(
+            issues,
+            event,
+            "INVALID_ASSIST",
+            "La asistencia debe corresponder a otro jugador que estaba en pista en el gol CDA.",
+          );
+        }
+      }
       if (event.outcome === "GOL") {
         score[event.side === "FOR" ? "for" : "against"] += 1;
       }
@@ -690,15 +718,24 @@ export function replayMatch(
         teamDiscipline.redCards += 1;
         periodTeamDiscipline.redCards += 1;
       }
-      if (
+      const ownTargetCount = Number(Boolean(event.playerId)) + Number(Boolean(event.staffId));
+      if (event.side === "FOR" && ownTargetCount !== 1) {
+        issue(
+          issues,
+          event,
+          "INVALID_CARD_TARGET",
+          "Una tarjeta propia debe identificar exactamente a un jugador o miembro del cuerpo técnico.",
+        );
+      } else if (
         event.side === "FOR" &&
-        (!event.playerId || !playerIds.has(event.playerId))
+        event.playerId &&
+        !playerIds.has(event.playerId)
       ) {
         issue(
           issues,
           event,
           "INVALID_CARD_PLAYER",
-          "Una tarjeta propia debe estar asociada a un jugador real.",
+          "La tarjeta referencia a un jugador desconocido.",
         );
       } else if (
         event.side === "FOR" &&
@@ -850,6 +887,7 @@ export function editEvent(
     ...current,
     period: changes.period ?? current.period,
     minute: changes.minute ?? current.minute,
+    pendingReview: changes.pendingReview ?? current.pendingReview,
     updatedAt: now,
   };
 
@@ -876,13 +914,51 @@ export function editEvent(
     ) {
       throw new Error("UNSPECIFIED solo está permitido en eventos importados.");
     }
-    edited = { ...edited, ...changes.threat } as MatchEvent;
+    const { assist, ...threatChanges } = changes.threat;
+    edited = {
+      ...edited,
+      ...threatChanges,
+      ...(assist === null ? { assist: undefined } : assist ? { assist } : {}),
+      pendingReview:
+        changes.pendingReview ?? (assist?.status === "PENDING"
+          ? true
+          : edited.assist?.status === "PENDING" && assist
+            ? false
+            : edited.pendingReview),
+    } as MatchEvent;
   } else if (edited.type === "game_state_changed" && changes.gameState) {
     edited = { ...edited, ...changes.gameState };
   } else if (edited.type === "foul_recorded" && changes.foul) {
     edited = { ...edited, ...changes.foul };
   } else if (edited.type === "card_recorded" && changes.card) {
-    edited = { ...edited, ...changes.card };
+    const { playerId, staffId, ...cardChanges } = changes.card;
+    edited = {
+      ...edited,
+      ...cardChanges,
+      ...(playerId === null ? { playerId: undefined } : playerId ? { playerId } : {}),
+      ...(staffId === null ? { staffId: undefined } : staffId ? { staffId } : {}),
+    };
+  }
+
+  if (
+    edited.type === "threat_recorded" &&
+    edited.assist &&
+    (edited.side !== "FOR" || edited.outcome !== "GOL")
+  ) {
+    edited = {
+      ...edited,
+      assist: undefined,
+      pendingReview:
+        changes.pendingReview ??
+        (edited.assist.status === "PENDING" ? false : edited.pendingReview),
+    };
+  }
+
+  if (
+    edited.type === "threat_recorded" &&
+    edited.assist?.status === "PENDING"
+  ) {
+    edited = { ...edited, pendingReview: true };
   }
 
   const next = normalizeOrders(

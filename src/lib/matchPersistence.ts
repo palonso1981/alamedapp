@@ -8,6 +8,7 @@ import {
   MatchEvent,
   MatchSession,
   Player,
+  StaffMember,
 } from "../types";
 
 export const MATCH_LOCAL_STORAGE_VERSION = 1 as const;
@@ -21,6 +22,7 @@ export interface LocalStorageAdapter {
 interface PersistedMatchSession {
   matchId: string;
   players: Player[];
+  staff: StaffMember[];
   period: number;
   minute: number;
   periodMinutes: Record<number, number>;
@@ -68,6 +70,16 @@ function isPlayer(value: unknown): value is Player {
   );
 }
 
+function isStaffMember(value: unknown): value is StaffMember {
+  return (
+    isObject(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.role === "string" &&
+    (value.photoUrl === undefined || typeof value.photoUrl === "string")
+  );
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
@@ -82,7 +94,8 @@ function hasEventBase(value: Record<string, unknown>, matchId: string): boolean 
     Number.isInteger(value.order) &&
     typeof value.createdAt === "number" &&
     typeof value.updatedAt === "number" &&
-    (value.deletedAt === null || typeof value.deletedAt === "number")
+    (value.deletedAt === null || typeof value.deletedAt === "number") &&
+    typeof value.pendingReview === "boolean"
   );
 }
 
@@ -129,7 +142,8 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
     return (
       (value.side === "FOR" || value.side === "AGAINST") &&
       (value.color === "YELLOW" || value.color === "RED") &&
-      (value.playerId === undefined || typeof value.playerId === "string")
+      (value.playerId === undefined || typeof value.playerId === "string") &&
+      (value.staffId === undefined || typeof value.staffId === "string")
     );
   }
   if (value.type !== "threat_recorded") {
@@ -153,6 +167,12 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
     (value.sequenceId === undefined || typeof value.sequenceId === "string") &&
     (value.parentEventId === undefined ||
       typeof value.parentEventId === "string") &&
+    (value.assist === undefined ||
+      (isObject(value.assist) &&
+        (value.assist.status === "NONE" ||
+          value.assist.status === "PENDING" ||
+          (value.assist.status === "PLAYER" &&
+            typeof value.assist.playerId === "string")))) &&
     isOrigin(value.origin) &&
     validPhase;
 
@@ -174,13 +194,17 @@ function migrateEvent(value: unknown): unknown {
   if (!isObject(value)) {
     return value;
   }
-  if (value.type === "foul_recorded" && value.source === undefined) {
-    return { ...value, source: "legacy_local" };
+  let migrated = value;
+  if (migrated.type === "foul_recorded" && migrated.source === undefined) {
+    migrated = { ...migrated, source: "legacy_local" };
   }
-  if (value.type === "threat_recorded" && value.sequenceId === undefined) {
-    return { ...value, sequenceId: value.id };
+  if (migrated.type === "threat_recorded" && migrated.sequenceId === undefined) {
+    migrated = { ...migrated, sequenceId: migrated.id };
   }
-  return value;
+  if (migrated.pendingReview === undefined) {
+    migrated = { ...migrated, pendingReview: false };
+  }
+  return migrated;
 }
 
 function migrateEventList(value: unknown): unknown {
@@ -216,6 +240,7 @@ function migratePersistedSession(value: unknown): unknown {
   return {
     ...value,
     ...clock,
+    staff: Array.isArray(value.staff) ? value.staff : [],
     periodMinutes,
     events: migrateEventList(value.events),
     past: Array.isArray(value.past)
@@ -258,6 +283,8 @@ function validPersistedSession(
     value.matchId !== expectedMatchId ||
     !Array.isArray(value.players) ||
     !value.players.every(isPlayer) ||
+    !Array.isArray(value.staff) ||
+    !value.staff.every(isStaffMember) ||
     typeof value.period !== "number" ||
     !Number.isInteger(value.period) ||
     value.period < 1 ||
@@ -282,6 +309,20 @@ function validPersistedSession(
     const events = value.events as MatchEvent[];
     const past = value.past as MatchEvent[][];
     const future = value.future as MatchEvent[][];
+
+    const staffIds = new Set((value.staff as StaffMember[]).map((member) => member.id));
+    const validStaffReferences = [events, ...past, ...future].every(
+      (chronology) =>
+        chronology.every(
+          (event) =>
+            event.type !== "card_recorded" ||
+            !event.staffId ||
+            staffIds.has(event.staffId),
+        ),
+    );
+    if (!validStaffReferences) {
+      return false;
+    }
 
     assertValidChronology(players, events);
     past.forEach((chronology) => assertValidChronology(players, chronology));
@@ -311,6 +352,7 @@ export function saveMatchSession(
     session: {
       matchId: session.matchId,
       players: session.players,
+      staff: session.staff,
       period: session.period,
       minute: session.minute,
       periodMinutes: session.periodMinutes,

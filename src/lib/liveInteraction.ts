@@ -1,4 +1,5 @@
 import {
+  GoalAssist,
   LiveThreatOutcome,
   LiveThreatPhase,
   NormalizedCoordinates,
@@ -9,7 +10,8 @@ export type ThreatCaptureStep =
   | "OUTCOME"
   | "GOAL_TARGET"
   | "DETAILS"
-  | "PHASE";
+  | "PHASE"
+  | "ASSIST";
 
 export type ThreatCaptureFlowId =
   | "FOR_ORIGIN_OUTCOME_PHASE"
@@ -54,9 +56,10 @@ export type LiveInteractionState =
       side: ThreatSide;
       playerId?: string;
       origin: NormalizedCoordinates;
-      step: "OUTCOME" | "PHASE";
+      step: "OUTCOME" | "PHASE" | "ASSIST";
       phase: LiveThreatPhase | null;
       outcome: LiveThreatOutcome | null;
+      assist: GoalAssist | null;
     };
 
 export type LiveInteractionAction =
@@ -65,6 +68,7 @@ export type LiveInteractionAction =
   | { type: "COURT_TAPPED"; origin: NormalizedCoordinates }
   | { type: "PHASE_SELECTED"; phase: LiveThreatPhase }
   | { type: "OUTCOME_SELECTED"; outcome: LiveThreatOutcome }
+  | { type: "ASSIST_SELECTED"; assist: GoalAssist }
   | { type: "CANCEL" };
 
 export type LiveInteractionEffect =
@@ -80,6 +84,7 @@ export type LiveInteractionEffect =
       origin: NormalizedCoordinates;
       phase: LiveThreatPhase;
       outcome: LiveThreatOutcome;
+      assist?: GoalAssist;
     };
 
 export interface LiveInteractionTransition {
@@ -108,6 +113,7 @@ function startThreat(
     step: "OUTCOME",
     phase: null,
     outcome: null,
+    assist: null,
   };
 }
 
@@ -195,10 +201,36 @@ export function reduceLiveInteraction(
     };
   }
 
-  if (state.step !== "PHASE" || !state.outcome) {
-    return { state };
+  if (action.type === "PHASE_SELECTED") {
+    if (state.step !== "PHASE" || !state.outcome) {
+      return { state };
+    }
+    if (state.side === "FOR" && state.outcome === "GOL") {
+      return {
+        state: { ...state, phase: action.phase, step: "ASSIST" },
+      };
+    }
+    return {
+      state: IDLE_LIVE_INTERACTION,
+      effect: {
+        type: "RECORD_THREAT",
+        side: state.side,
+        playerId: state.playerId,
+        origin: state.origin,
+        phase: action.phase,
+        outcome: state.outcome,
+      },
+    };
   }
 
+  if (
+    action.type !== "ASSIST_SELECTED" ||
+    state.step !== "ASSIST" ||
+    !state.outcome ||
+    !state.phase
+  ) {
+    return { state };
+  }
   return {
     state: IDLE_LIVE_INTERACTION,
     effect: {
@@ -206,8 +238,9 @@ export function reduceLiveInteraction(
       side: state.side,
       playerId: state.playerId,
       origin: state.origin,
-      phase: action.phase,
+      phase: state.phase,
       outcome: state.outcome,
+      assist: action.assist,
     },
   };
 }

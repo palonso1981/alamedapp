@@ -3,6 +3,7 @@ import {
   INFERIORITY_SLOT_ID,
   MatchEvent,
   Player,
+  StaffMember,
   TimelineEntry,
 } from "../types";
 
@@ -37,13 +38,19 @@ export function eventDescription(
   event: MatchEvent,
   players: Player[],
   entry?: TimelineEntry,
+  staff: StaffMember[] = [],
 ): string {
   if (event.type === "substitution") {
     return `↔ ${playerLabel(players, event.playerOutId)} → ${playerLabel(players, event.playerInId)}`;
   }
   if (event.type === "threat_recorded") {
     const actor = event.side === "FOR" ? playerLabel(players, event.playerId) : "Rival";
-    return `${event.side === "FOR" ? "↑" : "↓"} ${event.outcome} · ${actor} · ${phaseLabel(event.phase)}`;
+    const assist = event.assist?.status === "PLAYER"
+      ? ` · A ${playerLabel(players, event.assist.playerId)}`
+      : event.assist?.status === "PENDING"
+        ? " · A ?"
+        : "";
+    return `${event.side === "FOR" ? "↑" : "↓"} ${event.outcome} · ${actor} · ${phaseLabel(event.phase)}${assist}`;
   }
   if (event.type === "game_state_changed") {
     const state = event.state === "SUPERIORITY" ? "Superioridad" : "Portero-jugador";
@@ -61,7 +68,12 @@ export function eventDescription(
   }
   if (event.type === "card_recorded") {
     const card = event.color === "YELLOW" ? "🟨" : "🟥";
-    return `${card} ${event.side === "FOR" ? playerLabel(players, event.playerId) : "Rival"}`;
+    const target = event.staffId
+      ? staff.find((member) => member.id === event.staffId)?.name ?? event.staffId
+      : event.side === "FOR"
+        ? playerLabel(players, event.playerId)
+        : "Rival";
+    return `${card} ${target}`;
   }
   return "Alineación inicial";
 }

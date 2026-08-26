@@ -32,7 +32,9 @@ import {
   showsThreatControls,
 } from "./liveInteraction";
 import { contextualPlacement } from "./contextualPlacement";
-import { DEMO_PLAYERS, useMatchStore } from "../store/useMatchStore";
+import { courtHeightForWidth, FUTSAL_COURT_ASPECT_RATIO, normalizeCourtPoint } from "./courtGeometry";
+import { assistCandidates, filterTimelineEvents } from "./matchReview";
+import { DEMO_PLAYERS, DEMO_STAFF, useMatchStore } from "../store/useMatchStore";
 import {
   INFERIORITY_SLOT_ID,
   MatchEvent,
@@ -410,6 +412,7 @@ test("el marcador se deriva y recalcula al editar, eliminar, restaurar y reorden
     origin: { x: 0.7, y: 0.4 },
     outcome: "GOL",
     phase: "POSITIONAL",
+    assist: { status: "NONE" },
     now: 2,
   });
   const rivalGoal = createLiveThreatEvent({
@@ -891,6 +894,7 @@ test("las amenazas preparan secuencias causales sin convertir la continuación e
     origin: { x: 0.75, y: 0.5 },
     outcome: "GOL",
     phase: "POSITIONAL",
+    assist: { status: "NONE" },
     parentEventId: root.id,
     now: 4,
   });
@@ -927,6 +931,7 @@ test("persistencia local conserva sesión e historial y aísla cada matchId", ()
   const sessionA: MatchSession = {
     matchId: "match-a",
     players,
+    staff: [],
     period: 1,
     minute: 8,
     periodMinutes: { 1: 8, 2: 0 },
@@ -1026,6 +1031,7 @@ test("persistencia migra faltas locales antiguas sin destruir la sesión", () =>
   const restored = loadMatchSession("legacy-local", storage);
   assert.ok(restored);
   assert.deepEqual(restored.periodMinutes, { 1: 3, 2: 0 });
+  assert.deepEqual(restored.staff, []);
   const migratedFoul = restored.events.find(
     (event) => event.type === "foul_recorded",
   );
@@ -1033,6 +1039,7 @@ test("persistencia migra faltas locales antiguas sin destruir la sesión", () =>
   if (migratedFoul?.type === "foul_recorded") {
     assert.equal(migratedFoul.source, "legacy_local");
     assert.equal(migratedFoul.playerId, undefined);
+    assert.equal(migratedFoul.pendingReview, false);
   }
   assert.equal(replayMatch(restored.players, restored.events).issues.length, 0);
 });
@@ -1048,6 +1055,7 @@ test("Zustand aísla partidos y soporta undo/redo", () => {
     origin: { x: 0.4, y: 0.6 },
     outcome: "GOL",
     phase: "POSITIONAL",
+    assist: { status: "NONE" },
   });
 
   let state = useMatchStore.getState();
@@ -1091,6 +1099,7 @@ test("el reloj retrocede hasta cero sin alterar eventos y permite inserción ret
     origin: { x: 0.4, y: 0.3 },
     outcome: "GOL",
     phase: "TRANSITION",
+    assist: { status: "NONE" },
   });
 
   let session = useMatchStore.getState().matches[matchId];
@@ -1125,6 +1134,7 @@ test("el reloj reglamentario limita cada periodo a 0-20 sin tocar eventos", () =
     origin: { x: 0.7, y: 0.5 },
     outcome: "GOL",
     phase: "POSITIONAL",
+    assist: { status: "NONE" },
   });
   const eventsAtLimit = useMatchStore.getState().matches[matchId].events;
 
@@ -1203,6 +1213,7 @@ test("persistencia local conserva el reloj independiente de P1 y P2", () => {
   const session: MatchSession = {
     matchId: "persisted-clock",
     players,
+    staff: [],
     period: 2,
     minute: 8,
     periodMinutes: { 1: 20, 2: 8 },
@@ -1288,6 +1299,12 @@ test("jugador y pista preparan amenaza CDA con autor sin guardar antes de comple
     type: "PHASE_SELECTED",
     phase: "POSITIONAL",
   });
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "ASSIST");
+  assert.equal(transition.effect, undefined);
+  transition = reduceLiveInteraction(transition.state, {
+    type: "ASSIST_SELECTED",
+    assist: { status: "PLAYER", playerId: "p1" },
+  });
   assert.deepEqual(transition.effect, {
     type: "RECORD_THREAT",
     side: "FOR",
@@ -1295,6 +1312,7 @@ test("jugador y pista preparan amenaza CDA con autor sin guardar antes de comple
     origin: { x: 0.72, y: 0.31 },
     outcome: "GOL",
     phase: "POSITIONAL",
+    assist: { status: "PLAYER", playerId: "p1" },
   });
   if (transition.effect?.type === "RECORD_THREAT") {
     actions.recordThreat(matchId, transition.effect);
@@ -1323,6 +1341,7 @@ test("tocar pista directamente prepara amenaza rival sin jugador", () => {
     step: "OUTCOME",
     phase: null,
     outcome: null,
+    assist: null,
   });
   transition = reduceLiveInteraction(transition.state, {
     type: "PHASE_SELECTED",
@@ -1547,6 +1566,7 @@ test("Zustand recalcula marcador con goles propios/recibidos y undo/redo", () =>
     origin: { x: 0.8, y: 0.5 },
     outcome: "GOL",
     phase: "POSITIONAL",
+    assist: { status: "NONE" },
   });
   actions.recordThreat(matchId, {
     side: "AGAINST",
@@ -1572,4 +1592,219 @@ test("Zustand recalcula marcador con goles propios/recibidos y undo/redo", () =>
     for: 1,
     against: 1,
   });
+});
+
+test("la geometría de pista mantiene 2:1 y las coordenadas sobreviven al resize", () => {
+  assert.equal(FUTSAL_COURT_ASPECT_RATIO, 2);
+  assert.equal(courtHeightForWidth(1_000), 500);
+  const compact = normalizeCourtPoint(250, 125, {
+    left: 0,
+    top: 0,
+    width: 500,
+    height: 250,
+  });
+  const expanded = normalizeCourtPoint(500, 250, {
+    left: 0,
+    top: 0,
+    width: 1_000,
+    height: 500,
+  });
+  assert.deepEqual(compact, { x: 0.5, y: 0.5 });
+  assert.deepEqual(expanded, compact);
+});
+
+test("la convocatoria demo separa 12 jugadores, siete suplentes y tres técnicos", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "realistic-roster";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  const session = useMatchStore.getState().matches[matchId];
+  const replay = replayMatch(session.players, session.events);
+  assert.equal(session.players.length, 12);
+  assert.equal(replay.onCourtPlayerIds.length, 5);
+  assert.equal(replay.benchPlayerIds.length, 7);
+  assert.equal(session.staff.length, 3);
+  assert.deepEqual(session.staff, DEMO_STAFF);
+  assert.equal(
+    session.staff.some((member) => session.players.some((player) => player.id === member.id)),
+    false,
+  );
+  const extremePlayers = [...session.players, { id: "p13", name: "Extra", number: 15 }];
+  const extreme = createLineupInitializedEvent({
+    matchId: "extreme-roster",
+    position: { period: 1, minute: 0, order: 1 },
+    squadPlayerIds: extremePlayers.map((player) => player.id),
+    onCourtPlayerIds: extremePlayers.slice(0, 5).map((player) => player.id),
+  });
+  assert.equal(replayMatch(extremePlayers, [extreme]).benchPlayerIds.length, 8);
+});
+
+test("tarjetas de staff computan disciplina sin modificar alineación ni minutos", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "staff-discipline";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  const before = useMatchStore.getState().matches[matchId];
+  const beforeReplay = replayMatch(before.players, before.events, {
+    currentClock: { period: 1, minute: 8 },
+  });
+  actions.setClock(matchId, 1, 8);
+  actions.recordStaffCard(matchId, "staff-coach", "YELLOW");
+  actions.recordStaffCard(matchId, "staff-assistant", "RED");
+  const after = useMatchStore.getState().matches[matchId];
+  const afterReplay = replayMatch(after.players, after.events, {
+    currentClock: { period: 1, minute: 8 },
+  });
+  assert.deepEqual(afterReplay.onCourtPlayerIds, beforeReplay.onCourtPlayerIds);
+  assert.deepEqual(afterReplay.playerMinutes, beforeReplay.playerMinutes);
+  assert.equal(afterReplay.discipline.for.yellowCards, 1);
+  assert.equal(afterReplay.discipline.for.redCards, 1);
+  assert.equal(afterReplay.inferiorityActive, false);
+  assert.equal(
+    after.events.filter((event) => event.type === "card_recorded" && event.staffId).length,
+    2,
+  );
+});
+
+test("cronología completa conserva veinte eventos y permite revisar el primero", () => {
+  let events = initialLineup("long-timeline");
+  for (let index = 1; index <= 20; index += 1) {
+    events = appendEvent(
+      players,
+      events,
+      createLiveThreatEvent({
+        id: `long-${index}`,
+        matchId: "long-timeline",
+        position: { period: index <= 10 ? 1 : 2, minute: ((index - 1) % 10) + 1, order: 1 },
+        side: index % 2 === 0 ? "AGAINST" : "FOR",
+        playerId: index % 2 === 0 ? undefined : "p1",
+        origin: { x: index / 21, y: 0.5 },
+        outcome: index % 5 === 0 ? "GOL" : "FUERA",
+        phase: index % 3 === 0 ? "TRANSITION" : "POSITIONAL",
+        assist: index % 5 === 0 && index % 2 !== 0 ? { status: "NONE" } : undefined,
+        now: index + 1,
+      }),
+    );
+  }
+  const complete = filterTimelineEvents(events, "ALL");
+  assert.equal(complete.length, 20);
+  assert.equal(complete.at(-1)?.id, "long-1");
+  events = editEvent(players, events, "long-1", {
+    threat: { phase: "TRANSITION" },
+    pendingReview: true,
+  });
+  const replay = replayMatch(players, events);
+  assert.deepEqual(replay.issues, []);
+  assert.equal(
+    filterTimelineEvents(events, "PENDING").map((event) => event.id).includes("long-1"),
+    true,
+  );
+});
+
+test("pendiente de revisión computa, filtra, persiste y se puede desmarcar", () => {
+  let events = initialLineup("pending-review");
+  const goal = createLiveThreatEvent({
+    id: "pending-goal",
+    matchId: "pending-review",
+    position: { period: 1, minute: 4, order: 1 },
+    side: "FOR",
+    playerId: "p1",
+    origin: { x: 0.82, y: 0.4 },
+    outcome: "GOL",
+    phase: "POSITIONAL",
+    assist: { status: "PENDING" },
+  });
+  events = appendEvent(players, events, goal);
+  assert.equal(replayMatch(players, events).score.for, 1);
+  assert.equal(filterTimelineEvents(events, "PENDING").length, 1);
+  events = editEvent(players, events, goal.id, { pendingReview: false });
+  assert.equal(events.find((event) => event.id === goal.id)?.pendingReview, true);
+  events = editEvent(players, events, goal.id, {
+    threat: { assist: { status: "NONE" } },
+  });
+  assert.equal(events.find((event) => event.id === goal.id)?.pendingReview, false);
+
+  const storage = new MemoryStorage();
+  const session: MatchSession = {
+    matchId: "pending-review",
+    players,
+    staff: DEMO_STAFF,
+    period: 1,
+    minute: 4,
+    periodMinutes: { 1: 4, 2: 0 },
+    events,
+    past: [],
+    future: [],
+    lastError: null,
+    persistenceStatus: "idle",
+    lastSavedAt: null,
+  };
+  assert.equal(saveMatchSession(session, storage).ok, true);
+  assert.equal(loadMatchSession("pending-review", storage)?.events.length, events.length);
+});
+
+test("asistencia usa la alineación del instante, excluye goleador y admite edición", () => {
+  let events = initialLineup("assist-match");
+  events = appendEvent(players, events, createSubstitutionEvent({
+    id: "assist-sub",
+    matchId: "assist-match",
+    position: { period: 1, minute: 5, order: 1 },
+    playerOutId: "p2",
+    playerInId: "p6",
+  }));
+  const goal = createLiveThreatEvent({
+    id: "assist-goal",
+    matchId: "assist-match",
+    position: { period: 1, minute: 5, order: 2 },
+    side: "FOR",
+    playerId: "p1",
+    origin: { x: 0.8, y: 0.5 },
+    outcome: "GOL",
+    phase: "TRANSITION",
+    assist: { status: "PLAYER", playerId: "p6" },
+  });
+  events = appendEvent(players, events, goal);
+  let replay = replayMatch(players, events);
+  const entry = replay.timeline.find((candidate) => candidate.event.id === goal.id);
+  assert.ok(entry);
+  assert.deepEqual(assistCandidates(entry.lineupPlayerIds, "p1"), ["p6", "p3", "p4", "p5"]);
+  assert.equal(replay.score.for, 1);
+  events = editEvent(players, events, goal.id, {
+    threat: { assist: { status: "PLAYER", playerId: "p3" } },
+  });
+  replay = replayMatch(players, events);
+  const edited = replay.timeline.find((candidate) => candidate.event.id === goal.id)?.event;
+  assert.equal(edited?.type === "threat_recorded" && edited.assist?.status === "PLAYER" && edited.assist.playerId, "p3");
+  assert.throws(() => editEvent(players, events, goal.id, {
+    threat: { assist: { status: "PLAYER", playerId: "p1" } },
+  }), MatchIntegrityError);
+});
+
+test("captura CDA exige decisión de asistencia y conserva SIN ASISTENCIA", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "assist-required";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  actions.recordThreat(matchId, {
+    side: "FOR",
+    playerId: "p1",
+    origin: { x: 0.8, y: 0.5 },
+    outcome: "GOL",
+    phase: "POSITIONAL",
+  });
+  let session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.events.length, 1);
+  assert.match(session.lastError ?? "", /asistencia/);
+  actions.recordThreat(matchId, {
+    side: "FOR",
+    playerId: "p1",
+    origin: { x: 0.8, y: 0.5 },
+    outcome: "GOL",
+    phase: "POSITIONAL",
+    assist: { status: "NONE" },
+  });
+  session = useMatchStore.getState().matches[matchId];
+  assert.equal(replayMatch(session.players, session.events).score.for, 1);
+  const recorded = session.events.find((event) => event.type === "threat_recorded");
+  assert.equal(recorded?.type === "threat_recorded" && recorded.assist?.status, "NONE");
 });

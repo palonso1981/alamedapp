@@ -16,6 +16,7 @@ import { MatchScoreboard } from "../../../../components/match/MatchScoreboard";
 import { RecentEventsPanel } from "../../../../components/match/RecentEventsPanel";
 import { RivalDisciplineQuickActions } from "../../../../components/match/RivalDisciplineQuickActions";
 import { PlayerAvatar } from "../../../../components/player/PlayerAvatar";
+import { normalizeCourtPoint } from "../../../../lib/courtGeometry";
 import { eventDescription } from "../../../../lib/eventPresentation";
 import {
   IDLE_LIVE_INTERACTION,
@@ -24,6 +25,7 @@ import {
   reduceLiveInteraction,
 } from "../../../../lib/liveInteraction";
 import { replayMatch, sortEvents } from "../../../../lib/matchEngine";
+import { assistCandidates } from "../../../../lib/matchReview";
 import { useMatchStore } from "../../../../store/useMatchStore";
 import {
   INFERIORITY_SLOT_ID,
@@ -77,6 +79,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const toggleGameState = useMatchStore((state) => state.toggleGameState);
   const recordFoul = useMatchStore((state) => state.recordFoul);
   const recordCard = useMatchStore((state) => state.recordCard);
+  const recordStaffCard = useMatchStore((state) => state.recordStaffCard);
+  const setPendingReview = useMatchStore((state) => state.setPendingReview);
   const swapPlayer = useMatchStore((state) => state.swapPlayer);
   const softDeleteEvent = useMatchStore((state) => state.softDeleteEvent);
   const restoreEvent = useMatchStore((state) => state.restoreEvent);
@@ -98,6 +102,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   );
   const [feedback, setFeedback] = useState<string | null>(null);
   const [clockSide, setClockSide] = useState<ClockSide>("right");
+  const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
 
   useEffect(() => {
     const savedSide = window.localStorage.getItem(CLOCK_SIDE_STORAGE_KEY);
@@ -111,6 +116,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     setInteraction(IDLE_LIVE_INTERACTION);
     setRedDecisionPlayerId(null);
     setFeedback(null);
+    setSelectedStaffId(null);
   }, [ensureMatch, matchId]);
 
   useEffect(() => {
@@ -146,10 +152,6 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const bench = replay.benchPlayerIds
     .map((id) => session.players.find((player) => player.id === id))
     .filter((player): player is Player => Boolean(player));
-  const recentEvents = sortEvents(session.events)
-    .filter((event) => event.type !== "lineup_initialized")
-    .reverse()
-    .slice(0, 5);
   const periodDiscipline = chronologyReplay.disciplineByPeriod[
     session.period
   ] ?? {
@@ -163,7 +165,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       )
     : undefined;
   const undoDescription = targetForUndo
-    ? `${eventDescription(targetForUndo, session.players, targetUndoEntry)} ${targetForUndo.minute}'`
+    ? `${eventDescription(targetForUndo, session.players, targetUndoEntry, session.staff)} ${targetForUndo.minute}'`
     : "última acción";
   const selectedPlayerId =
     interaction.kind === "PLAYER_SELECTED"
@@ -202,6 +204,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
 
   const applyInteraction = (action: LiveInteractionAction) => {
     clearError(matchId);
+    setSelectedStaffId(null);
     setRedDecisionPlayerId(null);
     const transition = reduceLiveInteraction(interaction, action);
     const effect = transition.effect;
@@ -235,12 +238,22 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
 
   const handleCourtClick = (event: MouseEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
-    const x = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
-    const y = Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height));
     applyInteraction({
       type: "COURT_TAPPED",
-      origin: { x, y },
+      origin: normalizeCourtPoint(event.clientX, event.clientY, bounds),
     });
+  };
+
+  const handleStaffTap = (staffId: string) => {
+    setInteraction(IDLE_LIVE_INTERACTION);
+    setRedDecisionPlayerId(null);
+    setSelectedStaffId((current) => current === staffId ? null : staffId);
+  };
+
+  const handleStaffCard = (staffId: string, color: "YELLOW" | "RED") => {
+    recordStaffCard(matchId, staffId, color);
+    setSelectedStaffId(null);
+    setFeedback(color === "YELLOW" ? "✓ Amarilla cuerpo técnico" : "✓ Roja cuerpo técnico");
   };
 
   const finishPlayerAction = (message: string) => {
@@ -271,7 +284,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
 
   return (
     <div
-      className={`min-h-screen overflow-x-hidden bg-gray-950 p-3 pb-28 font-sans text-white sm:p-4 sm:pb-4 ${
+      className={`directo-page min-h-screen overflow-x-hidden bg-gray-950 p-3 pb-28 font-sans text-white sm:p-4 sm:pb-4 ${
         clockSide === "left" ? "sm:pl-28" : "sm:pr-28"
       }`}
     >
@@ -295,7 +308,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           {feedback}
         </div>
       )}
-      <header className="mx-auto mb-4 flex max-w-7xl flex-wrap items-center justify-between gap-3 border-b border-gray-700 pb-3">
+      <header className="mx-auto mb-2 flex max-w-7xl flex-wrap items-center justify-between gap-2 border-b border-gray-700 pb-2">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400">
             Partido {matchId}
@@ -337,33 +350,30 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 ? "● Error de guardado"
                 : "○ Preparando guardado"}
           </span>
+          <HistoryControls
+            canUndo={session.past.length > 0}
+            canRedo={session.future.length > 0}
+            undoDescription={undoDescription}
+            onUndo={() => {
+              setInteraction(IDLE_LIVE_INTERACTION);
+              undo(matchId);
+            }}
+            onRedo={() => {
+              setInteraction(IDLE_LIVE_INTERACTION);
+              redo(matchId);
+            }}
+          />
         </div>
       </header>
 
-      <div className="mx-auto mb-3 flex max-w-7xl justify-end">
-        <HistoryControls
-          canUndo={session.past.length > 0}
-          canRedo={session.future.length > 0}
-          undoDescription={undoDescription}
-          onUndo={() => {
-            setInteraction(IDLE_LIVE_INTERACTION);
-            undo(matchId);
-          }}
-          onRedo={() => {
-            setInteraction(IDLE_LIVE_INTERACTION);
-            redo(matchId);
-          }}
-        />
-      </div>
-
-      <div className="mx-auto mb-4 grid max-w-7xl grid-cols-2 gap-2 sm:grid-cols-3">
+      <div className="mx-auto mb-2 grid max-w-7xl grid-cols-2 gap-2 sm:grid-cols-[1fr_1fr_0.7fr_auto]">
         <button
           type="button"
           onClick={() => {
             setInteraction(IDLE_LIVE_INTERACTION);
             toggleGameState(matchId, "SUPERIORITY");
           }}
-          className={`rounded-xl border-2 px-3 py-3 text-sm font-black transition-all ${
+          className={`rounded-xl border-2 px-3 py-2 text-sm font-black transition-all ${
             replay.superiorityActive
               ? "animate-pulse border-amber-200 bg-amber-400 text-slate-950 shadow-[0_0_24px_rgba(251,191,36,0.35)]"
               : "border-gray-800 bg-gray-900 text-gray-500"
@@ -378,7 +388,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             setInteraction(IDLE_LIVE_INTERACTION);
             toggleGameState(matchId, "FLYING_GOALKEEPER");
           }}
-          className={`rounded-xl border-2 px-3 py-3 text-sm font-black transition-all ${
+          className={`rounded-xl border-2 px-3 py-2 text-sm font-black transition-all ${
             replay.flyingGoalkeeperActive
               ? "border-rose-300 bg-rose-600 text-white"
               : "border-gray-800 bg-gray-900 text-gray-500"
@@ -388,7 +398,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           ◇⁺ {replay.flyingGoalkeeperActive ? "P-J ACTIVO" : "Portero-jugador"}
         </button>
         <div
-          className={`col-span-2 rounded-xl border-2 px-3 py-3 text-center text-sm font-black sm:col-span-1 ${
+          className={`rounded-xl border-2 px-3 py-2 text-center text-sm font-black ${
             replay.inferiorityActive
               ? "border-red-300 bg-red-950 text-red-200"
               : "border-gray-900 bg-gray-950 text-gray-700"
@@ -396,18 +406,11 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         >
           {replay.inferiorityActive ? "▼ INFERIORIDAD" : "5v5"}
         </div>
-      </div>
-
-      <div className="mx-auto mb-3 flex max-w-7xl justify-end gap-2 font-mono text-[11px] text-slate-500" aria-label={`Faltas del periodo ${session.period}`}>
-        <span className="rounded-full bg-slate-900 px-2 py-1 text-orange-300">
-          CDA F{periodDiscipline.for.fouls}
-        </span>
-        <span className="rounded-full bg-slate-900 px-2 py-1 text-sky-300">
-          RIV F{periodDiscipline.against.fouls}
-        </span>
-        <span className="rounded-full bg-slate-900 px-2 py-1 text-slate-400">
-          CDA {chronologyReplay.discipline.for.yellowCards}▮ {chronologyReplay.discipline.for.redCards}▮
-        </span>
+        <div className="col-span-2 flex items-center justify-end gap-2 font-mono text-[11px] sm:col-span-1" aria-label={`Faltas del periodo ${session.period}`}>
+          <span className="rounded-full bg-slate-900 px-2 py-1 text-orange-300">CDA F{periodDiscipline.for.fouls}</span>
+          <span className="rounded-full bg-slate-900 px-2 py-1 text-sky-300">RIV F{periodDiscipline.against.fouls}</span>
+          <span className="rounded-full bg-slate-900 px-2 py-1 text-slate-400">{chronologyReplay.discipline.for.yellowCards}▮ {chronologyReplay.discipline.for.redCards}▮</span>
+        </div>
       </div>
 
       {session.lastError && (
@@ -422,24 +425,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      <main className="mx-auto grid max-w-screen-2xl gap-3 md:grid-cols-2 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <div className="order-2 min-w-0 md:col-span-2 lg:order-1 lg:col-span-1 lg:col-start-1 lg:row-start-1">
-          <BenchPanel
-            players={bench}
-            playerMinutes={replay.playerMinutes}
-            replacementForLabel={substitutionSourceLabel}
-            selectedPlayerId={selectedBenchPlayerId ?? undefined}
-            onPlayerTap={(playerId) =>
-              applyInteraction({ type: "BENCH_PLAYER_TAPPED", playerId })
-            }
-            onYellow={(playerId) => recordPlayerCard(playerId, "YELLOW")}
-            onRed={(playerId) => recordPlayerCard(playerId, "RED")}
-            onCancel={() => applyInteraction({ type: "CANCEL" })}
-          />
-        </div>
-
-        <section className="order-1 min-w-0 rounded-2xl bg-gray-900 p-3 shadow-xl md:col-span-2 sm:p-4 lg:order-2 lg:col-span-1 lg:col-start-2 lg:row-start-1">
-          <div className="mb-3 flex min-h-12 items-center justify-between gap-3">
+      <main className="directo-workspace mx-auto grid max-w-screen-2xl gap-2">
+        <section className="directo-court-panel relative min-w-0 rounded-2xl bg-gray-900 p-2 shadow-xl sm:p-3">
+          <div className="directo-court-heading mb-2 flex min-h-10 items-center justify-between gap-3">
             <div className="min-w-0">
               <h2 className="font-bold">Pista</h2>
               {interaction.kind === "IDLE" ? (
@@ -476,7 +464,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
 
           <div
             onClick={handleCourtClick}
-            className={`relative min-h-[350px] cursor-crosshair overflow-hidden rounded-2xl border-4 bg-[#075a9c] sm:min-h-[440px] ${
+            data-testid="futsal-court"
+            className={`directo-court relative mx-auto aspect-[2/1] w-full cursor-crosshair overflow-hidden rounded-2xl border-4 bg-[#075a9c] ${
               pendingThreat?.side === "AGAINST"
                 ? "border-rose-300/90 shadow-[0_0_24px_rgba(244,63,94,0.14)]"
                 : interaction.kind === "PLAYER_SELECTED"
@@ -502,7 +491,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                         playerId: slotId,
                       });
                     }}
-                    className={`absolute z-10 flex min-h-24 w-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-2xl border-2 border-dashed px-2 py-2 text-center shadow-lg sm:w-28 ${
+                    className={`absolute z-10 flex min-h-14 w-14 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-xl border-2 border-dashed px-1 py-1 text-center shadow-lg sm:min-h-20 sm:w-20 lg:w-24 ${
                       selected
                         ? "scale-110 border-white bg-red-500 text-white"
                         : "border-red-300 bg-red-950/90 text-red-200"
@@ -535,7 +524,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                       playerId: player.id,
                     });
                   }}
-                  className={`absolute z-10 flex min-h-24 w-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-2xl border-2 px-2 py-2 text-center shadow-lg transition-all sm:w-28 ${
+                  className={`absolute z-10 flex min-h-16 w-16 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-xl border-2 px-1 py-1 text-center shadow-lg transition-all sm:min-h-20 sm:w-20 lg:w-24 ${
                     selected
                       ? "scale-110 border-yellow-200 bg-yellow-500 text-gray-950 ring-4 ring-yellow-300/30"
                       : "border-white/60 bg-gray-900/90 hover:bg-gray-800"
@@ -543,8 +532,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   style={{ left: `${position.x * 100}%`, top: `${position.y * 100}%` }}
                   aria-pressed={selected}
                 >
-                  <PlayerAvatar player={player} selected={selected} />
-                  <span className="mt-1 max-w-full truncate text-xs font-semibold">{player.name}</span>
+                  <PlayerAvatar player={player} selected={selected} compact />
+                  <span className="mt-1 hidden max-w-full truncate text-xs font-semibold sm:block">{player.name}</span>
                   <span className="mt-1 flex items-baseline gap-1.5" aria-label={`${minutes.currentStintMinutes} minutos en el tramo actual; ${minutes.totalMinutes} minutos acumulados`}>
                     <span className={`text-base font-black ${selected ? "text-slate-950" : "text-cyan-300"}`} title="Tramo actual">
                       {minutes.currentStintMinutes}&apos;
@@ -594,11 +583,16 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             {pendingThreat && (
               <ThreatContextPicker
                 threat={pendingThreat}
+                players={session.players}
+                assistCandidateIds={assistCandidates(replay.onCourtPlayerIds, pendingThreat.playerId)}
                 onOutcome={(outcome) =>
                   applyInteraction({ type: "OUTCOME_SELECTED", outcome })
                 }
                 onPhase={(phase) =>
                   applyInteraction({ type: "PHASE_SELECTED", phase })
+                }
+                onAssist={(assist) =>
+                  applyInteraction({ type: "ASSIST_SELECTED", assist })
                 }
                 onCancel={() => applyInteraction({ type: "CANCEL" })}
               />
@@ -606,13 +600,32 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           </div>
         </section>
 
-        <div className="order-4 min-w-0 md:col-span-2 lg:col-span-2">
+        <div className="directo-bench-panel-wrap min-w-0">
+          <BenchPanel
+            players={bench}
+            staff={session.staff}
+            playerMinutes={replay.playerMinutes}
+            replacementForLabel={substitutionSourceLabel}
+            selectedPlayerId={selectedBenchPlayerId ?? undefined}
+            selectedStaffId={selectedStaffId ?? undefined}
+            onPlayerTap={(playerId) => applyInteraction({ type: "BENCH_PLAYER_TAPPED", playerId })}
+            onStaffTap={handleStaffTap}
+            onYellow={(playerId) => recordPlayerCard(playerId, "YELLOW")}
+            onRed={(playerId) => recordPlayerCard(playerId, "RED")}
+            onStaffCard={handleStaffCard}
+            onCancel={() => { setSelectedStaffId(null); applyInteraction({ type: "CANCEL" }); }}
+          />
+        </div>
+
+        <div className="directo-timeline-wrap min-w-0">
           <RecentEventsPanel
-            events={recentEvents}
+            events={session.events}
             timeline={chronologyReplay.timeline}
             players={session.players}
+            staff={session.staff}
             onDelete={(eventId) => softDeleteEvent(matchId, eventId)}
             onRestore={(eventId) => restoreEvent(matchId, eventId)}
+            onPendingReview={(eventId, pending) => setPendingReview(matchId, eventId, pending)}
             onSave={(eventId, target, changes) =>
               editAndReorderEvent(matchId, eventId, target, changes)
             }

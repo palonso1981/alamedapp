@@ -104,12 +104,20 @@ salir de los límites de la pista.
 
 La amenaza CDA actual usa el recorrido configurado:
 
-`jugador → origen → consecuencia → fase → autoguardado`.
+`jugador → origen → consecuencia → fase → [asistencia si GOL] → autoguardado`.
 
 Consecuencia y fase son pasos distintos. No se crea evento antes de completar
 ambos. POSICIONAL y TRANSICIÓN ocupan el primer nivel; BANDA, CÓRNER, FALTA y
 PORTERO-JUGADOR el intermedio; PENALTI y DOBLE PENALTI el compacto. Esta
 jerarquía es presentación basada en el histórico, no taxonomía ni regla rígida.
+
+En un GOL CDA, el evento no se guarda hasta decidir asistencia. Los candidatos
+son exclusivamente los jugadores que el replay sitúa en pista en ese instante,
+excluido el goleador. `NONE` expresa que no hubo asistencia atribuible;
+`PENDING` expresa que debe revisarse y activa la misma marca `pendingReview`
+del evento. No existe un segundo concepto paralelo de pendiente. Resolver la
+asistencia desde el editor permite retirar esa marca. Goles y asistencias se
+derivarán de eventos; no se persistirán contadores agregados.
 
 El recorrido RIV tiene una definición propia aunque provisionalmente use los
 mismos dos pasos visibles. La arquitectura permite sustituirlo más adelante
@@ -152,6 +160,56 @@ normalizada, al menos: `DIRECTO`, `REVISION_MANUAL`, `VIDEO`, `ACTA_OFICIAL` e
 `IMPORTACION`, conservando valor original, fecha, confianza y confirmación
 humana cuando corresponda. Esta capa de procedencia se documenta ahora, pero no
 se fuerza una migración prematura de los eventos locales.
+
+## Consolidación de superficie, convocatoria y cronología
+
+La superficie interactiva de pista mantiene siempre `aspect-ratio: 2 / 1`,
+correspondiente a 40 × 20 m. Porterías y marcas se dibujan dentro del mismo
+sistema SVG, pero las coordenadas de captura continúan normalizadas respecto al
+rectángulo táctil. Un cambio de tamaño modifica simultáneamente ancho y alto;
+nunca deforma la geometría ni altera `{x, y}`.
+
+Tablet horizontal es la composición prioritaria. La pista recibe el espacio
+principal; encabezado y estados se compactan, el banquillo se dispone junto a
+una línea lateral y la cronología normal muestra una franja baja con scroll
+propio. La cronología o el editor pueden expandirse sobre la superficie porque
+son tareas secundarias. Tablet vertical reorganiza la cuadrícula sin deformar
+la pista, y móvil usa flujo vertical sin scroll horizontal global.
+
+La convocatoria consumida por Directo separa dos colecciones:
+
+- `players`: id, nombre, dorsal, foto y atributos deportivos;
+- `staff`: id, nombre, foto y rol libre, sin un enum cerrado de cargos.
+
+El escenario demo contiene 12 jugadores (5 iniciales y 7 suplentes) y tres
+técnicos. La cuadrícula horizontal admite 8 suplentes + 3 técnicos sin scroll.
+`PlayerAvatar` prioriza foto y dorsal; sin foto el dorsal ocupa el centro. El
+staff usa un avatar secundario y nunca entra en pista, inicia amenaza,
+sustitución o falta. Solo admite las acciones contextuales compatibles de
+amarilla y roja; su disciplina computa sin modificar alineación ni minutos.
+
+La cronología de Directo ya no tiene un límite conceptual de cinco eventos.
+El listado compacto incluye todos los eventos —también los eliminados
+lógicamente para poder restaurarlos— ordenados por `period + minute + order`.
+El gesto de arrastre solo reordena dentro del mismo periodo y minuto. La vista
+puede filtrar `TODOS` o `PENDIENTES`, muestra el contador `?` y abre un editor
+reutilizable por tipo de evento. Guardar utiliza las operaciones de edición y
+reordenación del Event Sourcing y ejecuta replay completo; nunca edita un
+marcador, alineación, minutos, faltas o estados derivados.
+
+`pendingReview` es una marca transversal del evento, no un estado de
+incompletitud. Un evento marcado sigue siendo válido y continúa computando. El
+futuro cierre podrá avisar “Tienes N eventos pendientes de revisión” y ofrecer
+revisarlos ahora o después, sin bloquear el cierre del partido. El editor no
+depende de que el partido esté en curso y se reutilizará en una pantalla futura
+de Revisión de vídeo.
+
+Los goles rivales no añaden preguntas obligatorias en Directo. Durante una
+revisión posterior podrán enriquecerse con una taxonomía configurable de causa
+defensiva (por ejemplo pérdida de pase, pérdida 1×1, error defensivo, segunda
+jugada u otro). Esa causa futura será distinta de la fase táctica existente;
+en particular, no duplicará `TRANSITION`. Este requisito queda documentado y
+no se implementa todavía.
 
 ### Acta oficial PDF (requisito futuro)
 

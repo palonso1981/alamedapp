@@ -29,6 +29,12 @@ body {
   max-height: calc(100% - 1rem);
 }
 
+.contextual-surface-frame--compact {
+  left: var(--context-mobile-left);
+  right: var(--context-mobile-right);
+  width: min(9.5rem, calc(100% - 1rem));
+}
+
 @media (min-width: 640px) {
   .contextual-surface-frame {
     left: var(--context-left);
@@ -37,6 +43,49 @@ body {
     bottom: var(--context-bottom);
     width: min(var(--context-width), calc(100% - 1rem));
     transform: translateX(var(--context-translate-x));
+  }
+}
+
+@media (min-width: 1024px) and (orientation: landscape) {
+  .directo-workspace {
+    grid-template-columns: minmax(0, 3fr) minmax(250px, 1fr);
+  }
+
+  .directo-court-panel {
+    grid-column: 1 / -1;
+  }
+
+  .directo-court-heading {
+    position: absolute;
+    z-index: 30;
+    top: 0.75rem;
+    left: 0.75rem;
+    right: 0.75rem;
+    margin: 0;
+    padding: 0.35rem 0.5rem;
+    border-radius: 0.75rem;
+    background: linear-gradient(90deg, rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0.18));
+    pointer-events: none;
+  }
+
+  .directo-court-heading button {
+    pointer-events: auto;
+  }
+
+  .directo-court {
+    width: min(100%, calc((100dvh - 22.5rem) * 2));
+  }
+
+  .directo-page .directo-bench-grid {
+    grid-template-columns: repeat(11, minmax(0, 1fr));
+  }
+
+  .directo-page .directo-bench-grid > button {
+    min-height: 4.75rem;
+  }
+
+  .directo-timeline-scroll {
+    max-height: 5.5rem;
   }
 }
 
