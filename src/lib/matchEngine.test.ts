@@ -12,6 +12,7 @@ import {
   createSubstitutionEvent,
   deriveGlobalMinute,
   editEvent,
+  EventDeletionBlockedError,
   MatchIntegrityError,
   moveEventWithinMinute,
   normalizeMatchClock,
@@ -34,7 +35,13 @@ import {
 import { contextualPlacement } from "./contextualPlacement";
 import { courtHeightForWidth, FUTSAL_COURT_ASPECT_RATIO, normalizeCourtPoint } from "./courtGeometry";
 import { assistCandidates, filterTimelineEvents } from "./matchReview";
-import { DEMO_PLAYERS, DEMO_STAFF, useMatchStore } from "../store/useMatchStore";
+import {
+  DEMO_EXTRA_PLAYER,
+  DEMO_PLAYERS,
+  DEMO_STAFF,
+  upgradeDemoSession,
+  useMatchStore,
+} from "../store/useMatchStore";
 import {
   INFERIORITY_SLOT_ID,
   MatchEvent,
@@ -1807,4 +1814,164 @@ test("captura CDA exige decisión de asistencia y conserva SIN ASISTENCIA", () =
   assert.equal(replayMatch(session.players, session.events).score.for, 1);
   const recorded = session.events.find((event) => event.type === "threat_recorded");
   assert.equal(recorded?.type === "threat_recorded" && recorded.assist?.status, "NONE");
+});
+
+test("soft delete y restauración funcionan para eventos independientes editados, con asistencia y pendientes", () => {
+  const matchId = "delete-independent";
+  let events = initialLineup(matchId);
+  events = appendEvents(players, events, [
+    createGameStateEvent({
+      id: "delete-state",
+      matchId,
+      position: { period: 1, minute: 1, order: 1 },
+      state: "SUPERIORITY",
+      active: true,
+      now: 2,
+    }),
+    createFoulEvent({
+      id: "delete-foul",
+      matchId,
+      position: { period: 1, minute: 2, order: 1 },
+      side: "FOR",
+      playerId: "p1",
+      now: 3,
+    }),
+    createCardEvent({
+      id: "delete-card",
+      matchId,
+      position: { period: 1, minute: 3, order: 1 },
+      side: "FOR",
+      color: "YELLOW",
+      playerId: "p2",
+      now: 4,
+    }),
+    createLiveThreatEvent({
+      id: "delete-goal",
+      matchId,
+      position: { period: 1, minute: 4, order: 1 },
+      side: "FOR",
+      playerId: "p1",
+      origin: { x: 0.82, y: 0.42 },
+      outcome: "GOL",
+      phase: "POSITIONAL",
+      assist: { status: "PENDING" },
+      now: 5,
+    }),
+  ]);
+  events = editEvent(players, events, "delete-goal", {
+    threat: { phase: "TRANSITION" },
+  }, 6);
+
+  for (const eventId of ["delete-state", "delete-foul", "delete-card", "delete-goal"]) {
+    events = softDeleteEvent(players, events, eventId, 10);
+    assert.notEqual(events.find((event) => event.id === eventId)?.deletedAt, null);
+    assert.deepEqual(replayMatch(players, events).issues, []);
+    if (eventId === "delete-goal") {
+      assert.equal(filterTimelineEvents(events, "PENDING").length, 0);
+    }
+    events = restoreEvent(players, events, eventId, 11);
+    assert.equal(events.find((event) => event.id === eventId)?.deletedAt, null);
+    assert.deepEqual(replayMatch(players, events).issues, []);
+  }
+  assert.equal(replayMatch(players, events).score.for, 1);
+  assert.equal(events.find((event) => event.id === "delete-goal")?.pendingReview, true);
+});
+
+test("soft delete explica el bloqueo cuando un evento posterior depende de una sustitución", () => {
+  const matchId = "delete-dependent";
+  let events = initialLineup(matchId);
+  events = appendEvents(players, events, [
+    createSubstitutionEvent({
+      id: "dependent-sub",
+      matchId,
+      position: { period: 1, minute: 4, order: 1 },
+      playerOutId: "p1",
+      playerInId: "p6",
+      now: 2,
+    }),
+    createLiveThreatEvent({
+      id: "dependent-threat",
+      matchId,
+      position: { period: 1, minute: 5, order: 1 },
+      side: "FOR",
+      playerId: "p6",
+      origin: { x: 0.7, y: 0.4 },
+      outcome: "FUERA",
+      phase: "TRANSITION",
+      now: 3,
+    }),
+  ]);
+
+  assert.throws(
+    () => softDeleteEvent(players, events, "dependent-sub", 4),
+    (error: unknown) => {
+      assert.ok(error instanceof EventDeletionBlockedError);
+      assert.equal(error.blockingIssues[0]?.eventId, "dependent-threat");
+      assert.match(error.message, /evento posterior depende/);
+      assert.match(error.message, /Edita o elimina primero/);
+      return true;
+    },
+  );
+  assert.equal(events.find((event) => event.id === "dependent-sub")?.deletedAt, null);
+});
+
+test("la migración controlada de prueba amplía una sesión antigua sin perder eventos", () => {
+  const legacyPlayers = DEMO_PLAYERS.slice(0, 8);
+  const matchId = "prueba";
+  const lineup = createLineupInitializedEvent({
+    id: "legacy-demo-lineup",
+    matchId,
+    position: { period: 1, minute: 0, order: 1 },
+    squadPlayerIds: legacyPlayers.map((player) => player.id),
+    onCourtPlayerIds: legacyPlayers.slice(0, 5).map((player) => player.id),
+    now: 1,
+  });
+  const foul = createFoulEvent({
+    id: "legacy-demo-foul",
+    matchId,
+    position: { period: 1, minute: 3, order: 1 },
+    side: "FOR",
+    playerId: "p1",
+    now: 2,
+  });
+  const legacySession: MatchSession = {
+    matchId,
+    players: legacyPlayers,
+    staff: [],
+    period: 1,
+    minute: 3,
+    periodMinutes: { 1: 3, 2: 0 },
+    events: [lineup, foul],
+    past: [[lineup]],
+    future: [[lineup, foul]],
+    lastError: null,
+    persistenceStatus: "saved",
+    lastSavedAt: 2,
+  };
+
+  const upgraded = upgradeDemoSession(legacySession);
+  assert.equal(upgraded.players.length, 12);
+  assert.equal(upgraded.staff.length, 3);
+  assert.equal(upgraded.events.length, 2);
+  assert.equal(replayMatch(upgraded.players, upgraded.events).benchPlayerIds.length, 7);
+  for (const chronology of [upgraded.events, ...upgraded.past, ...upgraded.future]) {
+    const migratedLineup = chronology.find((event) => event.type === "lineup_initialized");
+    assert.equal(migratedLineup?.type === "lineup_initialized" ? migratedLineup.squadPlayerIds.length : 0, 12);
+  }
+
+  const realSession = { ...legacySession, matchId: "partido-real" };
+  assert.equal(upgradeDemoSession(realSession), realSession);
+});
+
+test("el fixture prueba-8 ofrece cinco titulares y ocho suplentes", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "prueba-8";
+  useMatchStore.getState().ensureMatch(matchId);
+  const session = useMatchStore.getState().matches[matchId];
+  const replay = replayMatch(session.players, session.events);
+  assert.equal(session.players.length, 13);
+  assert.equal(session.players.at(-1)?.id, DEMO_EXTRA_PLAYER.id);
+  assert.equal(replay.onCourtPlayerIds.length, 5);
+  assert.equal(replay.benchPlayerIds.length, 8);
+  assert.equal(session.staff.length, 3);
 });

@@ -102,6 +102,28 @@ export class MatchIntegrityError extends Error {
   }
 }
 
+export class EventDeletionBlockedError extends Error {
+  constructor(
+    public readonly eventId: string,
+    public readonly blockingIssues: ReplayIssue[],
+  ) {
+    const uniqueBlockingEvents = new Set(
+      blockingIssues.map((issue) => issue.eventId),
+    ).size;
+    const detail = blockingIssues[0]?.message;
+    super(
+      `No se puede eliminar este evento: ${uniqueBlockingEvents} evento${
+        uniqueBlockingEvents === 1 ? "" : "s"
+      } posterior${uniqueBlockingEvents === 1 ? "" : "es"} depende${
+        uniqueBlockingEvents === 1 ? "" : "n"
+      } de él. ${detail ?? "La cronología resultante no sería válida."} Edita o elimina primero ${
+        uniqueBlockingEvents === 1 ? "ese evento" : "esos eventos"
+      }.`,
+    );
+    this.name = "EventDeletionBlockedError";
+  }
+}
+
 interface EventFactoryBase {
   id?: string;
   matchId: string;
@@ -988,7 +1010,14 @@ export function softDeleteEvent(
         : event,
     ),
   );
-  assertValidChronology(players, next);
+  try {
+    assertValidChronology(players, next);
+  } catch (error) {
+    if (error instanceof MatchIntegrityError) {
+      throw new EventDeletionBlockedError(eventId, error.issues);
+    }
+    throw error;
+  }
   return sortEvents(next);
 }
 

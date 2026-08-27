@@ -15,7 +15,9 @@ export function filterTimelineEvents(
   const visible = events.filter((event) => event.type !== "lineup_initialized");
   return sortEvents(
     filter === "PENDING"
-      ? visible.filter((event) => event.pendingReview)
+      ? visible.filter(
+          (event) => event.pendingReview && event.deletedAt === null,
+        )
       : visible,
   ).reverse();
 }

@@ -66,6 +66,75 @@ export const DEMO_STAFF: StaffMember[] = [
   { id: "staff-delegate", name: "Delegado", role: "Delegado" },
 ];
 
+export const DEMO_EXTRA_PLAYER: Player = {
+  id: "p13",
+  name: "Joel",
+  number: 15,
+  dominantFoot: "RIGHT",
+};
+
+const DEMO_MATCH_IDS = new Set(["prueba", "prueba-8"]);
+
+function demoPlayersForMatch(matchId: string): Player[] {
+  return matchId === "prueba-8"
+    ? [...DEMO_PLAYERS, DEMO_EXTRA_PLAYER]
+    : DEMO_PLAYERS;
+}
+
+function mergeById<T extends { id: string }>(
+  current: T[],
+  expected: T[],
+): T[] {
+  const currentIds = new Set(current.map((item) => item.id));
+  return [
+    ...current,
+    ...expected
+      .filter((item) => !currentIds.has(item.id))
+      .map((item) => ({ ...item })),
+  ];
+}
+
+function upgradeDemoChronology(
+  events: MatchEvent[],
+  squadPlayerIds: string[],
+): MatchEvent[] {
+  return events.map((event) =>
+    event.type === "lineup_initialized"
+      ? {
+          ...event,
+          squadPlayerIds: Array.from(
+            new Set([...event.squadPlayerIds, ...squadPlayerIds]),
+          ),
+        }
+      : event,
+  );
+}
+
+/**
+ * Migra únicamente fixtures demo conocidos. Conserva reloj, eventos e historial;
+ * solo incorpora personas ausentes y amplía la convocatoria de la alineación.
+ */
+export function upgradeDemoSession(session: MatchSession): MatchSession {
+  if (!DEMO_MATCH_IDS.has(session.matchId)) {
+    return session;
+  }
+  const players = mergeById(session.players, demoPlayersForMatch(session.matchId));
+  const staff = mergeById(session.staff, DEMO_STAFF);
+  const squadPlayerIds = players.map((player) => player.id);
+  return {
+    ...session,
+    players,
+    staff,
+    events: upgradeDemoChronology(session.events, squadPlayerIds),
+    past: session.past.map((events) =>
+      upgradeDemoChronology(events, squadPlayerIds),
+    ),
+    future: session.future.map((events) =>
+      upgradeDemoChronology(events, squadPlayerIds),
+    ),
+  };
+}
+
 interface RecordThreatInput {
   side: DisciplineSide;
   playerId?: string;
@@ -140,7 +209,7 @@ interface MatchState {
 }
 
 function createSession(matchId: string): MatchSession {
-  const players = DEMO_PLAYERS.map((player) => ({ ...player }));
+  const players = demoPlayersForMatch(matchId).map((player) => ({ ...player }));
   const staff = DEMO_STAFF.map((member) => ({ ...member }));
   const lineup = createLineupInitializedEvent({
     matchId,
@@ -264,12 +333,7 @@ export const useMatchStore = create<MatchState>((set) => ({
       }
       const loaded = loadMatchSession(matchId);
       const session = loaded
-        ? loaded.staff.length > 0
-          ? loaded
-          : persistSession({
-              ...loaded,
-              staff: DEMO_STAFF.map((member) => ({ ...member })),
-            })
+        ? persistSession(upgradeDemoSession(loaded))
         : persistSession(createSession(matchId));
       return {
         matches: {

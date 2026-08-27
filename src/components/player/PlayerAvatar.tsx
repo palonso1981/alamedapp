@@ -4,14 +4,20 @@ interface PlayerAvatarProps {
   player: Player;
   selected?: boolean;
   compact?: boolean;
+  bench?: boolean;
 }
 
 export function PlayerAvatar({
   player,
   selected = false,
   compact = false,
+  bench = false,
 }: PlayerAvatarProps) {
-  const size = compact ? "h-10 w-10" : "h-12 w-12 sm:h-14 sm:w-14";
+  const size = bench
+    ? "h-12 w-12"
+    : compact
+      ? "h-10 w-10"
+      : "h-12 w-12 sm:h-14 sm:w-14";
 
   return (
     <span

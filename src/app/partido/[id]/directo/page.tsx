@@ -604,7 +604,6 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           <BenchPanel
             players={bench}
             staff={session.staff}
-            playerMinutes={replay.playerMinutes}
             replacementForLabel={substitutionSourceLabel}
             selectedPlayerId={selectedBenchPlayerId ?? undefined}
             selectedStaffId={selectedStaffId ?? undefined}
@@ -637,6 +636,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 placement,
               )
             }
+            errorMessage={session.lastError?.startsWith("No se puede eliminar") ? session.lastError : null}
+            onDismissError={() => clearError(matchId)}
           />
         </div>
       </main>

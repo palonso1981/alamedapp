@@ -25,13 +25,16 @@ function CardGlyph({ color }: { color: "yellow" | "red" }) {
   );
 }
 
-function WhistleGlyph({ direction }: { direction: "OUT" | "IN" }) {
+function FoulDirectionGlyph({ direction }: { direction: "OUT" | "IN" }) {
+  const outgoing = direction === "OUT";
   return (
-    <span className="flex items-center gap-0.5 text-xl font-black" aria-hidden="true">
-      {direction === "IN" && <span>←</span>}
-      <span className="grid h-7 w-7 place-items-center rounded-full border-2 border-current text-xs">●</span>
-      {direction === "OUT" && <span>→</span>}
-    </span>
+    <svg viewBox="0 0 52 30" className="h-8 w-14" aria-hidden="true">
+      <circle cx={outgoing ? 8 : 44} cy="8" r="4" fill="currentColor" />
+      <path d={outgoing ? "M3 26c1-8 3-11 5-11s4 3 5 11" : "M39 26c1-8 3-11 5-11s4 3 5 11"} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+      <path d={outgoing ? "M17 15h20" : "M35 15H15"} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+      <path d={outgoing ? "m32 10 6 5-6 5" : "m20 10-6 5 6 5"} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={outgoing ? "m45 7 1.5 4 4 .5-3 2.7 1 4.1-3.5-2.1-3.5 2.1 1-4.1-3-2.7 4-.5z" : "m7 7 1.5 4 4 .5-3 2.7 1 4.1L7 16.2l-3.5 2.1 1-4.1-3-2.7 4-.5z"} fill="currentColor" />
+    </svg>
   );
 }
 
@@ -99,7 +102,7 @@ export function PlayerContextActions({
               className="flex min-h-14 flex-col items-center justify-center rounded-xl border border-orange-700 bg-orange-950/90 px-1 text-orange-100"
               aria-label="Comete falta"
             >
-              <WhistleGlyph direction="OUT" />
+              <FoulDirectionGlyph direction="OUT" />
               <span className="mt-1 text-[9px] font-black">COMETE</span>
             </button>
             <button
@@ -108,7 +111,7 @@ export function PlayerContextActions({
               className="flex min-h-14 flex-col items-center justify-center rounded-xl border border-sky-700 bg-sky-950/90 px-1 text-sky-100"
               aria-label="Recibe falta"
             >
-              <WhistleGlyph direction="IN" />
+              <FoulDirectionGlyph direction="IN" />
               <span className="mt-1 text-[9px] font-black">RECIBE</span>
             </button>
           </>

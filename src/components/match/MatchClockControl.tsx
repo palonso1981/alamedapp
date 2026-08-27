@@ -124,7 +124,7 @@ export function MatchClockControl({
           +1
         </button>
         <output
-          className="grid min-h-20 place-items-center rounded-xl bg-cyan-950 font-mono text-5xl font-black leading-none text-cyan-200"
+          className="grid min-h-24 place-items-center rounded-xl border border-cyan-200/70 bg-cyan-300 font-mono text-6xl font-black leading-none text-slate-950 shadow-[0_0_24px_rgba(103,232,249,0.34)]"
           aria-label={`Minuto ${minute}`}
         >
           {minute}
@@ -187,7 +187,7 @@ export function MatchClockControl({
           −1
         </button>
         <output
-          className="grid min-h-14 min-w-16 place-items-center rounded-xl bg-cyan-950 font-mono text-3xl font-black text-cyan-200"
+          className="grid min-h-14 min-w-[4.5rem] place-items-center rounded-xl border border-cyan-200/70 bg-cyan-300 font-mono text-4xl font-black leading-none text-slate-950 shadow-[0_0_18px_rgba(103,232,249,0.28)]"
           aria-label={`Minuto ${minute}`}
         >
           {minute}

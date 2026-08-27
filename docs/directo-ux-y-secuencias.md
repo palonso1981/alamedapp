@@ -176,6 +176,14 @@ propio. La cronología o el editor pueden expandirse sobre la superficie porque
 son tareas secundarias. Tablet vertical reorganiza la cuadrícula sin deformar
 la pista, y móvil usa flujo vertical sin scroll horizontal global.
 
+La franja inferior horizontal reserva aproximadamente un 62 % al banquillo y
+un 38 % a la cronología. El banquillo abandona la tarjeta rectangular: usa
+objetivos táctiles compactos de 44–52 px basados en avatar, dorsal y nombre
+corto, sin minutos ni información secundaria. El modo compacto de cronología
+muestra como máximo los cuatro acontecimientos más recientes; al expandirse
+recupera todos los eventos, filtros, edición, reordenación, borrado y
+restauración.
+
 La convocatoria consumida por Directo separa dos colecciones:
 
 - `players`: id, nombre, dorsal, foto y atributos deportivos;
@@ -188,6 +196,13 @@ staff usa un avatar secundario y nunca entra en pista, inicia amenaza,
 sustitución o falta. Solo admite las acciones contextuales compatibles de
 amarilla y roja; su disciplina computa sin modificar alineación ni minutos.
 
+`/partido/prueba/directo` migra de forma idempotente únicamente su fixture
+demo: una sesión local antigua de ocho jugadores recibe los cuatro jugadores y
+el staff ausentes, y las convocatorias de sus alineaciones se amplían también
+en `past` y `future`, conservando reloj y eventos. Ningún `matchId` real usa
+esta regla. `/partido/prueba-8/directo` añade un decimotercer jugador demo para
+validar visualmente 5 en pista + 8 suplentes + 3 técnicos.
+
 La cronología de Directo ya no tiene un límite conceptual de cinco eventos.
 El listado compacto incluye todos los eventos —también los eliminados
 lógicamente para poder restaurarlos— ordenados por `period + minute + order`.
@@ -196,6 +211,14 @@ puede filtrar `TODOS` o `PENDIENTES`, muestra el contador `?` y abre un editor
 reutilizable por tipo de evento. Guardar utiliza las operaciones de edición y
 reordenación del Event Sourcing y ejecuta replay completo; nunca edita un
 marcador, alineación, minutos, faltas o estados derivados.
+
+El soft delete se aplica directamente a faltas, tarjetas, estados, amenazas,
+goles, asistencias, pendientes y sustituciones que no tengan dependencias
+posteriores. Si eliminar un evento causal dejara incoherente otro evento —por
+ejemplo, borrar el cambio que puso en pista al autor de una amenaza posterior—
+el motor conserva la cronología y devuelve un bloqueo de dominio explícito. La
+UI lo muestra junto al listado e indica que debe editarse o eliminarse primero
+el dependiente; nunca presenta un toque aparentemente inerte.
 
 `pendingReview` es una marca transversal del evento, no un estado de
 incompletitud. Un evento marcado sigue siendo válido y continúa computando. El
