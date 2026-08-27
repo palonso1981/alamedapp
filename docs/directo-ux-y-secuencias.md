@@ -60,15 +60,18 @@ El replay valida que el padre:
 - esté cronológicamente antes que la continuación;
 - pertenezca a la misma secuencia.
 
-El vínculo se conserva aunque el padre tenga soft delete, porque la identidad
-inmutable del evento sigue existiendo en la cronología. Reordenar una
-continuación antes de su causa se rechaza por integridad.
+Un padre con continuaciones activas no puede eliminarse lógicamente: el motor
+bloquea la operación y señala la dependencia. Tampoco admite padres de otro
+partido, posteriores o pertenecientes a otra secuencia. Reordenar una
+continuación antes de su causa se rechaza por integridad y nunca provoca una
+cascada silenciosa.
 
-La futura UX podrá ofrecer “segunda jugada” tras una parada/rechace y crear el
-nuevo evento con estos campos. Amenazas ofensivas y defensivas deben reutilizar
-el mismo contrato, lo que permitirá reconstruir cadenas, medir conversiones
-tras rechace y mostrar una secuencia como unidad visual sin reinterpretar la
-fase original.
+La UX defensiva ofrece “2ª jugada” únicamente tras una parada con `REBOUND`.
+El nuevo origen crea otro evento con el mismo `sequenceId` y con el anterior
+como `parentEventId`; la cadena puede continuar A → B → C. La fase anterior se
+propone visualmente, pero se confirma o cambia. `CATCH` cierra la acción y
+`CLEARANCE` no fuerza continuidad. Cancelar una continuación no elimina el
+padre ya guardado.
 
 ## Captura en Directo y enriquecimiento posterior
 
@@ -119,16 +122,36 @@ del evento. No existe un segundo concepto paralelo de pendiente. Resolver la
 asistencia desde el editor permite retirar esa marca. Goles y asistencias se
 derivarán de eventos; no se persistirán contadores agregados.
 
-El recorrido RIV tiene una definición propia aunque provisionalmente use los
-mismos dos pasos visibles. La arquitectura permite sustituirlo más adelante
-por:
+El recorrido RIV tiene una definición propia:
 
-`origen → GoalTargetPicker → consecuencia/posición → detalles → fase`.
+`origen → GoalTargetPicker → detalles compatibles → fase → autoguardado`.
 
-`GoalTargetPicker` podrá inferir hipótesis de GOL, PARADA o FUERA según el punto
-de llegada, derivar el portero de la alineación y pedir solo los detalles
-compatibles. No se implementa todavía la portería ni se acopla el motor de
-eventos a esa hipótesis UX.
+`GoalTargetPicker` representa frontalmente la portería CDA con una zona
+exterior y la silueta del portero. El toque normalizado infiere GOL dentro del
+marco, PARADA sobre la silueta o FUERA en el exterior. Una parada deriva
+`UPPER`/`LOWER` y pide solo `CATCH`, `REBOUND` o `CLEARANCE`. El operador no
+elige al portero: replay lo resuelve desde la alineación exacta del evento.
+Si Portero-Jugador no identifica de forma inequívoca al portero funcional, se
+guarda una referencia `PENDING` y se activa `pendingReview`, sin inventar una
+persona.
+
+El destino usa coordenadas `{x, y}` entre 0 y 1 sobre un lienzo frontal
+canónico, con `geometryVersion: 1`; no persiste píxeles ni zonas agregadas. El
+resultado deportivo sigue siendo un campo del evento y el detalle espacial se
+valida contra la geometría de su versión. `WOODWORK` queda reservado como
+detalle futuro del destino (palo/travesaño), no como cuarta consecuencia al
+nivel de GOL/PARADA/FUERA.
+
+Las amenazas RIV anteriores sin `defensive` continúan siendo eventos válidos
+legacy y no reciben destinos inventados durante migración. Las capturas nuevas
+guardan `defensive.version = 1`, destino, referencia de portero y, si procede,
+zona corporal y desenlace de parada.
+
+La pista usa una orientación analítica canónica permanente: portería CDA a la
+izquierda, portería rival a la derecha y ataque CDA hacia la derecha en P1 y
+P2. No se invierten coordenadas al descanso. Esta convención se mantendrá en
+importaciones, gráficos y revisión para que una misma `{x, y}` conserve
+significado espacial durante toda la vida del dato.
 
 ## Disciplina contextual y faltas
 

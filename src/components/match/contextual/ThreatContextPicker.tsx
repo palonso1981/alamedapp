@@ -43,7 +43,7 @@ const OUTCOMES: Array<{
   },
 ];
 
-const PHASES: Array<{
+export const PHASES: Array<{
   value: LiveThreatPhase;
   label: string;
   shortLabel: string;
@@ -103,23 +103,7 @@ export function ThreatContextPicker({
           ))}
         </div>
       ) : threat.step === "PHASE" ? (
-        <div className="space-y-1.5">
-          <div className="grid grid-cols-2 gap-2">
-            {PHASES.filter((phase) => phase.tier === "PRIMARY").map((phase) => (
-              <PhaseButton key={phase.value} phase={phase} onPhase={onPhase} />
-            ))}
-          </div>
-          <div className="grid grid-cols-4 gap-1.5">
-            {PHASES.filter((phase) => phase.tier === "SECONDARY").map((phase) => (
-              <PhaseButton key={phase.value} phase={phase} onPhase={onPhase} />
-            ))}
-          </div>
-          <div className="grid grid-cols-2 gap-1.5">
-            {PHASES.filter((phase) => phase.tier === "RARE").map((phase) => (
-              <PhaseButton key={phase.value} phase={phase} onPhase={onPhase} />
-            ))}
-          </div>
-        </div>
+        <PhasePicker onPhase={onPhase} />
       ) : (
         <div className="grid grid-cols-3 gap-2">
           {assistCandidateIds.map((playerId) => {
@@ -145,12 +129,42 @@ export function ThreatContextPicker({
   );
 }
 
+export function PhasePicker({
+  onPhase,
+  selected,
+}: {
+  onPhase: (phase: LiveThreatPhase) => void;
+  selected?: LiveThreatPhase;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="grid grid-cols-2 gap-2">
+        {PHASES.filter((phase) => phase.tier === "PRIMARY").map((phase) => (
+          <PhaseButton key={phase.value} phase={phase} onPhase={onPhase} selected={selected === phase.value} />
+        ))}
+      </div>
+      <div className="grid grid-cols-4 gap-1.5">
+        {PHASES.filter((phase) => phase.tier === "SECONDARY").map((phase) => (
+          <PhaseButton key={phase.value} phase={phase} onPhase={onPhase} selected={selected === phase.value} />
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        {PHASES.filter((phase) => phase.tier === "RARE").map((phase) => (
+          <PhaseButton key={phase.value} phase={phase} onPhase={onPhase} selected={selected === phase.value} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PhaseButton({
   phase,
   onPhase,
+  selected = false,
 }: {
   phase: (typeof PHASES)[number];
   onPhase: (phase: LiveThreatPhase) => void;
+  selected?: boolean;
 }) {
   const primary = phase.tier === "PRIMARY";
   const rare = phase.tier === "RARE";
@@ -160,7 +174,7 @@ function PhaseButton({
       onClick={() => onPhase(phase.value)}
       title={phase.label}
       aria-label={phase.label}
-      className={`flex flex-col items-center justify-center rounded-xl border font-black transition-colors ${
+      className={`flex flex-col items-center justify-center rounded-xl border font-black transition-colors ${selected ? "ring-2 ring-white" : ""} ${
         primary
           ? "min-h-16 border-cyan-600 bg-cyan-950/80 text-cyan-100 hover:bg-cyan-800"
           : rare

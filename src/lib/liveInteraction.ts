@@ -1,8 +1,11 @@
 import {
   GoalAssist,
+  GoalTargetCoordinates,
+  KeeperBodyZone,
   LiveThreatOutcome,
   LiveThreatPhase,
   NormalizedCoordinates,
+  SaveOutcome,
   ThreatSide,
 } from "../types";
 
@@ -15,7 +18,7 @@ export type ThreatCaptureStep =
 
 export type ThreatCaptureFlowId =
   | "FOR_ORIGIN_OUTCOME_PHASE"
-  | "AGAINST_ORIGIN_OUTCOME_PHASE";
+  | "AGAINST_ORIGIN_GOAL_DETAILS_PHASE";
 
 export interface ThreatCaptureFlowDefinition {
   id: ThreatCaptureFlowId;
@@ -25,8 +28,7 @@ export interface ThreatCaptureFlowDefinition {
 
 /**
  * Los recorridos son configuración de captura, no reglas del evento. El flujo
- * rival puede sustituir sus pasos por GOAL_TARGET/DETAILS cuando llegue la
- * portería defensiva sin alterar el recorrido ofensivo ni el replay.
+ * rival usa GOAL_TARGET/DETAILS sin alterar el recorrido ofensivo ni el replay.
  */
 export const THREAT_CAPTURE_FLOWS: Readonly<
   Record<ThreatSide, ThreatCaptureFlowDefinition>
@@ -37,9 +39,9 @@ export const THREAT_CAPTURE_FLOWS: Readonly<
     steps: ["OUTCOME", "PHASE"],
   },
   AGAINST: {
-    id: "AGAINST_ORIGIN_OUTCOME_PHASE",
+    id: "AGAINST_ORIGIN_GOAL_DETAILS_PHASE",
     side: "AGAINST",
-    steps: ["OUTCOME", "PHASE"],
+    steps: ["GOAL_TARGET", "DETAILS", "PHASE"],
   },
 };
 
@@ -52,23 +54,45 @@ export type LiveInteractionState =
     }
   | {
       kind: "THREAT_PENDING";
+      eventId: string;
       flowId: ThreatCaptureFlowId;
       side: ThreatSide;
       playerId?: string;
       origin: NormalizedCoordinates;
-      step: "OUTCOME" | "PHASE" | "ASSIST";
+      step: ThreatCaptureStep;
       phase: LiveThreatPhase | null;
       outcome: LiveThreatOutcome | null;
       assist: GoalAssist | null;
+      goalTarget: GoalTargetCoordinates | null;
+      keeperBodyZone: KeeperBodyZone | null;
+      saveOutcome: SaveOutcome | null;
+      sequenceId: string;
+      parentEventId?: string;
+      suggestedPhase?: LiveThreatPhase;
+    }
+  | {
+      kind: "SECOND_PLAY_OFFER" | "SECOND_PLAY_ARMED";
+      parentEventId: string;
+      sequenceId: string;
+      phase: LiveThreatPhase;
     };
 
 export type LiveInteractionAction =
   | { type: "COURT_PLAYER_TAPPED"; playerId: string }
   | { type: "BENCH_PLAYER_TAPPED"; playerId: string }
-  | { type: "COURT_TAPPED"; origin: NormalizedCoordinates }
+  | { type: "COURT_TAPPED"; origin: NormalizedCoordinates; eventId?: string }
+  | {
+      type: "GOAL_TARGET_SELECTED";
+      goalTarget: GoalTargetCoordinates;
+      outcome: LiveThreatOutcome;
+      keeperBodyZone?: KeeperBodyZone;
+    }
+  | { type: "SAVE_OUTCOME_SELECTED"; saveOutcome: SaveOutcome }
   | { type: "PHASE_SELECTED"; phase: LiveThreatPhase }
   | { type: "OUTCOME_SELECTED"; outcome: LiveThreatOutcome }
   | { type: "ASSIST_SELECTED"; assist: GoalAssist }
+  | { type: "START_SECOND_PLAY" }
+  | { type: "END_SEQUENCE" }
   | { type: "CANCEL" };
 
 export type LiveInteractionEffect =
@@ -79,12 +103,20 @@ export type LiveInteractionEffect =
     }
   | {
       type: "RECORD_THREAT";
+      id: string;
       side: ThreatSide;
       playerId?: string;
       origin: NormalizedCoordinates;
       phase: LiveThreatPhase;
       outcome: LiveThreatOutcome;
       assist?: GoalAssist;
+      sequenceId: string;
+      parentEventId?: string;
+      defensiveCapture?: {
+        goalTarget: GoalTargetCoordinates;
+        keeperBodyZone?: KeeperBodyZone;
+        saveOutcome?: SaveOutcome;
+      };
     };
 
 export interface LiveInteractionTransition {
@@ -94,26 +126,40 @@ export interface LiveInteractionTransition {
 
 export const IDLE_LIVE_INTERACTION: LiveInteractionState = { kind: "IDLE" };
 
+function interactionId(): string {
+  return globalThis.crypto.randomUUID();
+}
+
 function startThreat(
   side: ThreatSide,
   origin: NormalizedCoordinates,
+  eventId: string,
   playerId?: string,
+  sequence?: {
+    parentEventId: string;
+    sequenceId: string;
+    phase: LiveThreatPhase;
+  },
 ): LiveInteractionState {
   const flow = THREAT_CAPTURE_FLOWS[side];
   const firstStep = flow.steps[0];
-  if (firstStep !== "OUTCOME") {
-    throw new Error(`El flujo ${flow.id} todavía no tiene capturador para ${firstStep}.`);
-  }
   return {
     kind: "THREAT_PENDING",
+    eventId,
     flowId: flow.id,
     side,
     playerId,
     origin,
-    step: "OUTCOME",
+    step: firstStep,
     phase: null,
     outcome: null,
     assist: null,
+    goalTarget: null,
+    keeperBodyZone: null,
+    saveOutcome: null,
+    sequenceId: sequence?.sequenceId ?? eventId,
+    parentEventId: sequence?.parentEventId,
+    suggestedPhase: sequence?.phase,
   };
 }
 
@@ -121,8 +167,14 @@ export function reduceLiveInteraction(
   state: LiveInteractionState,
   action: LiveInteractionAction,
 ): LiveInteractionTransition {
-  if (action.type === "CANCEL") {
+  if (action.type === "CANCEL" || action.type === "END_SEQUENCE") {
     return { state: IDLE_LIVE_INTERACTION };
+  }
+
+  if (action.type === "START_SECOND_PLAY") {
+    return state.kind === "SECOND_PLAY_OFFER"
+      ? { state: { ...state, kind: "SECOND_PLAY_ARMED" } }
+      : { state };
   }
 
   if (action.type === "COURT_PLAYER_TAPPED") {
@@ -173,12 +225,24 @@ export function reduceLiveInteraction(
     if (state.kind === "THREAT_PENDING") {
       return { state: { ...state, origin: action.origin } };
     }
+    if (state.kind === "SECOND_PLAY_ARMED") {
+      return {
+        state: startThreat(
+          "AGAINST",
+          action.origin,
+          action.eventId ?? interactionId(),
+          undefined,
+          state,
+        ),
+      };
+    }
     const ownThreat =
       state.kind === "PLAYER_SELECTED" && state.location === "COURT";
     return {
       state: startThreat(
         ownThreat ? "FOR" : "AGAINST",
         action.origin,
+        action.eventId ?? interactionId(),
         ownThreat ? state.playerId : undefined,
       ),
     };
@@ -189,13 +253,42 @@ export function reduceLiveInteraction(
   }
 
   if (action.type === "OUTCOME_SELECTED") {
-    if (state.step !== "OUTCOME") {
+    if (state.side !== "FOR" || state.step !== "OUTCOME") {
       return { state };
     }
     return {
       state: {
         ...state,
         outcome: action.outcome,
+        step: "PHASE",
+      },
+    };
+  }
+
+  if (action.type === "GOAL_TARGET_SELECTED") {
+    if (state.side !== "AGAINST" || state.step !== "GOAL_TARGET") {
+      return { state };
+    }
+    return {
+      state: {
+        ...state,
+        goalTarget: action.goalTarget,
+        outcome: action.outcome,
+        keeperBodyZone: action.keeperBodyZone ?? null,
+        saveOutcome: null,
+        step: action.outcome === "PARADA" ? "DETAILS" : "PHASE",
+      },
+    };
+  }
+
+  if (action.type === "SAVE_OUTCOME_SELECTED") {
+    if (state.side !== "AGAINST" || state.step !== "DETAILS") {
+      return { state };
+    }
+    return {
+      state: {
+        ...state,
+        saveOutcome: action.saveOutcome,
         step: "PHASE",
       },
     };
@@ -210,15 +303,51 @@ export function reduceLiveInteraction(
         state: { ...state, phase: action.phase, step: "ASSIST" },
       };
     }
+    if (state.side === "AGAINST") {
+      if (!state.goalTarget) return { state };
+      const effect: Extract<
+        LiveInteractionEffect,
+        { type: "RECORD_THREAT" }
+      > = {
+        type: "RECORD_THREAT",
+        id: state.eventId,
+        side: "AGAINST",
+        origin: state.origin,
+        phase: action.phase,
+        outcome: state.outcome,
+        sequenceId: state.sequenceId,
+        parentEventId: state.parentEventId,
+        defensiveCapture: {
+          goalTarget: state.goalTarget,
+          keeperBodyZone: state.keeperBodyZone ?? undefined,
+          saveOutcome: state.saveOutcome ?? undefined,
+        },
+      };
+      return {
+        state:
+          state.saveOutcome === "REBOUND"
+            ? {
+                kind: "SECOND_PLAY_OFFER",
+                parentEventId: state.eventId,
+                sequenceId: state.sequenceId,
+                phase: action.phase,
+              }
+            : IDLE_LIVE_INTERACTION,
+        effect,
+      };
+    }
     return {
       state: IDLE_LIVE_INTERACTION,
       effect: {
         type: "RECORD_THREAT",
+        id: state.eventId,
         side: state.side,
         playerId: state.playerId,
         origin: state.origin,
         phase: action.phase,
         outcome: state.outcome,
+        sequenceId: state.sequenceId,
+        parentEventId: state.parentEventId,
       },
     };
   }
@@ -235,12 +364,15 @@ export function reduceLiveInteraction(
     state: IDLE_LIVE_INTERACTION,
     effect: {
       type: "RECORD_THREAT",
+      id: state.eventId,
       side: state.side,
       playerId: state.playerId,
       origin: state.origin,
       phase: state.phase,
       outcome: state.outcome,
       assist: action.assist,
+      sequenceId: state.sequenceId,
+      parentEventId: state.parentEventId,
     },
   };
 }

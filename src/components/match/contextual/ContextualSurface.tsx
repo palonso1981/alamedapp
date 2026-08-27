@@ -11,6 +11,7 @@ interface ContextualSurfaceProps {
   label: string;
   onCancel: () => void;
   compact?: boolean;
+  viewportOnMobile?: boolean;
 }
 
 type ContextualStyle = CSSProperties & {
@@ -32,6 +33,7 @@ export function ContextualSurface({
   label,
   onCancel,
   compact = false,
+  viewportOnMobile = false,
 }: ContextualSurfaceProps) {
   const placement = contextualPlacement(anchor);
   const center = placement.horizontal === "CENTER";
@@ -65,9 +67,15 @@ export function ContextualSurface({
   };
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-30">
+    <div
+      className={`pointer-events-none ${
+        viewportOnMobile
+          ? "fixed inset-0 z-[80] bg-slate-950/65 sm:absolute sm:z-30 sm:bg-transparent"
+          : "absolute inset-0 z-30"
+      }`}
+    >
       <section
-        className={`contextual-surface-frame ${compact ? "contextual-surface-frame--compact p-2" : "p-2.5 pr-12"} pointer-events-auto overflow-y-auto rounded-2xl border border-white/20 bg-slate-950/95 shadow-2xl backdrop-blur-sm`}
+        className={`contextual-surface-frame ${compact ? "contextual-surface-frame--compact p-2" : "p-2.5 pr-12"} ${viewportOnMobile ? "contextual-surface-frame--viewport" : ""} pointer-events-auto overflow-y-auto rounded-2xl border border-white/20 bg-slate-950/95 shadow-2xl backdrop-blur-sm`}
         style={style}
         aria-label={label}
         onClick={stopPropagation}

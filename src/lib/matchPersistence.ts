@@ -107,6 +107,36 @@ function isOrigin(value: unknown): boolean {
   );
 }
 
+function isGoalkeeperReference(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    (value.status === "PENDING" ||
+      (value.status === "PLAYER" &&
+        typeof value.playerId === "string" &&
+        (value.resolution === undefined ||
+          value.resolution === "REPLAY" ||
+          value.resolution === "MANUAL")))
+  );
+}
+
+function isDefensiveDetail(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    value.version === 1 &&
+    isObject(value.goalTarget) &&
+    value.goalTarget.geometryVersion === 1 &&
+    isOrigin(value.goalTarget) &&
+    isGoalkeeperReference(value.goalkeeper) &&
+    (value.keeperBodyZone === undefined ||
+      value.keeperBodyZone === "UPPER" ||
+      value.keeperBodyZone === "LOWER") &&
+    (value.saveOutcome === undefined ||
+      value.saveOutcome === "CATCH" ||
+      value.saveOutcome === "REBOUND" ||
+      value.saveOutcome === "CLEARANCE")
+  );
+}
+
 function isEvent(value: unknown, matchId: string): value is MatchEvent {
   if (!isObject(value) || !hasEventBase(value, matchId)) {
     return false;
@@ -167,6 +197,7 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
     (value.sequenceId === undefined || typeof value.sequenceId === "string") &&
     (value.parentEventId === undefined ||
       typeof value.parentEventId === "string") &&
+    (value.defensive === undefined || isDefensiveDetail(value.defensive)) &&
     (value.assist === undefined ||
       (isObject(value.assist) &&
         (value.assist.status === "NONE" ||

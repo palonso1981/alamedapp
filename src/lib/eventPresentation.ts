@@ -50,7 +50,20 @@ export function eventDescription(
       : event.assist?.status === "PENDING"
         ? " · A ?"
         : "";
-    return `${event.side === "FOR" ? "↑" : "↓"} ${event.outcome} · ${actor} · ${phaseLabel(event.phase)}${assist}`;
+    const defensive = event.defensive
+      ? event.outcome === "PARADA"
+        ? ` · ${event.defensive.keeperBodyZone === "UPPER" ? "arriba" : "abajo"} · ${
+            event.defensive.saveOutcome === "CATCH"
+              ? "blocaje"
+              : event.defensive.saveOutcome === "REBOUND"
+                ? "rechace"
+                : "despeje"
+          }`
+        : " · destino ✓"
+      : event.side === "AGAINST"
+        ? " · legacy"
+        : "";
+    return `${event.side === "FOR" ? "↑" : "↓"} ${event.outcome} · ${actor} · ${phaseLabel(event.phase)}${assist}${defensive}`;
   }
   if (event.type === "game_state_changed") {
     const state = event.state === "SUPERIORITY" ? "Superioridad" : "Portero-jugador";

@@ -5,6 +5,7 @@ import { MouseEvent, useEffect, useMemo, useState } from "react";
 import { FutsalCourtMarkings } from "../../../../components/court/FutsalCourtMarkings";
 import { BenchPanel } from "../../../../components/match/BenchPanel";
 import { ContextualSurface } from "../../../../components/match/contextual/ContextualSurface";
+import { DefensiveThreatContext } from "../../../../components/match/contextual/DefensiveThreatContext";
 import { PlayerContextActions } from "../../../../components/match/contextual/PlayerContextActions";
 import { ThreatContextPicker } from "../../../../components/match/contextual/ThreatContextPicker";
 import { HistoryControls } from "../../../../components/match/HistoryControls";
@@ -35,13 +36,28 @@ import {
 
 const CLOCK_SIDE_STORAGE_KEY = "alamedapp:directo-clock-side:v1";
 
-const PLAYER_POSITIONS = [
-  { x: 0.11, y: 0.5 },
-  { x: 0.36, y: 0.24 },
-  { x: 0.36, y: 0.76 },
-  { x: 0.69, y: 0.28 },
-  { x: 0.69, y: 0.72 },
+const OUTFIELD_POSITIONS = [
+  { x: 0.56, y: 0.16 },
+  { x: 0.56, y: 0.84 },
+  { x: 0.79, y: 0.18 },
+  { x: 0.79, y: 0.82 },
 ];
+const GOALKEEPER_POSITION = { x: 0.085, y: 0.5 };
+
+function courtPlayerPosition(
+  slotId: string,
+  onCourtIds: readonly string[],
+  players: readonly Player[],
+) {
+  const keeperId = onCourtIds.find((id) =>
+    players.find((player) => player.id === id)?.position
+      ?.toUpperCase()
+      .includes("PORTERO"),
+  );
+  if (slotId === keeperId) return GOALKEEPER_POSITION;
+  const outfieldIds = onCourtIds.filter((id) => id !== keeperId);
+  return OUTFIELD_POSITIONS[outfieldIds.indexOf(slotId)] ?? OUTFIELD_POSITIONS[0];
+}
 
 function undoTarget(
   events: MatchEvent[],
@@ -182,9 +198,11 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       ? interaction.playerId
       : null;
   const selectedCourtAnchor = selectedCourtPlayerId
-    ? PLAYER_POSITIONS[
-        replay.onCourtPlayerIds.findIndex((id) => id === selectedCourtPlayerId)
-      ]
+    ? courtPlayerPosition(
+        selectedCourtPlayerId,
+        replay.onCourtPlayerIds,
+        session.players,
+      )
     : undefined;
   const pendingThreat =
     interaction.kind === "THREAT_PENDING" ? interaction : null;
@@ -241,6 +259,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     applyInteraction({
       type: "COURT_TAPPED",
       origin: normalizeCourtPoint(event.clientX, event.clientY, bounds),
+      eventId: globalThis.crypto.randomUUID(),
     });
   };
 
@@ -475,9 +494,14 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             aria-label="Pista de fútbol sala. Toca directamente para amenaza rival o selecciona antes un jugador CDA."
           >
             <FutsalCourtMarkings />
+            <span className="pointer-events-none absolute bottom-2 left-1/2 z-[1] -translate-x-1/2 rounded-full bg-slate-950/35 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-white/55" aria-hidden="true">CDA →</span>
 
-            {replay.onCourtPlayerIds.map((slotId, index) => {
-              const position = PLAYER_POSITIONS[index] ?? PLAYER_POSITIONS[0];
+            {replay.onCourtPlayerIds.map((slotId) => {
+              const position = courtPlayerPosition(
+                slotId,
+                replay.onCourtPlayerIds,
+                session.players,
+              );
               if (slotId === INFERIORITY_SLOT_ID) {
                 const selected = selectedPlayerId === slotId;
                 return (
@@ -580,7 +604,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               />
             )}
 
-            {pendingThreat && (
+            {pendingThreat?.side === "FOR" && (
               <ThreatContextPicker
                 threat={pendingThreat}
                 players={session.players}
@@ -596,6 +620,35 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 }
                 onCancel={() => applyInteraction({ type: "CANCEL" })}
               />
+            )}
+            {pendingThreat?.side === "AGAINST" && (
+              <DefensiveThreatContext
+                threat={pendingThreat}
+                onTarget={(goalTarget, outcome, keeperBodyZone) =>
+                  applyInteraction({
+                    type: "GOAL_TARGET_SELECTED",
+                    goalTarget,
+                    outcome,
+                    keeperBodyZone,
+                  })
+                }
+                onSaveOutcome={(saveOutcome) =>
+                  applyInteraction({ type: "SAVE_OUTCOME_SELECTED", saveOutcome })
+                }
+                onPhase={(phase) =>
+                  applyInteraction({ type: "PHASE_SELECTED", phase })
+                }
+                onCancel={() => applyInteraction({ type: "CANCEL" })}
+              />
+            )}
+            {interaction.kind === "SECOND_PLAY_OFFER" && (
+              <div className="absolute inset-x-3 bottom-3 z-40 mx-auto grid max-w-sm grid-cols-2 gap-2 rounded-2xl border border-rose-400 bg-slate-950/95 p-2 shadow-2xl">
+                <button type="button" onClick={(event) => { event.stopPropagation(); applyInteraction({ type: "START_SECOND_PLAY" }); }} className="min-h-16 rounded-xl bg-rose-600 text-sm font-black">↺ 2ª JUGADA</button>
+                <button type="button" onClick={(event) => { event.stopPropagation(); applyInteraction({ type: "END_SEQUENCE" }); }} className="min-h-16 rounded-xl bg-slate-800 text-sm font-black">FIN</button>
+              </div>
+            )}
+            {interaction.kind === "SECOND_PLAY_ARMED" && (
+              <div className="pointer-events-none absolute inset-x-6 top-4 z-30 mx-auto max-w-xs rounded-full border border-rose-300 bg-rose-950/90 px-4 py-2 text-center text-xs font-black text-rose-100">↺ marca el nuevo origen</div>
             )}
           </div>
         </section>

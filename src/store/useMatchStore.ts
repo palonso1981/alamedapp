@@ -9,6 +9,7 @@ import {
   createLineupInitializedEvent,
   createLiveThreatEvent,
   createSubstitutionEvent,
+  goalkeeperAtPosition,
   editEvent as editChronologyEvent,
   EventEditChanges,
   getNextOrder,
@@ -23,10 +24,12 @@ import {
 import { loadMatchSession, saveMatchSession } from "../lib/matchPersistence";
 import {
   CardColor,
+  DefensiveThreatDetailV1,
   DisciplineSide,
   EventPosition,
   GameStateKind,
   GoalAssist,
+  GoalTargetCoordinates,
   INFERIORITY_SLOT_ID,
   LiveThreatPhase,
   LiveThreatOutcome,
@@ -34,6 +37,8 @@ import {
   MatchSession,
   NormalizedCoordinates,
   Player,
+  KeeperBodyZone,
+  SaveOutcome,
   StaffMember,
 } from "../types";
 
@@ -136,6 +141,7 @@ export function upgradeDemoSession(session: MatchSession): MatchSession {
 }
 
 interface RecordThreatInput {
+  id?: string;
   side: DisciplineSide;
   playerId?: string;
   origin: NormalizedCoordinates;
@@ -144,6 +150,11 @@ interface RecordThreatInput {
   sequenceId?: string;
   parentEventId?: string;
   assist?: GoalAssist;
+  defensiveCapture?: {
+    goalTarget: GoalTargetCoordinates;
+    keeperBodyZone?: KeeperBodyZone;
+    saveOutcome?: SaveOutcome;
+  };
 }
 
 interface MatchState {
@@ -383,16 +394,36 @@ export const useMatchStore = create<MatchState>((set) => ({
           if (input.side === "FOR" && input.outcome === "GOL" && !input.assist) {
             throw new Error("Un gol CDA requiere decidir la asistencia.");
           }
+          const order = getNextOrder(
+            session.events,
+            session.period,
+            session.minute,
+          );
+          const defensive: DefensiveThreatDetailV1 | undefined =
+            input.side === "AGAINST" && input.defensiveCapture
+              ? {
+                  version: 1,
+                  goalTarget: input.defensiveCapture.goalTarget,
+                  goalkeeper: goalkeeperAtPosition(
+                    session.players,
+                    session.events,
+                    {
+                      period: session.period,
+                      minute: session.minute,
+                      order: Math.max(0, order - 1),
+                    },
+                  ),
+                  keeperBodyZone: input.defensiveCapture.keeperBodyZone,
+                  saveOutcome: input.defensiveCapture.saveOutcome,
+                }
+              : undefined;
           const event = createLiveThreatEvent({
+            id: input.id,
             matchId,
             position: {
               period: session.period,
               minute: session.minute,
-              order: getNextOrder(
-                session.events,
-                session.period,
-                session.minute,
-              ),
+              order,
             },
             side: input.side,
             playerId: input.playerId,
@@ -402,6 +433,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             sequenceId: input.sequenceId,
             parentEventId: input.parentEventId,
             assist: input.assist,
+            defensive,
           });
           return appendEvent(session.players, session.events, event);
         }),

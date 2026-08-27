@@ -91,6 +91,37 @@ export interface NormalizedCoordinates {
   y: number;
 }
 
+export const GOAL_TARGET_GEOMETRY_VERSION = 1 as const;
+
+/** Coordenada canónica normalizada sobre el lienzo frontal de portería. */
+export interface GoalTargetCoordinates extends NormalizedCoordinates {
+  geometryVersion: typeof GOAL_TARGET_GEOMETRY_VERSION;
+}
+
+export type KeeperBodyZone = "UPPER" | "LOWER";
+export type SaveOutcome = "CATCH" | "REBOUND" | "CLEARANCE";
+
+export type GoalkeeperReference =
+  | {
+      status: "PLAYER";
+      playerId: string;
+      /** REPLAY en captura/recálculo; MANUAL solo al resolver un P-J dudoso. */
+      resolution?: "REPLAY" | "MANUAL";
+    }
+  | { status: "PENDING" };
+
+/**
+ * Detalle espacial V1 de una amenaza rival. Es opcional para poder reproducir
+ * sesiones locales anteriores; toda captura defensiva nueva lo incorpora.
+ */
+export interface DefensiveThreatDetailV1 {
+  version: 1;
+  goalTarget: GoalTargetCoordinates;
+  goalkeeper: GoalkeeperReference;
+  keeperBodyZone?: KeeperBodyZone;
+  saveOutcome?: SaveOutcome;
+}
+
 export type GoalAssist =
   | { status: "PLAYER"; playerId: string }
   | { status: "NONE" }
@@ -110,6 +141,8 @@ interface ThreatEventData {
   parentEventId?: string;
   /** Solo se usa en goles CDA; nunca es una métrica agregada. */
   assist?: GoalAssist;
+  /** Detalle espacial defensivo. Ausente únicamente en amenazas legacy. */
+  defensive?: DefensiveThreatDetailV1;
 }
 
 export interface LiveThreatRecordedEvent extends MatchEventBase, ThreatEventData {
@@ -190,6 +223,9 @@ export interface ReplayIssue {
     | "INVALID_CARD_PLAYER"
     | "INVALID_EVENT_LINK"
     | "INVALID_ASSIST"
+    | "INVALID_GOAL_TARGET"
+    | "INVALID_GOALKEEPER"
+    | "INVALID_SAVE_DETAIL"
     | "INVALID_CARD_TARGET"
     | "INVALID_INFERIORITY_SLOT";
   message: string;

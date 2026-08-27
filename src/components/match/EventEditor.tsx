@@ -1,9 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { MouseEvent, useMemo, useState } from "react";
+import { FutsalCourtMarkings } from "../court/FutsalCourtMarkings";
+import { normalizeCourtPoint } from "../../lib/courtGeometry";
 import { EventEditChanges, REGULATION_MATCH_CLOCK } from "../../lib/matchEngine";
 import { assistCandidates } from "../../lib/matchReview";
-import { EventPosition, GoalAssist, LiveThreatOutcome, LiveThreatPhase, MatchEvent, Player, StaffMember, TimelineEntry } from "../../types";
+import { EventPosition, GoalAssist, GoalkeeperReference, GoalTargetCoordinates, KeeperBodyZone, LiveThreatOutcome, LiveThreatPhase, MatchEvent, Player, SaveOutcome, StaffMember, TimelineEntry } from "../../types";
+import { GoalTargetPicker } from "./contextual/GoalTargetPicker";
 
 const PHASES: LiveThreatPhase[] = ["POSITIONAL", "TRANSITION", "SET_PIECE_CORNER", "SET_PIECE_FREE_KICK", "SET_PIECE_KICK_IN", "FLYING_GOALKEEPER", "PENALTY", "DOUBLE_PENALTY"];
 
@@ -30,7 +33,7 @@ export function EventEditor({ event, entry, players, staff, onSave, onClose }: E
   const save = () => {
     const changes: EventEditChanges = { pendingReview: draft.pendingReview };
     if (draft.type === "substitution") changes.substitution = { playerOutId: draft.playerOutId, playerInId: draft.playerInId };
-    if (draft.type === "threat_recorded") changes.threat = { side: draft.side, playerId: draft.playerId, origin: draft.origin, phase: draft.phase as LiveThreatPhase, outcome: draft.outcome, sequenceId: draft.sequenceId, parentEventId: draft.parentEventId, assist: draft.side === "FOR" && draft.outcome === "GOL" ? draft.assist ?? { status: "NONE" } : null };
+    if (draft.type === "threat_recorded") changes.threat = { side: draft.side, playerId: draft.playerId, origin: draft.origin, phase: draft.phase as LiveThreatPhase, outcome: draft.outcome, sequenceId: draft.sequenceId, parentEventId: draft.parentEventId, assist: draft.side === "FOR" && draft.outcome === "GOL" ? draft.assist ?? { status: "NONE" } : null, defensive: draft.side === "AGAINST" ? draft.defensive ?? null : null };
     if (draft.type === "foul_recorded") changes.foul = { side: draft.side, playerId: draft.playerId, origin: draft.origin };
     if (draft.type === "card_recorded") changes.card = { side: draft.side, color: draft.color, playerId: draft.playerId ?? null, staffId: draft.staffId ?? null };
     if (draft.type === "game_state_changed") changes.gameState = { state: draft.state, active: draft.active };
@@ -54,13 +57,22 @@ export function EventEditor({ event, entry, players, staff, onSave, onClose }: E
         {draft.type === "threat_recorded" && draft.source === "live" && (
           <div className="mt-4 space-y-3">
             <div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => setDraft({ ...draft, side: "FOR", playerId: draft.playerId ?? players[0]?.id })} className={`min-h-11 rounded-xl font-black ${draft.side === "FOR" ? "bg-cyan-700" : "bg-slate-800"}`}>CDA</button>
+              <button type="button" onClick={() => setDraft({ ...draft, side: "FOR", playerId: draft.playerId ?? players[0]?.id, defensive: undefined })} className={`min-h-11 rounded-xl font-black ${draft.side === "FOR" ? "bg-cyan-700" : "bg-slate-800"}`}>CDA</button>
               <button type="button" onClick={() => setDraft({ ...draft, side: "AGAINST", playerId: undefined, assist: undefined })} className={`min-h-11 rounded-xl font-black ${draft.side === "AGAINST" ? "bg-rose-700" : "bg-slate-800"}`}>RIV</button>
             </div>
-            <div className="grid grid-cols-3 gap-2">{(["GOL", "PARADA", "FUERA"] as LiveThreatOutcome[]).map((outcome) => <button key={outcome} type="button" onClick={() => setDraft({ ...draft, outcome, assist: outcome === "GOL" && draft.side === "FOR" ? draft.assist : undefined })} className={`min-h-12 rounded-xl font-black ${draft.outcome === outcome ? "bg-cyan-600" : "bg-slate-800"}`}>{outcome}</button>)}</div>
+            {draft.side === "FOR" && <div className="grid grid-cols-3 gap-2">{(["GOL", "PARADA", "FUERA"] as LiveThreatOutcome[]).map((outcome) => <button key={outcome} type="button" onClick={() => setDraft({ ...draft, outcome, assist: outcome === "GOL" ? draft.assist : undefined })} className={`min-h-12 rounded-xl font-black ${draft.outcome === outcome ? "bg-cyan-600" : "bg-slate-800"}`}>{outcome}</button>)}</div>}
             {draft.side === "FOR" && <Select label="Jugador" value={draft.playerId ?? ""} onChange={(playerId) => setDraft({ ...draft, playerId })} options={players.map((player) => ({ value: player.id, label: `${player.number} · ${player.name}` }))} />}
             <Select label="Fase" value={draft.phase} onChange={(phase) => setDraft({ ...draft, phase: phase as LiveThreatPhase })} options={PHASES.map((phase) => ({ value: phase, label: phase }))} />
-            <div className="grid grid-cols-2 gap-2"><NumberField label="X (0–1)" value={draft.origin.x} min={0} max={1} step={0.01} onChange={(x) => setDraft({ ...draft, origin: { ...draft.origin, x } })} /><NumberField label="Y (0–1)" value={draft.origin.y} min={0} max={1} step={0.01} onChange={(y) => setDraft({ ...draft, origin: { ...draft.origin, y } })} /></div>
+            <CourtPointEditor value={draft.origin} onChange={(origin) => setDraft({ ...draft, origin })} />
+            {draft.side === "AGAINST" && (
+              <DefensiveDetailEditor
+                event={draft}
+                lineupIds={entry?.lineupPlayerIds ?? []}
+                flyingGoalkeeper={entry?.gameContexts.includes("FLYING_GOALKEEPER") ?? false}
+                players={players}
+                onChange={(defensiveEvent) => setDraft(defensiveEvent)}
+              />
+            )}
             {draft.side === "FOR" && draft.outcome === "GOL" && <AssistEditor assist={draft.assist} candidateIds={assistIds} players={players} onChange={setAssist} />}
             <details className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-400"><summary className="cursor-pointer font-bold">Secuencia</summary><label className="mt-3 block">sequenceId<input value={draft.sequenceId ?? ""} onChange={(change) => setDraft({ ...draft, sequenceId: change.target.value || undefined })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2" /></label><label className="mt-2 block">parentEventId<input value={draft.parentEventId ?? ""} onChange={(change) => setDraft({ ...draft, parentEventId: change.target.value || undefined })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2" /></label></details>
           </div>
@@ -76,6 +88,38 @@ export function EventEditor({ event, entry, players, staff, onSave, onClose }: E
       </div>
     </div>
   );
+}
+
+function CourtPointEditor({ value, onChange }: { value: { x: number; y: number }; onChange: (value: { x: number; y: number }) => void }) {
+  const select = (event: MouseEvent<HTMLButtonElement>) => {
+    onChange(normalizeCourtPoint(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect()));
+  };
+  return <div><p className="mb-1 text-[10px] font-bold uppercase text-slate-400">Origen</p><button type="button" onClick={select} className="relative aspect-[2/1] w-full overflow-hidden rounded-xl border-2 border-white/60 bg-[#075a9c]" aria-label="Editar origen sobre la pista"><FutsalCourtMarkings /><span className="pointer-events-none absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-rose-500" style={{ left: `${value.x * 100}%`, top: `${value.y * 100}%` }} /></button></div>;
+}
+
+function DefensiveDetailEditor({ event, lineupIds, flyingGoalkeeper, players, onChange }: { event: Extract<MatchEvent, { type: "threat_recorded" }>; lineupIds: string[]; flyingGoalkeeper: boolean; players: Player[]; onChange: (event: MatchEvent) => void }) {
+  const goalkeeper = event.defensive?.goalkeeper ?? { status: "PENDING" };
+  const setTarget = (goalTarget: GoalTargetCoordinates, outcome: LiveThreatOutcome, keeperBodyZone?: KeeperBodyZone) => {
+    onChange({
+      ...event,
+      outcome,
+      defensive: {
+        version: 1,
+        goalTarget,
+        goalkeeper,
+        keeperBodyZone: outcome === "PARADA" ? keeperBodyZone : undefined,
+        saveOutcome: outcome === "PARADA" ? event.defensive?.saveOutcome : undefined,
+      },
+      pendingReview: goalkeeper.status === "PENDING" ? true : event.pendingReview,
+    });
+  };
+  const setGoalkeeper = (reference: GoalkeeperReference) => onChange({ ...event, defensive: event.defensive ? { ...event.defensive, goalkeeper: reference.status === "PLAYER" ? { ...reference, resolution: "MANUAL" } : reference } : undefined, pendingReview: reference.status === "PENDING" ? true : event.pendingReview });
+  const setSaveOutcome = (saveOutcome: SaveOutcome) => onChange({ ...event, defensive: event.defensive ? { ...event.defensive, saveOutcome } : undefined });
+  const eligibleGoalkeepers = lineupIds.filter((id) => {
+    const player = players.find((candidate) => candidate.id === id);
+    return Boolean(player) && (flyingGoalkeeper || player?.position?.toUpperCase().includes("PORTERO"));
+  });
+  return <div className="space-y-2 rounded-xl border border-rose-900 bg-rose-950/20 p-2"><div className="flex items-center justify-between"><p className="text-[10px] font-black uppercase text-rose-200">Portería CDA</p>{!event.defensive && <span className="rounded-full bg-slate-800 px-2 py-1 text-[9px] text-slate-400">LEGACY · sin destino</span>}</div><GoalTargetPicker value={event.defensive?.goalTarget} onSelect={setTarget} compact />{event.defensive && <><Select label="Portero en el instante" value={goalkeeper.status === "PLAYER" ? goalkeeper.playerId : "PENDING"} onChange={(value) => setGoalkeeper(value === "PENDING" ? { status: "PENDING" } : { status: "PLAYER", playerId: value })} options={[...eligibleGoalkeepers.map((id) => { const player = players.find((candidate) => candidate.id === id)!; return { value: id, label: `${player.number} · ${player.name}` }; }), { value: "PENDING", label: "? Pendiente de identificar" }]} />{event.outcome === "PARADA" && <div className="grid grid-cols-3 gap-2">{([['CATCH','BLOCAJE'],['REBOUND','RECHACE'],['CLEARANCE','DESPEJE']] as Array<[SaveOutcome,string]>).map(([value,label]) => <button key={value} type="button" onClick={() => setSaveOutcome(value)} className={`min-h-11 rounded-xl text-[10px] font-black ${event.defensive?.saveOutcome === value ? "bg-sky-600" : "bg-slate-800"}`}>{label}</button>)}</div>}</>}</div>;
 }
 
 function NumberField({ label, value, min, max, step = 1, onChange }: { label: string; value: number; min: number; max?: number; step?: number; onChange: (value: number) => void }) { return <label className="text-[10px] font-bold uppercase text-slate-400">{label}<input type="number" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-white" /></label>; }

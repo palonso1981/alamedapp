@@ -3,12 +3,14 @@ import {
   CardRecordedEvent,
   DisciplineSummary,
   DisciplineSide,
+  DefensiveThreatDetailV1,
   EventPosition,
   FoulRecordedEvent,
   GameContext,
   GameStateChangedEvent,
   GameStateKind,
   GoalAssist,
+  GoalkeeperReference,
   INFERIORITY_SLOT_ID,
   LegacyThreatImportedEvent,
   LineupInitializedEvent,
@@ -26,6 +28,11 @@ import {
   ThreatPhase,
   ThreatSide,
 } from "../types";
+import {
+  classifyGoalTarget,
+  deriveKeeperBodyZone,
+  validGoalTarget,
+} from "./goalTarget";
 
 export const MAX_ON_COURT = 5;
 
@@ -74,6 +81,7 @@ export function deriveGlobalMinute(
 export interface ReplayOptions {
   currentClock?: Pick<EventPosition, "period" | "minute">;
   throughClock?: Pick<EventPosition, "period" | "minute">;
+  throughPosition?: EventPosition;
   periodDurationMinutes?: number;
   foulAccumulationRules?: FoulAccumulationRules;
 }
@@ -171,6 +179,8 @@ export interface LiveThreatEventInput extends ThreatEventInput {
   outcome: LiveThreatOutcome;
   phase: LiveThreatPhase;
   assist?: GoalAssist;
+  defensive?: DefensiveThreatDetailV1;
+  pendingReview?: boolean;
 }
 
 export interface LegacyThreatEventInput extends ThreatEventInput {
@@ -190,7 +200,11 @@ export interface EventEditChanges {
   >;
   threat?: Partial<
     Pick<LiveThreatRecordedEvent, "side" | "playerId" | "origin" | "phase" | "sequenceId" | "parentEventId">
-  > & { outcome?: ThreatOutcome; assist?: GoalAssist | null };
+  > & {
+    outcome?: ThreatOutcome;
+    assist?: GoalAssist | null;
+    defensive?: DefensiveThreatDetailV1 | null;
+  };
   gameState?: Partial<Pick<GameStateChangedEvent, "state" | "active">>;
   foul?: Partial<Pick<FoulRecordedEvent, "side" | "playerId" | "origin">>;
   card?: Partial<Pick<CardRecordedEvent, "side" | "color">> & {
@@ -296,7 +310,17 @@ export function createLiveThreatEvent(
     sequenceId: input.sequenceId ?? base.id,
     parentEventId: input.parentEventId,
     assist: input.assist ? { ...input.assist } : undefined,
-    pendingReview: input.assist?.status === "PENDING",
+    defensive: input.defensive
+      ? {
+          ...input.defensive,
+          goalTarget: { ...input.defensive.goalTarget },
+          goalkeeper: { ...input.defensive.goalkeeper },
+        }
+      : undefined,
+    pendingReview:
+      input.pendingReview === true ||
+      input.assist?.status === "PENDING" ||
+      input.defensive?.goalkeeper.status === "PENDING",
   };
 }
 
@@ -376,6 +400,102 @@ function validCoordinates(coordinates: NormalizedCoordinates): boolean {
   );
 }
 
+function goalkeeperRole(player: Player, flyingGoalkeeperActive: boolean): boolean {
+  const role = player.position?.trim().toUpperCase().replaceAll("_", "-") ?? "";
+  if (flyingGoalkeeperActive) {
+    return role === "PORTERO-JUGADOR" || role === "FLYING-GOALKEEPER";
+  }
+  return role === "PORTERO" || role === "GOALKEEPER";
+}
+
+/** Resuelve solo una identidad respaldada por rol y presencia en pista. */
+export function deriveGoalkeeperReference(
+  players: Player[],
+  onCourtPlayerIds: readonly string[],
+  flyingGoalkeeperActive: boolean,
+): GoalkeeperReference {
+  const onCourt = new Set(onCourtPlayerIds);
+  const candidates = players.filter(
+    (player) => onCourt.has(player.id) && goalkeeperRole(player, flyingGoalkeeperActive),
+  );
+  return candidates.length === 1
+    ? { status: "PLAYER", playerId: candidates[0].id, resolution: "REPLAY" }
+    : { status: "PENDING" };
+}
+
+function positionAtOrBefore(event: MatchEvent, target: EventPosition): boolean {
+  return (
+    event.period < target.period ||
+    (event.period === target.period && event.minute < target.minute) ||
+    (event.period === target.period &&
+      event.minute === target.minute &&
+      event.order <= target.order)
+  );
+}
+
+export function goalkeeperAtPosition(
+  players: Player[],
+  events: MatchEvent[],
+  position: EventPosition,
+): GoalkeeperReference {
+  const replay = replayMatch(players, events, { throughPosition: position });
+  return deriveGoalkeeperReference(
+    players,
+    replay.onCourtPlayerIds,
+    replay.flyingGoalkeeperActive,
+  );
+}
+
+/**
+ * Recalcula referencias derivables cuando cambia la cronología. Una selección
+ * manual solo se conserva en P-J si la persona seguía realmente en pista.
+ */
+export function reconcileDefensiveGoalkeepers(
+  players: Player[],
+  events: MatchEvent[],
+): MatchEvent[] {
+  const withoutDefensive = events.map((event) =>
+    event.type === "threat_recorded" && event.defensive
+      ? { ...event, defensive: undefined }
+      : event,
+  ) as MatchEvent[];
+
+  return events.map((event) => {
+    if (event.type !== "threat_recorded" || !event.defensive) return event;
+    const snapshot = replayMatch(players, withoutDefensive, {
+      throughPosition: {
+        period: event.period,
+        minute: event.minute,
+        order: event.order,
+      },
+    });
+    const derived = deriveGoalkeeperReference(
+      players,
+      snapshot.onCourtPlayerIds,
+      snapshot.flyingGoalkeeperActive,
+    );
+    const manualStillValid =
+      derived.status === "PENDING" &&
+      event.defensive.goalkeeper.status === "PLAYER" &&
+      event.defensive.goalkeeper.resolution === "MANUAL" &&
+      snapshot.onCourtPlayerIds.includes(event.defensive.goalkeeper.playerId);
+    const goalkeeper = manualStillValid
+      ? event.defensive.goalkeeper
+      : derived;
+    if (
+      JSON.stringify(goalkeeper) === JSON.stringify(event.defensive.goalkeeper)
+    ) {
+      return event;
+    }
+    return {
+      ...event,
+      defensive: { ...event.defensive, goalkeeper },
+      pendingReview:
+        goalkeeper.status === "PENDING" ? true : event.pendingReview,
+    };
+  });
+}
+
 function issue(
   issues: ReplayIssue[],
   event: MatchEvent,
@@ -446,7 +566,9 @@ export function replayMatch(
       (!options.throughClock ||
         candidate.period < options.throughClock.period ||
         (candidate.period === options.throughClock.period &&
-          candidate.minute <= options.throughClock.minute)),
+          candidate.minute <= options.throughClock.minute)) &&
+      (!options.throughPosition ||
+        positionAtOrBefore(candidate, options.throughPosition)),
   );
   const matchIds = new Set(activeEvents.map((event) => event.matchId));
   const occupiedPositions = new Set<string>();
@@ -656,6 +778,56 @@ export function replayMatch(
           );
         }
       }
+      if (event.defensive) {
+        const detail = event.defensive;
+        const expectedGoalkeeper = deriveGoalkeeperReference(
+          players,
+          onCourtPlayerIds,
+          flyingGoalkeeperActive,
+        );
+        if (
+          event.side !== "AGAINST" ||
+          !validGoalTarget(detail.goalTarget) ||
+          classifyGoalTarget(detail.goalTarget) !== event.outcome
+        ) {
+          issue(
+            issues,
+            event,
+            "INVALID_GOAL_TARGET",
+            "El destino de portería debe ser válido y coherente con el resultado rival.",
+          );
+        }
+        if (
+          detail.goalkeeper.status === "PLAYER" &&
+          (!playerIds.has(detail.goalkeeper.playerId) ||
+            !onCourtPlayerIds.includes(detail.goalkeeper.playerId) ||
+            (expectedGoalkeeper.status === "PLAYER" &&
+              expectedGoalkeeper.playerId !== detail.goalkeeper.playerId))
+        ) {
+          issue(
+            issues,
+            event,
+            "INVALID_GOALKEEPER",
+            "El portero debe ser un jugador que estaba en pista en ese instante.",
+          );
+        }
+        const validSave =
+          event.outcome === "PARADA"
+            ? Boolean(
+                detail.saveOutcome &&
+                  detail.keeperBodyZone === deriveKeeperBodyZone(detail.goalTarget),
+              )
+            : detail.saveOutcome === undefined &&
+              detail.keeperBodyZone === undefined;
+        if (!validSave) {
+          issue(
+            issues,
+            event,
+            "INVALID_SAVE_DETAIL",
+            "La parada requiere zona corporal y desenlace; gol y fuera no admiten esos campos.",
+          );
+        }
+      }
       if (event.outcome === "GOL") {
         score[event.side === "FOR" ? "for" : "against"] += 1;
       }
@@ -667,6 +839,7 @@ export function replayMatch(
             : null;
         if (
           !parent ||
+          parent.deletedAt !== null ||
           parent.type !== "threat_recorded" ||
           parent.matchId !== event.matchId ||
           compareEventPosition(parent, event) >= 0 ||
@@ -868,7 +1041,7 @@ export function appendEvents(
     assertSameMatch(combined, event);
     combined.push(event);
   }
-  const next = sortEvents(combined);
+  const next = sortEvents(reconcileDefensiveGoalkeepers(players, combined));
   assertValidChronology(players, next);
   return next;
 }
@@ -936,11 +1109,16 @@ export function editEvent(
     ) {
       throw new Error("UNSPECIFIED solo está permitido en eventos importados.");
     }
-    const { assist, ...threatChanges } = changes.threat;
+    const { assist, defensive, ...threatChanges } = changes.threat;
     edited = {
       ...edited,
       ...threatChanges,
       ...(assist === null ? { assist: undefined } : assist ? { assist } : {}),
+      ...(defensive === null
+        ? { defensive: undefined }
+        : defensive
+          ? { defensive }
+          : {}),
       pendingReview:
         changes.pendingReview ?? (assist?.status === "PENDING"
           ? true
@@ -983,9 +1161,24 @@ export function editEvent(
     edited = { ...edited, pendingReview: true };
   }
 
-  const next = normalizeOrders(
+  if (
+    edited.type === "threat_recorded" &&
+    edited.defensive &&
+    edited.side !== "AGAINST"
+  ) {
+    edited = { ...edited, defensive: undefined };
+  }
+
+  if (
+    edited.type === "threat_recorded" &&
+    edited.defensive?.goalkeeper.status === "PENDING"
+  ) {
+    edited = { ...edited, pendingReview: true };
+  }
+
+  const next = reconcileDefensiveGoalkeepers(players, normalizeOrders(
     events.map((event) => (event.id === eventId ? edited : event)),
-  );
+  ));
   assertValidChronology(players, next);
   return sortEvents(next);
 }
@@ -1003,13 +1196,13 @@ export function softDeleteEvent(
   if (current.type === "lineup_initialized") {
     throw new Error("La inicialización de la alineación no puede eliminarse.");
   }
-  const next = normalizeOrders(
+  const next = reconcileDefensiveGoalkeepers(players, normalizeOrders(
     events.map((event) =>
       event.id === eventId
         ? { ...event, deletedAt: now, updatedAt: now }
         : event,
     ),
-  );
+  ));
   try {
     assertValidChronology(players, next);
   } catch (error) {
@@ -1030,13 +1223,13 @@ export function restoreEvent(
   if (!events.some((event) => event.id === eventId)) {
     throw new Error(`No existe el evento ${eventId}.`);
   }
-  const next = normalizeOrders(
+  const next = reconcileDefensiveGoalkeepers(players, normalizeOrders(
     events.map((event) =>
       event.id === eventId
         ? { ...event, deletedAt: null, updatedAt: now }
         : event,
     ),
-  );
+  ));
   assertValidChronology(players, next);
   return sortEvents(next);
 }
@@ -1078,13 +1271,13 @@ export function reorderEvent(
   const targetOrders = new Map(
     targetGroup.map((event, index) => [event.id, index + 1]),
   );
-  const next = normalizeOrders(
+  const next = reconcileDefensiveGoalkeepers(players, normalizeOrders(
     [...withoutCurrent, moved].map((event) =>
       targetOrders.has(event.id)
         ? { ...event, order: targetOrders.get(event.id) as number }
         : event,
     ),
-  );
+  ));
   assertValidChronology(players, next);
   return sortEvents(next);
 }
@@ -1142,7 +1335,7 @@ export function moveEventWithinMinute(
   const nextOrders = new Map(
     withoutCurrent.map((event, index) => [event.id, index + 1]),
   );
-  const next = sortEvents(
+  const next = reconcileDefensiveGoalkeepers(players, sortEvents(
     events.map((event) => {
       const nextOrder = nextOrders.get(event.id);
       if (nextOrder === undefined || nextOrder === event.order) {
@@ -1150,7 +1343,7 @@ export function moveEventWithinMinute(
       }
       return { ...event, order: nextOrder, updatedAt: now };
     }),
-  );
+  ));
   assertValidChronology(players, next);
   return next;
 }

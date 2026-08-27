@@ -2,6 +2,18 @@ import { NormalizedCoordinates } from "../types";
 
 export const FUTSAL_COURT_ASPECT_RATIO = 2;
 
+/** Orientación de análisis canónica e invariable entre periodos. */
+export const CANONICAL_COURT_ORIENTATION = {
+  ownGoalSide: "LEFT",
+  rivalGoalSide: "RIGHT",
+  ownAttackDirection: "RIGHT",
+} as const;
+
+export function courtOrientationForPeriod(period: number) {
+  void period;
+  return CANONICAL_COURT_ORIENTATION;
+}
+
 export interface CourtRect {
   left: number;
   top: number;

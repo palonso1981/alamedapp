@@ -10,10 +10,12 @@ import {
   createLineupInitializedEvent,
   createLiveThreatEvent,
   createSubstitutionEvent,
+  deriveGoalkeeperReference,
   deriveGlobalMinute,
   editEvent,
   EventDeletionBlockedError,
   MatchIntegrityError,
+  goalkeeperAtPosition,
   moveEventWithinMinute,
   normalizeMatchClock,
   reorderEvent,
@@ -34,6 +36,8 @@ import {
 } from "./liveInteraction";
 import { contextualPlacement } from "./contextualPlacement";
 import { courtHeightForWidth, FUTSAL_COURT_ASPECT_RATIO, normalizeCourtPoint } from "./courtGeometry";
+import { CANONICAL_COURT_ORIENTATION, courtOrientationForPeriod } from "./courtGeometry";
+import { classifyGoalTarget, deriveKeeperBodyZone, normalizeGoalTargetPoint } from "./goalTarget";
 import { assistCandidates, filterTimelineEvents } from "./matchReview";
 import {
   DEMO_EXTRA_PLAYER,
@@ -1292,6 +1296,7 @@ test("jugador y pista preparan amenaza CDA con autor sin guardar antes de comple
   transition = reduceLiveInteraction(transition.state, {
     type: "COURT_TAPPED",
     origin: { x: 0.72, y: 0.31 },
+    eventId: "intent-for-event",
   });
   assert.equal(transition.state.kind, "THREAT_PENDING");
   assert.equal(showsThreatControls(transition.state), true);
@@ -1314,12 +1319,15 @@ test("jugador y pista preparan amenaza CDA con autor sin guardar antes de comple
   });
   assert.deepEqual(transition.effect, {
     type: "RECORD_THREAT",
+    id: "intent-for-event",
     side: "FOR",
     playerId: "p2",
     origin: { x: 0.72, y: 0.31 },
     outcome: "GOL",
     phase: "POSITIONAL",
     assist: { status: "PLAYER", playerId: "p1" },
+    sequenceId: "intent-for-event",
+    parentEventId: undefined,
   });
   if (transition.effect?.type === "RECORD_THREAT") {
     actions.recordThreat(matchId, transition.effect);
@@ -1338,27 +1346,27 @@ test("tocar pista directamente prepara amenaza rival sin jugador", () => {
   let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
     type: "COURT_TAPPED",
     origin: { x: 0.2, y: 0.6 },
+    eventId: "defensive-intent",
   });
-  assert.deepEqual(transition.state, {
-    kind: "THREAT_PENDING",
-    flowId: "AGAINST_ORIGIN_OUTCOME_PHASE",
-    side: "AGAINST",
-    playerId: undefined,
-    origin: { x: 0.2, y: 0.6 },
-    step: "OUTCOME",
-    phase: null,
-    outcome: null,
-    assist: null,
-  });
+  assert.equal(transition.state.kind, "THREAT_PENDING");
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.flowId, "AGAINST_ORIGIN_GOAL_DETAILS_PHASE");
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "GOAL_TARGET");
   transition = reduceLiveInteraction(transition.state, {
     type: "PHASE_SELECTED",
     phase: "TRANSITION",
   });
-  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "OUTCOME");
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "GOAL_TARGET");
   assert.equal(transition.effect, undefined);
   transition = reduceLiveInteraction(transition.state, {
-    type: "OUTCOME_SELECTED",
+    type: "GOAL_TARGET_SELECTED",
+    goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 },
     outcome: "PARADA",
+    keeperBodyZone: "UPPER",
+  });
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "DETAILS");
+  transition = reduceLiveInteraction(transition.state, {
+    type: "SAVE_OUTCOME_SELECTED",
+    saveOutcome: "CATCH",
   });
   assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "PHASE");
   assert.equal(transition.effect, undefined);
@@ -1370,6 +1378,7 @@ test("tocar pista directamente prepara amenaza rival sin jugador", () => {
   if (transition.effect?.type === "RECORD_THREAT") {
     assert.equal(transition.effect.side, "AGAINST");
     assert.equal(transition.effect.playerId, undefined);
+    assert.equal(transition.effect.defensiveCapture?.saveOutcome, "CATCH");
   }
 });
 
@@ -1974,4 +1983,518 @@ test("el fixture prueba-8 ofrece cinco titulares y ocho suplentes", () => {
   assert.equal(replay.onCourtPlayerIds.length, 5);
   assert.equal(replay.benchPlayerIds.length, 8);
   assert.equal(session.staff.length, 3);
+});
+
+test("orientación canónica y coordenadas de portería no cambian entre periodos ni resize", () => {
+  assert.equal(courtOrientationForPeriod(1), CANONICAL_COURT_ORIENTATION);
+  assert.equal(courtOrientationForPeriod(2), CANONICAL_COURT_ORIENTATION);
+  assert.deepEqual(CANONICAL_COURT_ORIENTATION, {
+    ownGoalSide: "LEFT",
+    rivalGoalSide: "RIGHT",
+    ownAttackDirection: "RIGHT",
+  });
+  const small = normalizeGoalTargetPoint(180, 120, { left: 80, top: 20, width: 200, height: 200 });
+  const large = normalizeGoalTargetPoint(380, 220, { left: 80, top: 20, width: 600, height: 400 });
+  assert.deepEqual(small, large);
+  assert.equal(classifyGoalTarget({ geometryVersion: 1, x: 0.2, y: 0.3 }), "GOL");
+  assert.equal(classifyGoalTarget({ geometryVersion: 1, x: 0.5, y: 0.45 }), "PARADA");
+  assert.equal(classifyGoalTarget({ geometryVersion: 1, x: 0.04, y: 0.3 }), "FUERA");
+  assert.equal(deriveKeeperBodyZone({ geometryVersion: 1, x: 0.5, y: 0.7 }), "LOWER");
+});
+
+test("replay valida amenazas rivales espaciales y deriva el portero real", () => {
+  const matchId = "defensive-spatial";
+  let events = initialLineup(matchId);
+  const goalkeeper = deriveGoalkeeperReference(players, ["p1", "p2", "p3", "p4", "p5"], false);
+  assert.deepEqual(goalkeeper, { status: "PLAYER", playerId: "p5", resolution: "REPLAY" });
+  events = appendEvents(players, events, [
+    createLiveThreatEvent({
+      id: "riv-goal",
+      matchId,
+      position: { period: 1, minute: 3, order: 1 },
+      side: "AGAINST",
+      origin: { x: 0.72, y: 0.5 },
+      outcome: "GOL",
+      phase: "TRANSITION",
+      defensive: { version: 1, goalTarget: { geometryVersion: 1, x: 0.2, y: 0.3 }, goalkeeper },
+      now: 2,
+    }),
+    createLiveThreatEvent({
+      id: "riv-save",
+      matchId,
+      position: { period: 1, minute: 4, order: 1 },
+      side: "AGAINST",
+      origin: { x: 0.55, y: 0.25 },
+      outcome: "PARADA",
+      phase: "POSITIONAL",
+      defensive: { version: 1, goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, goalkeeper, keeperBodyZone: "UPPER", saveOutcome: "CATCH" },
+      now: 3,
+    }),
+    createLiveThreatEvent({
+      id: "riv-out",
+      matchId,
+      position: { period: 2, minute: 2, order: 1 },
+      side: "AGAINST",
+      origin: { x: 0.4, y: 0.8 },
+      outcome: "FUERA",
+      phase: "SET_PIECE_CORNER",
+      defensive: { version: 1, goalTarget: { geometryVersion: 1, x: 0.04, y: 0.3 }, goalkeeper },
+      now: 4,
+    }),
+  ]);
+  const replay = replayMatch(players, events);
+  assert.deepEqual(replay.issues, []);
+  assert.equal(replay.score.against, 1);
+  assert.equal(events.filter((event) => event.type === "threat_recorded").length, 3);
+});
+
+test("dominio rechaza destinos, porteros y detalles incompatibles pero conserva amenazas legacy", () => {
+  const matchId = "defensive-validation";
+  const base = initialLineup(matchId);
+  const goalkeeper = { status: "PLAYER", playerId: "p5" } as const;
+  const invalidGoal = createLiveThreatEvent({
+    id: "invalid-goal",
+    matchId,
+    position: { period: 1, minute: 2, order: 1 },
+    side: "AGAINST",
+    origin: { x: 0.6, y: 0.4 },
+    outcome: "GOL",
+    phase: "POSITIONAL",
+    defensive: { version: 1, goalTarget: { geometryVersion: 1, x: 0.02, y: 0.2 }, goalkeeper },
+  });
+  assert.throws(() => appendEvent(players, base, invalidGoal), MatchIntegrityError);
+  const incompleteSave = createLiveThreatEvent({
+    id: "invalid-save",
+    matchId,
+    position: { period: 1, minute: 2, order: 1 },
+    side: "AGAINST",
+    origin: { x: 0.6, y: 0.4 },
+    outcome: "PARADA",
+    phase: "POSITIONAL",
+    defensive: { version: 1, goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, goalkeeper },
+  });
+  assert.throws(() => appendEvent(players, base, incompleteSave), MatchIntegrityError);
+  const legacyLocal = createLiveThreatEvent({
+    id: "old-riv",
+    matchId,
+    position: { period: 1, minute: 2, order: 1 },
+    side: "AGAINST",
+    origin: { x: 0.6, y: 0.4 },
+    outcome: "PARADA",
+    phase: "POSITIONAL",
+  });
+  assert.deepEqual(replayMatch(players, appendEvent(players, base, legacyLocal)).issues, []);
+});
+
+test("portero se actualiza tras sustitución y P-J no inventa identidad", () => {
+  const matchId = "goalkeeper-history";
+  const goalkeeperPlayers = players.map((player) =>
+    player.id === "p6" ? { ...player, position: "PORTERO" } : player,
+  );
+  let events = initialLineup(matchId);
+  events = appendEvent(goalkeeperPlayers, events, createSubstitutionEvent({
+    id: "keeper-sub",
+    matchId,
+    position: { period: 1, minute: 5, order: 1 },
+    playerOutId: "p5",
+    playerInId: "p6",
+  }));
+  const afterSub = replayMatch(goalkeeperPlayers, events);
+  assert.deepEqual(deriveGoalkeeperReference(goalkeeperPlayers, afterSub.onCourtPlayerIds, false), { status: "PLAYER", playerId: "p6", resolution: "REPLAY" });
+  assert.deepEqual(deriveGoalkeeperReference(goalkeeperPlayers, afterSub.onCourtPlayerIds, true), { status: "PENDING" });
+  assert.deepEqual(deriveGoalkeeperReference(goalkeeperPlayers, ["p1", "p2", "p3", "p4", "p7"], false), { status: "PENDING" });
+});
+
+test("rechace ofrece y encadena segunda jugada reversible con fase heredada", () => {
+  let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+    type: "COURT_TAPPED",
+    origin: { x: 0.66, y: 0.4 },
+    eventId: "seq-a",
+  });
+  transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, outcome: "PARADA", keeperBodyZone: "UPPER" });
+  transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "REBOUND" });
+  transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "TRANSITION" });
+  assert.equal(transition.state.kind, "SECOND_PLAY_OFFER");
+  assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.id, "seq-a");
+  const firstEffect = transition.effect;
+  transition = reduceLiveInteraction(transition.state, { type: "START_SECOND_PLAY" });
+  transition = reduceLiveInteraction(transition.state, { type: "COURT_TAPPED", origin: { x: 0.35, y: 0.5 }, eventId: "seq-b" });
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.suggestedPhase, "TRANSITION");
+  transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.25, y: 0.3 }, outcome: "GOL" });
+  transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "TRANSITION" });
+  assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.parentEventId, "seq-a");
+  assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.sequenceId, "seq-a");
+
+  useMatchStore.setState({ matches: {} });
+  const actions = useMatchStore.getState();
+  actions.ensureMatch("sequence-store");
+  if (firstEffect?.type === "RECORD_THREAT") actions.recordThreat("sequence-store", { ...firstEffect, id: "seq-a" });
+  if (transition.effect?.type === "RECORD_THREAT") actions.recordThreat("sequence-store", { ...transition.effect, id: "seq-b" });
+  const session = useMatchStore.getState().matches["sequence-store"];
+  assert.deepEqual(replayMatch(session.players, session.events).issues, []);
+  assert.throws(() => softDeleteEvent(session.players, session.events, "seq-a"), EventDeletionBlockedError);
+});
+
+test("captura defensiva persiste destino y marca P-J indeterminado para revisión", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "defensive-persistence";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  actions.recordThreat(matchId, {
+    id: "normal-keeper-shot",
+    side: "AGAINST",
+    origin: { x: 0.7, y: 0.4 },
+    outcome: "PARADA",
+    phase: "POSITIONAL",
+    defensiveCapture: { goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, keeperBodyZone: "UPPER", saveOutcome: "CLEARANCE" },
+  });
+  let threat = useMatchStore.getState().matches[matchId].events.find((event) => event.id === "normal-keeper-shot");
+  assert.equal(threat?.type === "threat_recorded" && threat.defensive?.goalkeeper.status === "PLAYER" ? threat.defensive.goalkeeper.playerId : null, "p5");
+  actions.toggleGameState(matchId, "FLYING_GOALKEEPER");
+  actions.recordThreat(matchId, {
+    id: "pj-shot",
+    side: "AGAINST",
+    origin: { x: 0.4, y: 0.5 },
+    outcome: "GOL",
+    phase: "FLYING_GOALKEEPER",
+    defensiveCapture: { goalTarget: { geometryVersion: 1, x: 0.25, y: 0.3 } },
+  });
+  const session = useMatchStore.getState().matches[matchId];
+  threat = session.events.find((event) => event.id === "pj-shot");
+  assert.equal(threat?.type === "threat_recorded" && threat.defensive?.goalkeeper.status, "PENDING");
+  assert.equal(threat?.pendingReview, true);
+  const storage = new MemoryStorage();
+  assert.equal(saveMatchSession(session, storage, 99).ok, true);
+  const loaded = loadMatchSession(matchId, storage);
+  const loadedThreat = loaded?.events.find((event) => event.id === "normal-keeper-shot");
+  assert.equal(loadedThreat?.type === "threat_recorded" && loadedThreat.defensive?.saveOutcome, "CLEARANCE");
+});
+
+test("portero defensivo se deriva en la posición exacta y se recalcula al mover la cronología", () => {
+  const matchId = "goalkeeper-position";
+  const goalkeeperPlayers = players.map((player) =>
+    player.id === "p6" ? { ...player, position: "PORTERO" } : player,
+  );
+  const before = createLiveThreatEvent({
+    id: "before-keeper-change",
+    matchId,
+    position: { period: 1, minute: 4, order: 1 },
+    side: "AGAINST",
+    origin: { x: 0.7, y: 0.5 },
+    outcome: "GOL",
+    phase: "TRANSITION",
+    defensive: {
+      version: 1,
+      goalTarget: { geometryVersion: 1, x: 0.24, y: 0.3 },
+      goalkeeper: { status: "PLAYER", playerId: "p5" },
+    },
+  });
+  const substitution = createSubstitutionEvent({
+    id: "goalkeeper-change",
+    matchId,
+    position: { period: 1, minute: 5, order: 1 },
+    playerOutId: "p5",
+    playerInId: "p6",
+  });
+  const after = createLiveThreatEvent({
+    id: "after-keeper-change",
+    matchId,
+    position: { period: 1, minute: 6, order: 1 },
+    side: "AGAINST",
+    origin: { x: 0.62, y: 0.4 },
+    outcome: "FUERA",
+    phase: "POSITIONAL",
+    defensive: {
+      version: 1,
+      goalTarget: { geometryVersion: 1, x: 0.04, y: 0.25 },
+      goalkeeper: { status: "PLAYER", playerId: "p6" },
+    },
+  });
+  let events = appendEvents(goalkeeperPlayers, initialLineup(matchId), [before, substitution, after]);
+  assert.equal(goalkeeperAtPosition(goalkeeperPlayers, events, before).status, "PLAYER");
+  const goalkeeperAfter = goalkeeperAtPosition(goalkeeperPlayers, events, after);
+  assert.equal(
+    goalkeeperAfter.status === "PLAYER"
+      ? goalkeeperAfter.playerId
+      : null,
+    "p6",
+  );
+
+  events = reorderEvent(
+    goalkeeperPlayers,
+    events,
+    "before-keeper-change",
+    { period: 1, minute: 6, order: 2 },
+  );
+  const moved = events.find((event) => event.id === "before-keeper-change");
+  assert.equal(
+    moved?.type === "threat_recorded" && moved.defensive?.goalkeeper.status === "PLAYER"
+      ? moved.defensive.goalkeeper.playerId
+      : null,
+    "p6",
+  );
+  assert.deepEqual(replayMatch(goalkeeperPlayers, events).issues, []);
+});
+
+test("P-J determinable usa el portero-jugador; banquillo y staff nunca son portero", () => {
+  const matchId = "flying-goalkeeper-resolution";
+  const flyingPlayers = players.map((player) =>
+    player.id === "p6" ? { ...player, position: "PORTERO-JUGADOR" } : player,
+  );
+  let events = initialLineup(matchId);
+  events = appendEvents(flyingPlayers, events, [
+    createSubstitutionEvent({
+      id: "pj-enters",
+      matchId,
+      position: { period: 1, minute: 8, order: 1 },
+      playerOutId: "p5",
+      playerInId: "p6",
+    }),
+    createGameStateEvent({
+      id: "pj-on",
+      matchId,
+      position: { period: 1, minute: 8, order: 2 },
+      state: "FLYING_GOALKEEPER",
+      active: true,
+    }),
+  ]);
+  const snapshot = replayMatch(flyingPlayers, events);
+  assert.deepEqual(
+    deriveGoalkeeperReference(flyingPlayers, snapshot.onCourtPlayerIds, true),
+    { status: "PLAYER", playerId: "p6", resolution: "REPLAY" },
+  );
+
+  const benchGoalkeeper = createLiveThreatEvent({
+    id: "bench-is-not-keeper",
+    matchId,
+    position: { period: 1, minute: 9, order: 1 },
+    side: "AGAINST",
+    origin: { x: 0.5, y: 0.5 },
+    outcome: "GOL",
+    phase: "FLYING_GOALKEEPER",
+    defensive: {
+      version: 1,
+      goalTarget: { geometryVersion: 1, x: 0.22, y: 0.3 },
+      goalkeeper: { status: "PLAYER", playerId: "p7", resolution: "MANUAL" },
+    },
+  });
+  const staffGoalkeeper = {
+    ...benchGoalkeeper,
+    id: "staff-is-not-keeper",
+    defensive: {
+      ...benchGoalkeeper.defensive!,
+      goalkeeper: { status: "PLAYER", playerId: "staff-coach", resolution: "MANUAL" } as const,
+    },
+  };
+  assert.ok(
+    replayMatch(flyingPlayers, [...events, benchGoalkeeper]).issues.some(
+      (issue) => issue.code === "INVALID_GOALKEEPER",
+    ),
+  );
+  assert.ok(
+    replayMatch(flyingPlayers, [...events, staffGoalkeeper]).issues.some(
+      (issue) => issue.code === "INVALID_GOALKEEPER",
+    ),
+  );
+});
+
+test("editor defensivo limpia incompatibilidades PARADA→GOL y exige detalle GOL→PARADA", () => {
+  const matchId = "defensive-edit";
+  let events = appendEvent(
+    players,
+    initialLineup(matchId),
+    createLiveThreatEvent({
+      id: "editable-riv",
+      matchId,
+      position: { period: 1, minute: 7, order: 1 },
+      side: "AGAINST",
+      origin: { x: 0.68, y: 0.44 },
+      outcome: "PARADA",
+      phase: "POSITIONAL",
+      defensive: {
+        version: 1,
+        goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 },
+        goalkeeper: { status: "PLAYER", playerId: "p5" },
+        keeperBodyZone: "UPPER",
+        saveOutcome: "CATCH",
+      },
+    }),
+  );
+  events = editEvent(players, events, "editable-riv", {
+    threat: {
+      outcome: "GOL",
+      defensive: {
+        version: 1,
+        goalTarget: { geometryVersion: 1, x: 0.22, y: 0.3 },
+        goalkeeper: { status: "PLAYER", playerId: "p5" },
+      },
+    },
+  });
+  let edited = events.find((event) => event.id === "editable-riv");
+  assert.equal(edited?.type === "threat_recorded" && edited.outcome, "GOL");
+  assert.equal(edited?.type === "threat_recorded" && edited.defensive?.saveOutcome, undefined);
+  assert.equal(replayMatch(players, events).score.against, 1);
+
+  assert.throws(
+    () => editEvent(players, events, "editable-riv", {
+      threat: {
+        outcome: "PARADA",
+        defensive: {
+          version: 1,
+          goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 },
+          goalkeeper: { status: "PLAYER", playerId: "p5" },
+          keeperBodyZone: "UPPER",
+        },
+      },
+    }),
+    MatchIntegrityError,
+  );
+  events = editEvent(players, events, "editable-riv", {
+    threat: {
+      outcome: "PARADA",
+      defensive: {
+        version: 1,
+        goalTarget: { geometryVersion: 1, x: 0.46, y: 0.7 },
+        goalkeeper: { status: "PLAYER", playerId: "p5" },
+        keeperBodyZone: "LOWER",
+        saveOutcome: "CLEARANCE",
+      },
+    },
+  });
+  edited = events.find((event) => event.id === "editable-riv");
+  assert.equal(edited?.type === "threat_recorded" && edited.defensive?.saveOutcome, "CLEARANCE");
+  assert.equal(replayMatch(players, events).score.against, 0);
+});
+
+test("segunda jugada admite A→B→C, fase editable y cancelación sin eventos fantasma", () => {
+  const start = (id: string, state = IDLE_LIVE_INTERACTION) =>
+    reduceLiveInteraction(state, {
+      type: "COURT_TAPPED",
+      origin: { x: 0.6, y: 0.5 },
+      eventId: id,
+    });
+  let transition = start("chain-a");
+  transition = reduceLiveInteraction(transition.state, {
+    type: "GOAL_TARGET_SELECTED",
+    goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 },
+    outcome: "PARADA",
+    keeperBodyZone: "UPPER",
+  });
+  transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "REBOUND" });
+  transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "TRANSITION" });
+  const a = transition.effect;
+  transition = reduceLiveInteraction(transition.state, { type: "START_SECOND_PLAY" });
+  transition = start("chain-b", transition.state);
+  transition = reduceLiveInteraction(transition.state, {
+    type: "GOAL_TARGET_SELECTED",
+    goalTarget: { geometryVersion: 1, x: 0.46, y: 0.7 },
+    outcome: "PARADA",
+    keeperBodyZone: "LOWER",
+  });
+  transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "REBOUND" });
+  transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "POSITIONAL" });
+  const b = transition.effect;
+  assert.equal(b?.type === "RECORD_THREAT" && b.parentEventId, "chain-a");
+  assert.equal(b?.type === "RECORD_THREAT" && b.phase, "POSITIONAL");
+  transition = reduceLiveInteraction(transition.state, { type: "START_SECOND_PLAY" });
+  transition = start("chain-c", transition.state);
+  transition = reduceLiveInteraction(transition.state, {
+    type: "GOAL_TARGET_SELECTED",
+    goalTarget: { geometryVersion: 1, x: 0.2, y: 0.3 },
+    outcome: "GOL",
+  });
+  transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "POSITIONAL" });
+  const c = transition.effect;
+  assert.equal(c?.type === "RECORD_THREAT" && c.parentEventId, "chain-b");
+  assert.equal(c?.type === "RECORD_THREAT" && c.sequenceId, "chain-a");
+  assert.equal(transition.state.kind, "IDLE");
+
+  for (const effect of [a, b, c]) assert.equal(effect?.type, "RECORD_THREAT");
+  let cancelled = start("cancelled-before-target");
+  cancelled = reduceLiveInteraction(cancelled.state, { type: "CANCEL" });
+  assert.deepEqual(cancelled, { state: IDLE_LIVE_INTERACTION });
+  const cancelOffer = reduceLiveInteraction(
+    { kind: "SECOND_PLAY_OFFER", parentEventId: "chain-a", sequenceId: "chain-a", phase: "TRANSITION" },
+    { type: "CANCEL" },
+  );
+  assert.equal(cancelOffer.effect, undefined);
+  assert.deepEqual(cancelOffer.state, IDLE_LIVE_INTERACTION);
+});
+
+test("blocaje y despeje cierran la secuencia; editar o borrar un padre activo queda protegido", () => {
+  for (const saveOutcome of ["CATCH", "CLEARANCE"] as const) {
+    let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+      type: "COURT_TAPPED",
+      origin: { x: 0.55, y: 0.5 },
+      eventId: `closed-${saveOutcome}`,
+    });
+    transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, outcome: "PARADA", keeperBodyZone: "UPPER" });
+    transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome });
+    transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "POSITIONAL" });
+    assert.equal(transition.state.kind, "IDLE");
+  }
+
+  const matchId = "protected-chain";
+  const root = createLiveThreatEvent({
+    id: "protected-a",
+    matchId,
+    position: { period: 1, minute: 5, order: 1 },
+    side: "AGAINST",
+    origin: { x: 0.5, y: 0.5 },
+    outcome: "FUERA",
+    phase: "POSITIONAL",
+    defensive: { version: 1, goalTarget: { geometryVersion: 1, x: 0.02, y: 0.2 }, goalkeeper: { status: "PLAYER", playerId: "p5" } },
+  });
+  const child = createLiveThreatEvent({
+    id: "protected-b",
+    matchId,
+    position: { period: 1, minute: 5, order: 2 },
+    side: "AGAINST",
+    origin: { x: 0.4, y: 0.4 },
+    outcome: "GOL",
+    phase: "TRANSITION",
+    sequenceId: root.id,
+    parentEventId: root.id,
+    defensive: { version: 1, goalTarget: { geometryVersion: 1, x: 0.2, y: 0.3 }, goalkeeper: { status: "PLAYER", playerId: "p5" } },
+  });
+  const events = appendEvents(players, initialLineup(matchId), [root, child]);
+  assert.throws(() => softDeleteEvent(players, events, root.id), EventDeletionBlockedError);
+  assert.throws(
+    () => editEvent(players, events, root.id, { threat: { sequenceId: "another-sequence" } }),
+    MatchIntegrityError,
+  );
+});
+
+test("una amenaza RIV local anterior sin destino persiste y carga sin inventar datos", () => {
+  const matchId = "legacy-riv-persistence";
+  const legacyThreat = createLiveThreatEvent({
+    id: "legacy-riv-no-target",
+    matchId,
+    position: { period: 1, minute: 6, order: 1 },
+    side: "AGAINST",
+    origin: { x: 0.62, y: 0.33 },
+    outcome: "GOL",
+    phase: "TRANSITION",
+  });
+  const events = appendEvent(players, initialLineup(matchId), legacyThreat);
+  const session: MatchSession = {
+    matchId,
+    players,
+    staff: [],
+    period: 1,
+    minute: 6,
+    periodMinutes: { 1: 6, 2: 0 },
+    events,
+    past: [],
+    future: [],
+    lastError: null,
+    persistenceStatus: "saved",
+    lastSavedAt: 1,
+  };
+  const storage = new MemoryStorage();
+  assert.equal(saveMatchSession(session, storage, 2).ok, true);
+  const loaded = loadMatchSession(matchId, storage);
+  const loadedThreat = loaded?.events.find((event) => event.id === legacyThreat.id);
+  assert.equal(loadedThreat?.type === "threat_recorded" && loadedThreat.defensive, undefined);
+  assert.equal(replayMatch(players, loaded?.events ?? []).score.against, 1);
 });

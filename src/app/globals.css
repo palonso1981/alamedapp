@@ -35,6 +35,17 @@ body {
   width: min(9.5rem, calc(100% - 1rem));
 }
 
+.contextual-surface-frame--viewport {
+  position: fixed;
+  left: 0.5rem;
+  right: 0.5rem;
+  top: 50%;
+  bottom: auto;
+  width: auto;
+  max-height: calc(100dvh - 1rem);
+  transform: translateY(-50%);
+}
+
 @media (min-width: 640px) {
   .contextual-surface-frame {
     left: var(--context-left);
@@ -43,6 +54,17 @@ body {
     bottom: var(--context-bottom);
     width: min(var(--context-width), calc(100% - 1rem));
     transform: translateX(var(--context-translate-x));
+  }
+
+  .contextual-surface-frame--viewport {
+    position: absolute;
+    left: 50%;
+    right: auto;
+    top: 50%;
+    bottom: auto;
+    width: min(var(--context-width), calc(100% - 1rem));
+    max-height: calc(100% - 1rem);
+    transform: translate(-50%, -50%);
   }
 }
 
