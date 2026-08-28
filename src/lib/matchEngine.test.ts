@@ -12,6 +12,7 @@ import {
   createSubstitutionEvent,
   deriveGoalkeeperReference,
   deriveGlobalMinute,
+  deriveRemainingMinute,
   editEvent,
   EventDeletionBlockedError,
   MatchIntegrityError,
@@ -37,8 +38,9 @@ import {
 import { contextualPlacement } from "./contextualPlacement";
 import { courtHeightForWidth, FUTSAL_COURT_ASPECT_RATIO, normalizeCourtPoint } from "./courtGeometry";
 import { CANONICAL_COURT_ORIENTATION, courtOrientationForPeriod } from "./courtGeometry";
-import { classifyGoalTarget, deriveKeeperBodyZone, isOutcomeCompatibleWithGoalTarget, normalizeGoalTargetPoint } from "./goalTarget";
+import { classifyGoalTarget, deriveKeeperBodyZone, deriveKeeperBodyZoneFromPart, GOAL_FRAME, isOutcomeCompatibleWithGoalTarget, KEEPER_BODY_SCREEN_SIDE, normalizeGoalTargetPoint } from "./goalTarget";
 import { assistCandidates, filterTimelineEvents } from "./matchReview";
+import { deriveGoalZoneV1, derivePitchZoneV1, PITCH_ZONE_MODEL_VERSION } from "./spatialZones";
 import {
   DEMO_EXTRA_PLAYER,
   DEMO_PLAYERS,
@@ -345,7 +347,7 @@ test("replay calcula tramo activo y total acumulado tras varias sustituciones", 
   });
 
   assert.deepEqual(result.playerMinutes.p1, {
-    totalMinutes: 6,
+    totalMinutes: 7,
     currentStintMinutes: 2,
     onCourt: true,
   });
@@ -354,14 +356,14 @@ test("replay calcula tramo activo y total acumulado tras varias sustituciones", 
     currentStintMinutes: 0,
     onCourt: false,
   });
-  assert.equal(result.playerMinutes.p2.totalMinutes, 11);
-  assert.equal(result.playerMinutes.p2.currentStintMinutes, 11);
+  assert.equal(result.playerMinutes.p2.totalMinutes, 12);
+  assert.equal(result.playerMinutes.p2.currentStintMinutes, 12);
 });
 
-test("el minuto oficial inicial muestra cero y una entrada en 5 suma tres en 8", () => {
+test("el reloj transcurrido parte de cero y una entrada en 5 suma tres en 8", () => {
   let events = initialLineup();
   const initial = replayMatch(players, events, {
-    currentClock: { period: 1, minute: 1 },
+    currentClock: { period: 1, minute: 0 },
   });
   assert.equal(initial.playerMinutes.p1.totalMinutes, 0);
   assert.equal(initial.playerMinutes.p1.currentStintMinutes, 0);
@@ -383,7 +385,7 @@ test("el minuto oficial inicial muestra cero y una entrada en 5 suma tres en 8",
   });
   assert.equal(atEight.playerMinutes.p6.currentStintMinutes, 3);
   assert.equal(atEight.playerMinutes.p6.totalMinutes, 3);
-  assert.equal(atEight.playerMinutes.p1.totalMinutes, 4);
+  assert.equal(atEight.playerMinutes.p1.totalMinutes, 5);
 });
 
 test("replay puede reconstruir la alineación en un minuto anterior", () => {
@@ -567,7 +569,7 @@ test("expulsión propia usa INFERIORIDAD sin identidad ni minutos individuales",
   assert.ok(replay.onCourtPlayerIds.includes(INFERIORITY_SLOT_ID));
   assert.ok(replay.benchPlayerIds.includes("p1"));
   assert.ok(replay.dismissedPlayerIds.includes("p1"));
-  assert.equal(replay.playerMinutes.p1.totalMinutes, 4);
+  assert.equal(replay.playerMinutes.p1.totalMinutes, 5);
   assert.equal(replay.playerMinutes[INFERIORITY_SLOT_ID], undefined);
   assert.deepEqual(replay.score, { for: 0, against: 1 });
   const threat = replay.timeline.find(
@@ -1363,7 +1365,7 @@ test("tocar pista directamente prepara amenaza rival sin jugador", () => {
     type: "GOAL_TARGET_SELECTED",
     goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 },
     outcome: "PARADA",
-    keeperBodyZone: "UPPER",
+    keeperBodyPart: "TORSO",
   });
   assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "DETAILS");
   transition = reduceLiveInteraction(transition.state, {
@@ -1704,7 +1706,7 @@ test("cronología completa conserva veinte eventos y permite revisar el primero"
       }),
     );
   }
-  const complete = filterTimelineEvents(events, "ALL");
+  const complete = filterTimelineEvents(events, "ACTIVE");
   assert.equal(complete.length, 20);
   assert.equal(complete.at(-1)?.id, "long-1");
   events = editEvent(players, events, "long-1", {
@@ -2113,7 +2115,7 @@ test("rechace ofrece y encadena segunda jugada reversible con fase heredada", ()
     origin: { x: 0.66, y: 0.4 },
     eventId: "seq-a",
   });
-  transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, outcome: "PARADA", keeperBodyZone: "UPPER" });
+  transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, outcome: "PARADA", keeperBodyPart: "TORSO" });
   transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "REBOUND" });
   transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "TRANSITION" });
   assert.equal(transition.state.kind, "SECOND_PLAY_OFFER");
@@ -2148,7 +2150,7 @@ test("captura defensiva persiste destino y deriva el P-J elegido explícitamente
     origin: { x: 0.7, y: 0.4 },
     outcome: "PARADA",
     phase: "POSITIONAL",
-    defensiveCapture: { goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, keeperBodyZone: "UPPER", saveOutcome: "CLEARANCE" },
+    defensiveCapture: { goalTarget: { geometryVersion: 2, x: 0.5, y: 0.45 }, keeperBodyPart: "TORSO", saveOutcome: "CLEARANCE" },
   });
   let threat = useMatchStore.getState().matches[matchId].events.find((event) => event.id === "normal-keeper-shot");
   assert.equal(threat?.type === "threat_recorded" && threat.defensive?.goalkeeper.status === "PLAYER" ? threat.defensive.goalkeeper.playerId : null, "p5");
@@ -2380,7 +2382,7 @@ test("segunda jugada admite A→B→C, fase editable y cancelación sin eventos 
     type: "GOAL_TARGET_SELECTED",
     goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 },
     outcome: "PARADA",
-    keeperBodyZone: "UPPER",
+    keeperBodyPart: "TORSO",
   });
   transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "REBOUND" });
   transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "TRANSITION" });
@@ -2391,7 +2393,7 @@ test("segunda jugada admite A→B→C, fase editable y cancelación sin eventos 
     type: "GOAL_TARGET_SELECTED",
     goalTarget: { geometryVersion: 1, x: 0.46, y: 0.7 },
     outcome: "PARADA",
-    keeperBodyZone: "LOWER",
+    keeperBodyPart: "LEFT_LEG_FOOT",
   });
   transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "REBOUND" });
   transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "POSITIONAL" });
@@ -2430,7 +2432,7 @@ test("blocaje y despeje cierran la secuencia; editar o borrar un padre activo qu
       origin: { x: 0.55, y: 0.5 },
       eventId: `closed-${saveOutcome}`,
     });
-    transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, outcome: "PARADA", keeperBodyZone: "UPPER" });
+    transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, outcome: "PARADA", keeperBodyPart: "TORSO" });
     transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome });
     transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "POSITIONAL" });
     assert.equal(transition.state.kind, "IDLE");
@@ -2731,4 +2733,91 @@ test("prueba-porteria es un fixture limpio, aislado y reiniciable", () => {
     for: { fouls: 0, yellowCards: 0, redCards: 0 },
     against: { fouls: 0, yellowCards: 0, redCards: 0 },
   });
+});
+
+test("cuenta atrás deriva 20→0 sin duplicar el minuto transcurrido", () => {
+  assert.equal(deriveRemainingMinute(0), 20);
+  assert.equal(deriveRemainingMinute(8), 12);
+  assert.equal(deriveRemainingMinute(20), 0);
+  assert.equal(deriveRemainingMinute(-4), 20);
+  assert.equal(deriveRemainingMinute(99), 0);
+});
+
+test("finalizar partes completa minutos, conserva eventos y exige inicio explícito de P2", () => {
+  const matchId = "period-lifecycle";
+  const session = createSession(matchId);
+  useMatchStore.setState({ matches: { [matchId]: session } });
+  const actions = useMatchStore.getState();
+  actions.setClock(matchId, 1, 8);
+  const before = useMatchStore.getState().matches[matchId].events;
+  actions.finishCurrentPeriod(matchId);
+  let current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.period, 1);
+  assert.equal(current.minute, 20);
+  assert.deepEqual(current.closedPeriods, [1]);
+  assert.equal(current.matchFinished, false);
+  assert.deepEqual(current.events, before);
+  assert.equal(replayMatch(current.players, current.events, { currentClock: { period: 1, minute: 20 } }).playerMinutes.p1.totalMinutes, 20);
+
+  actions.recordFoul(matchId, "FOR", "p1");
+  actions.swapPlayer(matchId, "p1", "p6");
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.events.length, before.length);
+  assert.match(current.lastError ?? "", /P1 está cerrado/);
+
+  actions.startSecondPeriod(matchId);
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.period, 2);
+  assert.equal(current.minute, 0);
+  assert.deepEqual(current.events, before);
+  actions.finishCurrentPeriod(matchId);
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.minute, 20);
+  assert.equal(current.matchFinished, true);
+  assert.deepEqual(current.closedPeriods, [1, 2]);
+});
+
+test("historial separa activos, pendientes y eliminados sin alterar replay", () => {
+  let events = initialLineup("history-filters");
+  const active = createFoulEvent({ id: "active", matchId: "history-filters", position: { period: 1, minute: 2, order: 1 }, side: "FOR", playerId: "p1" });
+  const pending = { ...createFoulEvent({ id: "pending", matchId: "history-filters", position: { period: 1, minute: 3, order: 1 }, side: "AGAINST", playerId: "p2" }), pendingReview: true };
+  events = appendEvents(players, events, [active, pending]);
+  events = softDeleteEvent(players, events, active.id);
+  assert.deepEqual(filterTimelineEvents(events, "ACTIVE").map((event) => event.id), ["pending"]);
+  assert.deepEqual(filterTimelineEvents(events, "PENDING").map((event) => event.id), ["pending"]);
+  assert.deepEqual(filterTimelineEvents(events, "DELETED").map((event) => event.id), ["active"]);
+  assert.equal(replayMatch(players, events).discipline.for.fouls, 0);
+  assert.equal(replayMatch(players, events).discipline.against.fouls, 1);
+});
+
+test("zonas espaciales V1 derivan 3×2 en pista y 3×2 más exterior en portería", () => {
+  assert.equal(PITCH_ZONE_MODEL_VERSION, 1);
+  assert.equal(derivePitchZoneV1({ x: 0.1, y: 0.1 }), "OWN_THIRD_TOP");
+  assert.equal(derivePitchZoneV1({ x: 0.5, y: 0.8 }), "MIDDLE_THIRD_BOTTOM");
+  assert.equal(derivePitchZoneV1({ x: 0.9, y: 0.2 }), "FINAL_THIRD_TOP");
+  assert.equal(deriveGoalZoneV1({ x: 0.25, y: 0.3 }, GOAL_FRAME), "LEFT_HIGH");
+  assert.equal(deriveGoalZoneV1({ x: 0.5, y: 0.7 }, GOAL_FRAME), "CENTER_LOW");
+  assert.equal(deriveGoalZoneV1({ x: 0.1, y: 0.5 }, GOAL_FRAME), "OUT_LEFT");
+  assert.equal(deriveGoalZoneV1({ x: 0.9, y: 0.5 }, GOAL_FRAME), "OUT_RIGHT");
+  assert.equal(deriveGoalZoneV1({ x: 0.5, y: 0.1 }, GOAL_FRAME), "OUT_HIGH");
+});
+
+test("anatomía del portero es independiente del destino y respeta derecha frontal", () => {
+  assert.equal(deriveKeeperBodyZoneFromPart("HEAD"), "UPPER");
+  assert.equal(deriveKeeperBodyZoneFromPart("RIGHT_ARM_HAND"), "UPPER");
+  assert.equal(deriveKeeperBodyZoneFromPart("LEFT_LEG_FOOT"), "LOWER");
+  assert.equal(KEEPER_BODY_SCREEN_SIDE.RIGHT_ARM_HAND, "LEFT");
+  assert.equal(KEEPER_BODY_SCREEN_SIDE.LEFT_ARM_HAND, "RIGHT");
+});
+
+test("reinicio seguro solo afecta a los dos partidos demo autorizados", () => {
+  const clean = createSession("prueba");
+  const real = createSession("liga-1");
+  useMatchStore.setState({ matches: { prueba: clean, "liga-1": real } });
+  useMatchStore.getState().incrementMinute("prueba");
+  useMatchStore.getState().incrementMinute("liga-1");
+  useMatchStore.getState().resetDemo("prueba");
+  useMatchStore.getState().resetDemo("liga-1");
+  assert.equal(useMatchStore.getState().matches.prueba.minute, 0);
+  assert.equal(useMatchStore.getState().matches["liga-1"].minute, 1);
 });

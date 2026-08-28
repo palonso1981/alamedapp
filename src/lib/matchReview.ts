@@ -6,20 +6,19 @@ import {
 } from "../types";
 import { sortEvents } from "./matchEngine";
 
-export type TimelineFilter = "ALL" | "PENDING";
+export type TimelineFilter = "ACTIVE" | "PENDING" | "DELETED";
 
 export function filterTimelineEvents(
   events: MatchEvent[],
   filter: TimelineFilter,
 ): MatchEvent[] {
   const visible = events.filter((event) => event.type !== "lineup_initialized");
-  return sortEvents(
-    filter === "PENDING"
-      ? visible.filter(
-          (event) => event.pendingReview && event.deletedAt === null,
-        )
-      : visible,
-  ).reverse();
+  const filtered = filter === "PENDING"
+    ? visible.filter((event) => event.pendingReview && event.deletedAt === null)
+    : filter === "DELETED"
+      ? visible.filter((event) => event.deletedAt !== null)
+      : visible.filter((event) => event.deletedAt === null);
+  return sortEvents(filtered).reverse();
 }
 
 export function assistCandidates(

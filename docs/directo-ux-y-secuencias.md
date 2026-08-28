@@ -263,9 +263,9 @@ validar visualmente 5 en pista + 8 suplentes + 3 técnicos.
 P1 0', marcador y disciplina a cero, cinco titulares (portero determinable),
 siete suplentes y tres técnicos. Su única entrada inicial es el evento técnico
 de alineación requerido por Event Sourcing; no contiene acciones deportivas.
-El botón discreto `↺ DEMO`, visible solo en ese `matchId`, sustituye únicamente
-su sesión local por el fixture inicial tras confirmación. Nunca aparece ni
-actúa sobre un partido real o sobre `/partido/prueba/directo`.
+El botón discreto `↺ DEMO`, visible exclusivamente en `prueba` y
+`prueba-porteria`, sustituye solo la sesión local seleccionada por su fixture
+inicial tras confirmación. Nunca aparece ni actúa sobre un partido real.
 
 ## Cabecera y ergonomía del reloj
 
@@ -336,3 +336,86 @@ El informe de partido se generará desde la cronología y sus derivados, no desd
 contadores independientes. Podrá integrar alineaciones, marcador, minutos,
 amenazas, disciplina, estados, secuencias, revisión y procedencia. Su formato
 PDF y distribución quedan para una fase posterior.
+
+## Consolidación UX final previa a Firebase (agosto 2026)
+
+### Reloj y cierre seguro
+
+`MatchSession.minute` continúa siendo tiempo transcurrido por periodo (0–20) y
+es la única referencia temporal operativa junto con `period + order`. El rail
+proyecta una cuenta atrás mediante `remaining = duration - elapsed`: comienza
+en 20 y termina en 0. Los signos describen el valor visible: `+1` añade tiempo
+restante y `−1` lo consume. Esta proyección no se persiste.
+
+El rail concentra periodo, cuenta atrás, superioridad, P-J y estado numérico,
+pero separa físicamente las acciones de cierre. `FINALIZAR PARTE` requiere una
+confirmación corta, completa el reloj hasta 20 para liquidar los minutos de los
+jugadores activos y deja P1 cerrada. No cambia automáticamente a P2. Solo
+después aparece `INICIAR 2ª PARTE`, que abre P2 en 0 transcurridos/20 restantes.
+En P2, `FINALIZAR PARTIDO` aplica la misma liquidación. Un periodo cerrado no
+admite nuevas capturas deportivas accidentales; su cronología sigue editable
+desde Historial.
+
+Los IDs demo `prueba` y `prueba-porteria` disponen de reinicio local confirmado:
+P1 inicial, reloj 20 restante, cero acciones deportivas, alineación válida de
+cinco, siete suplentes, tres técnicos, estados e historiales limpios. El evento
+técnico de alineación permanece como raíz necesaria del replay. Ningún otro
+`matchId` puede usar este reinicio.
+
+### Historial bajo demanda y banquillo
+
+La captura normal ya no reserva espacio permanente a la cronología. El acceso
+compacto `HISTORIAL · N` (y `? N` cuando corresponda) abre una superficie
+secundaria con scroll y editor completo. El filtro inicial es `ACTIVOS`;
+`PENDIENTES` conserva solo activos marcados y `ELIMINADOS` aísla los soft
+deleted. Un borrado desaparece inmediatamente de Activos sin perder su posible
+restauración. Pulsar faltas o tarjetas en la cabecera abre la misma superficie
+con filtro disciplinario, nunca edita el contador agregado.
+
+Los suplentes muestran bajo el avatar sus minutos totales derivados del replay.
+Los jugadores en pista mantienen el tramo actual dominante y el total entre
+paréntesis. La cuadrícula horizontal conserva once objetivos táctiles para el
+escenario extremo de ocho suplentes y tres técnicos, sin convertir al staff en
+jugadores ni habilitarle acciones deportivas incompatibles.
+
+### Zonas espaciales versionadas
+
+Las coordenadas normalizadas crudas siguen siendo la fuente de verdad. Los
+helpers analíticos V1 derivan, sin persistir nuevos agregados:
+
+- pista canónica (portería CDA a la izquierda en P1 y P2): 3 columnas × 2
+  carriles;
+- marco de portería: 3 columnas × 2 alturas;
+- exterior: izquierda, derecha, alto y bajo.
+
+Cambiar una taxonomía futura exige una nueva versión del helper, no reinterpretar
+silenciosamente eventos existentes.
+
+### Portería: destino y anatomía independientes
+
+La captura rival comienza tocando el destino del balón. Fuera del marco se
+registra `FUERA` en ese mismo gesto y se pasa a fase. Dentro no existe inferencia
+ni preselección: se elige `GOL` o se toca directamente la región anatómica del
+portero que intervino. Esa segunda coordenada conceptual no modifica el destino.
+
+El detalle defensivo V2 persiste una de seis fuentes anatómicas: `HEAD`,
+`TORSO`, `LEFT_ARM_HAND`, `RIGHT_ARM_HAND`, `LEFT_LEG_FOOT` o
+`RIGHT_LEG_FOOT`. `UPPER/LOWER` se deriva de la parte, no del punto del balón.
+En la vista frontal la derecha anatómica del portero aparece a la izquierda de
+pantalla. Tras una parada se elige blocaje, rechace o despeje; el resto del flujo
+de fase, segunda jugada, `sequenceId`, `parentEventId` y portero derivado por
+replay no cambia. El detalle V1 anterior sigue siendo importable y reproducible.
+
+P-J es un estado deportivo con identidad funcional explícita y se hereda como
+contexto de los eventos posteriores. La fase táctica `FLYING_GOALKEEPER` sigue
+siendo una clasificación de la acción: estado y fase no son sinónimos ni se
+autocompletan mutuamente.
+
+### Plan futuro de participación
+
+La planificación previa podrá asociar `targetMinutes` a cada `playerId` como
+metadato de partido, fuera de la cronología. Un porcentaje se convertirá usando
+la duración reglamentaria configurada. Será orientativo y no bloqueará cambios
+ni captura: el análisis comparará plan frente a minutos reales derivados. Los
+totales de cinco jugadores simultáneos son información de consistencia, no una
+segunda fuente de minutos.

@@ -2,6 +2,7 @@ import {
   GOAL_TARGET_GEOMETRY_VERSION,
   GoalTargetCoordinates,
   GoalTargetGeometryVersion,
+  KeeperBodyPart,
   KeeperBodyZone,
   LiveThreatOutcome,
 } from "../types";
@@ -114,6 +115,33 @@ export function deriveKeeperBodyZone(
     ? "UPPER"
     : "LOWER";
 }
+
+/** La semántica upper/lower procede de la anatomía, nunca del destino. */
+export function deriveKeeperBodyZoneFromPart(
+  part: KeeperBodyPart,
+): KeeperBodyZone {
+  return part === "HEAD" ||
+    part === "TORSO" ||
+    part === "LEFT_ARM_HAND" ||
+    part === "RIGHT_ARM_HAND"
+    ? "UPPER"
+    : "LOWER";
+}
+
+/**
+ * Convención frontal: la derecha anatómica del portero aparece a la izquierda
+ * de quien registra la acción.
+ */
+export const KEEPER_BODY_SCREEN_SIDE: Readonly<
+  Record<KeeperBodyPart, "LEFT" | "CENTER" | "RIGHT">
+> = {
+  HEAD: "CENTER",
+  TORSO: "CENTER",
+  RIGHT_ARM_HAND: "LEFT",
+  LEFT_ARM_HAND: "RIGHT",
+  RIGHT_LEG_FOOT: "LEFT",
+  LEFT_LEG_FOOT: "RIGHT",
+};
 
 export function validGoalTarget(point: GoalTargetCoordinates): boolean {
   return (

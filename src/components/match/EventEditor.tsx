@@ -5,7 +5,7 @@ import { FutsalCourtMarkings } from "../court/FutsalCourtMarkings";
 import { normalizeCourtPoint } from "../../lib/courtGeometry";
 import { EventEditChanges, REGULATION_MATCH_CLOCK } from "../../lib/matchEngine";
 import { assistCandidates } from "../../lib/matchReview";
-import { EventPosition, GoalAssist, GoalkeeperReference, GoalTargetCoordinates, KeeperBodyZone, LiveThreatOutcome, LiveThreatPhase, MatchEvent, Player, SaveOutcome, StaffMember, TimelineEntry } from "../../types";
+import { EventPosition, GoalAssist, GoalkeeperReference, GoalTargetCoordinates, KeeperBodyPart, LiveThreatOutcome, LiveThreatPhase, MatchEvent, Player, SaveOutcome, StaffMember, TimelineEntry } from "../../types";
 import { GoalTargetPicker } from "./contextual/GoalTargetPicker";
 
 const PHASES: LiveThreatPhase[] = ["POSITIONAL", "TRANSITION", "SET_PIECE_CORNER", "SET_PIECE_FREE_KICK", "SET_PIECE_KICK_IN", "FLYING_GOALKEEPER", "PENALTY", "DOUBLE_PENALTY"];
@@ -99,15 +99,15 @@ function CourtPointEditor({ value, onChange }: { value: { x: number; y: number }
 
 function DefensiveDetailEditor({ event, lineupIds, flyingGoalkeeper, players, onChange }: { event: Extract<MatchEvent, { type: "threat_recorded" }>; lineupIds: string[]; flyingGoalkeeper: boolean; players: Player[]; onChange: (event: MatchEvent) => void }) {
   const goalkeeper = event.defensive?.goalkeeper ?? { status: "PENDING" };
-  const setTarget = (goalTarget: GoalTargetCoordinates, outcome: LiveThreatOutcome, keeperBodyZone?: KeeperBodyZone) => {
+  const setTarget = (goalTarget: GoalTargetCoordinates, outcome: LiveThreatOutcome, keeperBodyPart?: KeeperBodyPart) => {
     onChange({
       ...event,
       outcome,
       defensive: {
-        version: 1,
+        version: 2,
         goalTarget,
         goalkeeper,
-        keeperBodyZone: outcome === "PARADA" ? keeperBodyZone : undefined,
+        keeperBodyPart: outcome === "PARADA" ? keeperBodyPart : undefined,
         saveOutcome: outcome === "PARADA" ? event.defensive?.saveOutcome : undefined,
       },
       pendingReview: goalkeeper.status === "PENDING" ? true : event.pendingReview,

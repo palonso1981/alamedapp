@@ -52,7 +52,9 @@ export function eventDescription(
         : "";
     const defensive = event.defensive
       ? event.outcome === "PARADA"
-        ? ` · ${event.defensive.keeperBodyZone === "UPPER" ? "arriba" : "abajo"} · ${
+        ? ` · ${event.defensive.version === 1
+            ? event.defensive.keeperBodyZone === "UPPER" ? "arriba" : "abajo"
+            : event.defensive.keeperBodyPart?.replaceAll("_", " ").toLowerCase() ?? "zona ?"} · ${
             event.defensive.saveOutcome === "CATCH"
               ? "blocaje"
               : event.defensive.saveOutcome === "REBOUND"

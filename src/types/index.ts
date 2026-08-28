@@ -104,6 +104,13 @@ export interface GoalTargetCoordinates extends NormalizedCoordinates {
 }
 
 export type KeeperBodyZone = "UPPER" | "LOWER";
+export type KeeperBodyPart =
+  | "HEAD"
+  | "TORSO"
+  | "LEFT_ARM_HAND"
+  | "RIGHT_ARM_HAND"
+  | "LEFT_LEG_FOOT"
+  | "RIGHT_LEG_FOOT";
 export type SaveOutcome = "CATCH" | "REBOUND" | "CLEARANCE";
 
 export type GoalkeeperReference =
@@ -127,6 +134,22 @@ export interface DefensiveThreatDetailV1 {
   saveOutcome?: SaveOutcome;
 }
 
+/**
+ * Detalle V2: el destino del balón y la intervención del portero son dos
+ * gestos independientes. La zona superior/inferior se deriva de bodyPart.
+ */
+export interface DefensiveThreatDetailV2 {
+  version: 2;
+  goalTarget: GoalTargetCoordinates;
+  goalkeeper: GoalkeeperReference;
+  keeperBodyPart?: KeeperBodyPart;
+  saveOutcome?: SaveOutcome;
+}
+
+export type DefensiveThreatDetail =
+  | DefensiveThreatDetailV1
+  | DefensiveThreatDetailV2;
+
 export type GoalAssist =
   | { status: "PLAYER"; playerId: string }
   | { status: "NONE" }
@@ -147,7 +170,7 @@ interface ThreatEventData {
   /** Solo se usa en goles CDA; nunca es una métrica agregada. */
   assist?: GoalAssist;
   /** Detalle espacial defensivo. Ausente únicamente en amenazas legacy. */
-  defensive?: DefensiveThreatDetailV1;
+  defensive?: DefensiveThreatDetail;
 }
 
 export interface LiveThreatRecordedEvent extends MatchEventBase, ThreatEventData {
@@ -312,10 +335,26 @@ export interface MatchSession {
   minute: number;
   /** Memoria operativa del minutero por periodo; no forma parte de la cronología. */
   periodMinutes: Record<number, number>;
+  /** Periodos cerrados explícitamente desde el control de partido. */
+  closedPeriods?: number[];
+  /** Cierre operativo local; no sustituye ningún estado deportivo derivado. */
+  matchFinished?: boolean;
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];
   lastError: string | null;
   persistenceStatus: LocalPersistenceStatus;
   lastSavedAt: number | null;
+}
+
+
+/** Plan previo opcional. Nunca se escribe dentro de la cronología deportiva. */
+export interface PlayerParticipationTarget {
+  playerId: string;
+  targetMinutes: number;
+}
+
+export interface MatchParticipationPlan {
+  regulationMinutes: number;
+  targets: PlayerParticipationTarget[];
 }

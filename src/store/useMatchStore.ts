@@ -15,6 +15,7 @@ import {
   getNextOrder,
   moveEventWithinMinute as moveChronologyEventWithinMinute,
   normalizeMatchClock,
+  REGULATION_MATCH_CLOCK,
   replayMatch,
   reorderEvent as reorderChronologyEvent,
   restoreEvent as restoreChronologyEvent,
@@ -24,7 +25,7 @@ import {
 import { loadMatchSession, saveMatchSession } from "../lib/matchPersistence";
 import {
   CardColor,
-  DefensiveThreatDetailV1,
+  DefensiveThreatDetailV2,
   DisciplineSide,
   EventPosition,
   GameStateKind,
@@ -37,7 +38,7 @@ import {
   MatchSession,
   NormalizedCoordinates,
   Player,
-  KeeperBodyZone,
+  KeeperBodyPart,
   SaveOutcome,
   StaffMember,
 } from "../types";
@@ -157,7 +158,7 @@ interface RecordThreatInput {
   assist?: GoalAssist;
   defensiveCapture?: {
     goalTarget: GoalTargetCoordinates;
-    keeperBodyZone?: KeeperBodyZone;
+    keeperBodyPart?: KeeperBodyPart;
     saveOutcome?: SaveOutcome;
   };
 }
@@ -169,6 +170,8 @@ interface MatchState {
   decrementMinute: (matchId: string) => void;
   setClock: (matchId: string, period: number, minute: number) => void;
   changePeriod: (matchId: string, period: number) => void;
+  finishCurrentPeriod: (matchId: string) => void;
+  startSecondPeriod: (matchId: string) => void;
   recordThreat: (matchId: string, input: RecordThreatInput) => void;
   toggleGameState: (
     matchId: string,
@@ -226,7 +229,7 @@ interface MatchState {
   undo: (matchId: string) => void;
   redo: (matchId: string) => void;
   clearError: (matchId: string) => void;
-  resetCleanDemo: (matchId: string) => void;
+  resetDemo: (matchId: string) => void;
 }
 
 export function createSession(matchId: string): MatchSession {
@@ -238,7 +241,7 @@ export function createSession(matchId: string): MatchSession {
     squadPlayerIds: players.map((player) => player.id),
     onCourtPlayerIds: players.slice(0, 5).map((player) => player.id),
   });
-  const initialMinute = matchId === CLEAN_GOAL_DEMO_MATCH_ID ? 0 : 1;
+  const initialMinute = 0;
   return {
     matchId,
     players,
@@ -246,6 +249,8 @@ export function createSession(matchId: string): MatchSession {
     period: 1,
     minute: initialMinute,
     periodMinutes: { 1: initialMinute, 2: 0 },
+    closedPeriods: [],
+    matchFinished: false,
     events: [lineup],
     past: [],
     future: [],
@@ -345,7 +350,18 @@ function command(
   }
 }
 
+function assertPeriodOpen(session: MatchSession): void {
+  if (session.matchFinished || session.closedPeriods?.includes(session.period)) {
+    throw new Error(
+      session.matchFinished
+        ? "Partido finalizado. Reabre la cronología para revisar, no para capturar."
+        : `P${session.period} está cerrado. Inicia el siguiente periodo para continuar.`,
+    );
+  }
+}
+
 function assertSportsCaptureAllowed(session: MatchSession): void {
+  assertPeriodOpen(session);
   const validation = replayMatch(session.players, session.events, {
     throughClock: { period: session.period, minute: session.minute },
   }).lineupValidation;
@@ -410,6 +426,43 @@ export const useMatchStore = create<MatchState>((set) => ({
       }),
     ),
 
+  finishCurrentPeriod: (matchId) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => {
+        const finishedClock = withClock(
+          session,
+          session.period,
+          REGULATION_MATCH_CLOCK.periodDurationMinutes,
+        );
+        return {
+          ...finishedClock,
+          closedPeriods: Array.from(
+            new Set([...(finishedClock.closedPeriods ?? []), finishedClock.period]),
+          ),
+          matchFinished:
+            finishedClock.period === REGULATION_MATCH_CLOCK.regulationPeriods,
+          lastError: null,
+        };
+      }),
+    ),
+
+  startSecondPeriod: (matchId) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => {
+        if (!session.closedPeriods?.includes(1) || session.matchFinished) {
+          return {
+            ...session,
+            lastError: "Finaliza P1 antes de iniciar la segunda parte.",
+          };
+        }
+        return withClock(
+          { ...session, lastError: null },
+          2,
+          session.periodMinutes[2] ?? 0,
+        );
+      }),
+    ),
+
   recordThreat: (matchId, input) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
@@ -423,10 +476,10 @@ export const useMatchStore = create<MatchState>((set) => ({
             session.period,
             session.minute,
           );
-          const defensive: DefensiveThreatDetailV1 | undefined =
+          const defensive: DefensiveThreatDetailV2 | undefined =
             input.side === "AGAINST" && input.defensiveCapture
               ? {
-                  version: 1,
+                  version: 2,
                   goalTarget: input.defensiveCapture.goalTarget,
                   goalkeeper: goalkeeperAtPosition(
                     session.players,
@@ -437,7 +490,7 @@ export const useMatchStore = create<MatchState>((set) => ({
                       order: Math.max(0, order - 1),
                     },
                   ),
-                  keeperBodyZone: input.defensiveCapture.keeperBodyZone,
+                  keeperBodyPart: input.defensiveCapture.keeperBodyPart,
                   saveOutcome: input.defensiveCapture.saveOutcome,
                 }
               : undefined;
@@ -640,6 +693,7 @@ export const useMatchStore = create<MatchState>((set) => ({
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
+          assertPeriodOpen(session);
           const event = createSubstitutionEvent({
             matchId,
             position: {
@@ -789,9 +843,9 @@ export const useMatchStore = create<MatchState>((set) => ({
       })),
     ),
 
-  resetCleanDemo: (matchId) =>
+  resetDemo: (matchId) =>
     set((state) => {
-      if (matchId !== CLEAN_GOAL_DEMO_MATCH_ID) return state;
+      if (matchId !== CLEAN_GOAL_DEMO_MATCH_ID && matchId !== "prueba") return state;
       return {
         matches: {
           ...state.matches,

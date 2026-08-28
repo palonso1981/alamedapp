@@ -3,7 +3,7 @@
 import { LiveInteractionState } from "../../../lib/liveInteraction";
 import {
   GoalTargetCoordinates,
-  KeeperBodyZone,
+  KeeperBodyPart,
   LiveThreatOutcome,
   LiveThreatPhase,
   SaveOutcome,
@@ -28,7 +28,7 @@ export function DefensiveThreatContext({
   onTarget: (
     point: GoalTargetCoordinates,
     outcome: LiveThreatOutcome,
-    bodyZone?: KeeperBodyZone,
+    bodyPart?: KeeperBodyPart,
   ) => void;
   onSaveOutcome: (outcome: SaveOutcome) => void;
   onPhase: (phase: LiveThreatPhase) => void;

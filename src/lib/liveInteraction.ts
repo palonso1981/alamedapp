@@ -1,7 +1,7 @@
 import {
   GoalAssist,
   GoalTargetCoordinates,
-  KeeperBodyZone,
+  KeeperBodyPart,
   LiveThreatOutcome,
   LiveThreatPhase,
   NormalizedCoordinates,
@@ -64,7 +64,7 @@ export type LiveInteractionState =
       outcome: LiveThreatOutcome | null;
       assist: GoalAssist | null;
       goalTarget: GoalTargetCoordinates | null;
-      keeperBodyZone: KeeperBodyZone | null;
+      keeperBodyPart: KeeperBodyPart | null;
       saveOutcome: SaveOutcome | null;
       sequenceId: string;
       parentEventId?: string;
@@ -85,7 +85,7 @@ export type LiveInteractionAction =
       type: "GOAL_TARGET_SELECTED";
       goalTarget: GoalTargetCoordinates;
       outcome: LiveThreatOutcome;
-      keeperBodyZone?: KeeperBodyZone;
+      keeperBodyPart?: KeeperBodyPart;
     }
   | { type: "SAVE_OUTCOME_SELECTED"; saveOutcome: SaveOutcome }
   | { type: "PHASE_SELECTED"; phase: LiveThreatPhase }
@@ -114,7 +114,7 @@ export type LiveInteractionEffect =
       parentEventId?: string;
       defensiveCapture?: {
         goalTarget: GoalTargetCoordinates;
-        keeperBodyZone?: KeeperBodyZone;
+        keeperBodyPart?: KeeperBodyPart;
         saveOutcome?: SaveOutcome;
       };
     };
@@ -155,7 +155,7 @@ function startThreat(
     outcome: null,
     assist: null,
     goalTarget: null,
-    keeperBodyZone: null,
+    keeperBodyPart: null,
     saveOutcome: null,
     sequenceId: sequence?.sequenceId ?? eventId,
     parentEventId: sequence?.parentEventId,
@@ -274,7 +274,7 @@ export function reduceLiveInteraction(
         ...state,
         goalTarget: action.goalTarget,
         outcome: action.outcome,
-        keeperBodyZone: action.keeperBodyZone ?? null,
+        keeperBodyPart: action.keeperBodyPart ?? null,
         saveOutcome: null,
         step: action.outcome === "PARADA" ? "DETAILS" : "PHASE",
       },
@@ -319,7 +319,7 @@ export function reduceLiveInteraction(
         parentEventId: state.parentEventId,
         defensiveCapture: {
           goalTarget: state.goalTarget,
-          keeperBodyZone: state.keeperBodyZone ?? undefined,
+          keeperBodyPart: state.keeperBodyPart ?? undefined,
           saveOutcome: state.saveOutcome ?? undefined,
         },
       };

@@ -26,6 +26,8 @@ interface PersistedMatchSession {
   period: number;
   minute: number;
   periodMinutes: Record<number, number>;
+  closedPeriods: number[];
+  matchFinished: boolean;
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];
@@ -120,22 +122,27 @@ function isGoalkeeperReference(value: unknown): boolean {
 }
 
 function isDefensiveDetail(value: unknown): boolean {
-  return (
-    isObject(value) &&
-    value.version === 1 &&
+  if (!isObject(value) || (value.version !== 1 && value.version !== 2)) return false;
+  const common =
     isObject(value.goalTarget) &&
     (value.goalTarget.geometryVersion === 1 ||
       value.goalTarget.geometryVersion === 2) &&
     isOrigin(value.goalTarget) &&
     isGoalkeeperReference(value.goalkeeper) &&
-    (value.keeperBodyZone === undefined ||
-      value.keeperBodyZone === "UPPER" ||
-      value.keeperBodyZone === "LOWER") &&
     (value.saveOutcome === undefined ||
       value.saveOutcome === "CATCH" ||
       value.saveOutcome === "REBOUND" ||
-      value.saveOutcome === "CLEARANCE")
-  );
+      value.saveOutcome === "CLEARANCE");
+  if (!common) return false;
+  if (value.version === 1) {
+    return value.keeperBodyZone === undefined ||
+      value.keeperBodyZone === "UPPER" ||
+      value.keeperBodyZone === "LOWER";
+  }
+  return value.keeperBodyPart === undefined || [
+    "HEAD", "TORSO", "LEFT_ARM_HAND", "RIGHT_ARM_HAND",
+    "LEFT_LEG_FOOT", "RIGHT_LEG_FOOT",
+  ].includes(String(value.keeperBodyPart));
 }
 
 function isEvent(value: unknown, matchId: string): value is MatchEvent {
@@ -277,6 +284,16 @@ function migratePersistedSession(value: unknown): unknown {
     ...clock,
     staff: Array.isArray(value.staff) ? value.staff : [],
     periodMinutes,
+    closedPeriods: Array.isArray(value.closedPeriods)
+      ? value.closedPeriods.filter(
+          (period): period is number =>
+            typeof period === "number" &&
+            Number.isInteger(period) &&
+            period >= 1 &&
+            period <= REGULATION_MATCH_CLOCK.regulationPeriods,
+        )
+      : [],
+    matchFinished: value.matchFinished === true,
     events: migrateEventList(value.events),
     past: Array.isArray(value.past)
       ? value.past.map(migrateEventList)
@@ -330,6 +347,15 @@ function validPersistedSession(
     value.minute > REGULATION_MATCH_CLOCK.periodDurationMinutes ||
     !validPeriodMinutes(value.periodMinutes) ||
     value.periodMinutes[value.period] !== value.minute ||
+    !Array.isArray(value.closedPeriods) ||
+    !value.closedPeriods.every(
+      (period) =>
+        typeof period === "number" &&
+        Number.isInteger(period) &&
+        period >= 1 &&
+        period <= REGULATION_MATCH_CLOCK.regulationPeriods,
+    ) ||
+    typeof value.matchFinished !== "boolean" ||
     !isEventList(value.events, expectedMatchId) ||
     !Array.isArray(value.past) ||
     !value.past.every((events) => isEventList(events, expectedMatchId)) ||
@@ -391,6 +417,8 @@ export function saveMatchSession(
       period: session.period,
       minute: session.minute,
       periodMinutes: session.periodMinutes,
+      closedPeriods: session.closedPeriods ?? [],
+      matchFinished: session.matchFinished ?? false,
       events: session.events,
       past: session.past,
       future: session.future,

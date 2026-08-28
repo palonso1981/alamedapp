@@ -13,8 +13,8 @@ import { LineupFirewallAlert } from "../../../../components/match/LineupFirewall
 import {
   ClockSide,
   ClockVerticalSlot,
-  MatchClockControl,
 } from "../../../../components/match/MatchClockControl";
+import { MatchRailControl } from "../../../../components/match/MatchRailControl";
 import { MatchScoreboard } from "../../../../components/match/MatchScoreboard";
 import {
   DisciplineFocusRequest,
@@ -32,7 +32,6 @@ import {
 import { replayMatch, sortEvents } from "../../../../lib/matchEngine";
 import { assistCandidates } from "../../../../lib/matchReview";
 import {
-  CLEAN_GOAL_DEMO_MATCH_ID,
   useMatchStore,
 } from "../../../../store/useMatchStore";
 import {
@@ -100,7 +99,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const ensureMatch = useMatchStore((state) => state.ensureMatch);
   const incrementMinute = useMatchStore((state) => state.incrementMinute);
   const decrementMinute = useMatchStore((state) => state.decrementMinute);
-  const changePeriod = useMatchStore((state) => state.changePeriod);
+  const finishCurrentPeriod = useMatchStore((state) => state.finishCurrentPeriod);
+  const startSecondPeriod = useMatchStore((state) => state.startSecondPeriod);
   const recordThreat = useMatchStore((state) => state.recordThreat);
   const toggleGameState = useMatchStore((state) => state.toggleGameState);
   const recordFoul = useMatchStore((state) => state.recordFoul);
@@ -119,7 +119,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const undo = useMatchStore((state) => state.undo);
   const redo = useMatchStore((state) => state.redo);
   const clearError = useMatchStore((state) => state.clearError);
-  const resetCleanDemo = useMatchStore((state) => state.resetCleanDemo);
+  const resetDemo = useMatchStore((state) => state.resetDemo);
 
   const [interaction, setInteraction] = useState<LiveInteractionState>(
     IDLE_LIVE_INTERACTION,
@@ -133,6 +133,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
   const [disciplineFocus, setDisciplineFocus] = useState<DisciplineFocusRequest | null>(null);
   const [selectingFlyingGoalkeeper, setSelectingFlyingGoalkeeper] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   useEffect(() => {
     const savedSide = window.localStorage.getItem(CLOCK_SIDE_STORAGE_KEY);
@@ -194,6 +195,12 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     for: { fouls: 0, yellowCards: 0, redCards: 0 },
     against: { fouls: 0, yellowCards: 0, redCards: 0 },
   };
+  const activeEventCount = session.events.filter(
+    (event) => event.type !== "lineup_initialized" && event.deletedAt === null,
+  ).length;
+  const pendingEventCount = session.events.filter(
+    (event) => event.type !== "lineup_initialized" && event.deletedAt === null && event.pendingReview,
+  ).length;
   const targetForUndo = undoTarget(session.events, session.past.at(-1));
   const targetUndoEntry = targetForUndo
     ? chronologyReplay.timeline.find(
@@ -245,9 +252,11 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     window.localStorage.setItem(CLOCK_VERTICAL_STORAGE_KEY, slot);
   };
 
-  const captureBlocked = replay.lineupValidation.captureBlocked;
+  const periodClosed = session.matchFinished || session.closedPeriods?.includes(session.period) || false;
+  const lineupBlocked = replay.lineupValidation.captureBlocked;
+  const captureBlocked = lineupBlocked || periodClosed;
   const blockedAction = () => {
-    setFeedback("⚠ Corrige la alineación antes de registrar otra acción");
+    setFeedback(periodClosed ? "■ Periodo cerrado" : "⚠ Corrige la alineación antes de registrar otra acción");
   };
 
   const applyInteraction = (action: LiveInteractionAction) => {
@@ -256,7 +265,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       action.type === "END_SEQUENCE" ||
       action.type === "COURT_PLAYER_TAPPED" ||
       action.type === "BENCH_PLAYER_TAPPED";
-    if (captureBlocked && !repairAction) {
+    const harmlessAction = action.type === "CANCEL" || action.type === "END_SEQUENCE";
+    if ((periodClosed && !harmlessAction) || (lineupBlocked && !repairAction)) {
       blockedAction();
       return;
     }
@@ -346,18 +356,44 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         clockSide === "left" ? "sm:pl-28" : "sm:pr-28"
       }`}
     >
-      <MatchClockControl
+      <MatchRailControl
         period={session.period}
-        minute={session.minute}
+        elapsedMinute={session.minute}
+        closedPeriods={session.closedPeriods ?? []}
+        matchFinished={session.matchFinished ?? false}
         side={clockSide}
         onSideChange={updateClockSide}
         verticalSlot={clockVerticalSlot}
         onVerticalSlotChange={updateClockVerticalSlot}
-        onIncrement={() => incrementMinute(matchId)}
-        onDecrement={() => decrementMinute(matchId)}
-        onPeriodChange={(period) => {
+        superiorityActive={replay.superiorityActive}
+        flyingGoalkeeperActive={replay.flyingGoalkeeperActive}
+        inferiorityActive={replay.inferiorityActive}
+        flyingGoalkeeperLabel={session.players.find((player) => player.id === replay.flyingGoalkeeperPlayerId)?.name}
+        onIncreaseRemaining={() => decrementMinute(matchId)}
+        onDecreaseRemaining={() => incrementMinute(matchId)}
+        onFinishPeriod={() => {
           setInteraction(IDLE_LIVE_INTERACTION);
-          changePeriod(matchId, period);
+          finishCurrentPeriod(matchId);
+          setFeedback(session.period === 1 ? "✓ Primera parte finalizada" : "✓ Partido finalizado");
+        }}
+        onStartSecondPeriod={() => {
+          setInteraction(IDLE_LIVE_INTERACTION);
+          startSecondPeriod(matchId);
+          setFeedback("▶ Segunda parte");
+        }}
+        onToggleSuperiority={() => {
+          if (captureBlocked) return blockedAction();
+          setInteraction(IDLE_LIVE_INTERACTION);
+          toggleGameState(matchId, "SUPERIORITY");
+        }}
+        onToggleFlyingGoalkeeper={() => {
+          setInteraction(IDLE_LIVE_INTERACTION);
+          if (replay.flyingGoalkeeperActive) {
+            toggleGameState(matchId, "FLYING_GOALKEEPER");
+            setSelectingFlyingGoalkeeper(false);
+          } else {
+            setSelectingFlyingGoalkeeper((visible) => !visible);
+          }
         }}
       />
       {feedback && (
@@ -385,7 +421,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             totalFor={chronologyReplay.discipline.for}
             totalAgainst={chronologyReplay.discipline.against}
             foulThresholds={FOUL_THRESHOLDS}
-            onInspect={(side, kind) => setDisciplineFocus({ token: Date.now(), side, kind, period: session.period })}
+            onInspect={(side, kind) => {
+              setDisciplineFocus({ token: Date.now(), side, kind, period: session.period });
+              setHistoryOpen(true);
+            }}
             onRivalYellow={() => {
               if (captureBlocked) return blockedAction();
               setInteraction(IDLE_LIVE_INTERACTION);
@@ -430,63 +469,17 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               redo(matchId);
             }}
           />
-          {matchId === CLEAN_GOAL_DEMO_MATCH_ID && (
+          <button type="button" onClick={() => { setDisciplineFocus(null); setHistoryOpen(true); }} className="min-h-10 rounded-lg bg-slate-900 px-3 text-xs font-black text-cyan-200" aria-label="Abrir historial completo">HISTORIAL · {activeEventCount}{pendingEventCount > 0 ? ` · ? ${pendingEventCount}` : ""}</button>
+          {(matchId === "prueba" || matchId === "prueba-porteria") && (
             <button type="button" onClick={() => {
-              if (!window.confirm("¿Reiniciar solo el demo prueba-porteria?")) return;
+              if (!window.confirm(`¿Reiniciar solo el demo ${matchId}? Se borrará su captura local.`)) return;
               setInteraction(IDLE_LIVE_INTERACTION);
-              resetCleanDemo(matchId);
-            }} className="min-h-10 rounded-lg bg-slate-900 px-2 text-xs font-bold text-slate-400" aria-label="Reiniciar demo de portería">↺ DEMO</button>
+              setHistoryOpen(false);
+              resetDemo(matchId);
+            }} className="min-h-10 rounded-lg bg-slate-900 px-2 text-xs font-bold text-slate-400" aria-label="Reiniciar partido demo">↺ DEMO</button>
           )}
         </div>
       </header>
-
-      <div className="mx-auto mb-2 grid max-w-7xl grid-cols-2 gap-2 sm:grid-cols-3">
-        <button
-          type="button"
-          onClick={() => {
-            if (captureBlocked) return blockedAction();
-            setInteraction(IDLE_LIVE_INTERACTION);
-            toggleGameState(matchId, "SUPERIORITY");
-          }}
-          className={`rounded-xl border-2 px-3 py-2 text-sm font-black transition-all ${
-            replay.superiorityActive
-              ? "animate-pulse border-amber-200 bg-amber-400 text-slate-950 shadow-[0_0_24px_rgba(251,191,36,0.35)]"
-              : "border-gray-800 bg-gray-900 text-gray-500"
-          }`}
-          aria-pressed={replay.superiorityActive}
-        >
-          {replay.superiorityActive ? "⚡ SUPERIORIDAD ACTIVA" : "⚡ Superioridad"}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setInteraction(IDLE_LIVE_INTERACTION);
-            if (replay.flyingGoalkeeperActive) {
-              toggleGameState(matchId, "FLYING_GOALKEEPER");
-              setSelectingFlyingGoalkeeper(false);
-            } else {
-              setSelectingFlyingGoalkeeper((visible) => !visible);
-            }
-          }}
-          className={`rounded-xl border-2 px-3 py-2 text-sm font-black transition-all ${
-            replay.flyingGoalkeeperActive
-              ? "border-rose-300 bg-rose-600 text-white"
-              : "border-gray-800 bg-gray-900 text-gray-500"
-          }`}
-          aria-pressed={replay.flyingGoalkeeperActive}
-        >
-          ◇⁺ {replay.flyingGoalkeeperActive ? "P-J ACTIVO" : "Portero-jugador"}
-        </button>
-        <div
-          className={`rounded-xl border-2 px-3 py-2 text-center text-sm font-black ${
-            replay.inferiorityActive
-              ? "border-red-300 bg-red-950 text-red-200"
-              : "border-gray-900 bg-gray-950 text-gray-700"
-          }`}
-        >
-          {replay.inferiorityActive ? "▼ INFERIORIDAD" : "5v5"}
-        </div>
-      </div>
 
       {selectingFlyingGoalkeeper && !replay.flyingGoalkeeperActive && (
         <div className="mx-auto mb-2 max-w-3xl rounded-2xl border border-rose-400/60 bg-rose-950/80 p-2 shadow-xl" role="dialog" aria-label="Elegir portero-jugador funcional">
@@ -713,12 +706,12 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             {pendingThreat?.side === "AGAINST" && (
               <DefensiveThreatContext
                 threat={pendingThreat}
-                onTarget={(goalTarget, outcome, keeperBodyZone) =>
+                onTarget={(goalTarget, outcome, keeperBodyPart) =>
                   applyInteraction({
                     type: "GOAL_TARGET_SELECTED",
                     goalTarget,
                     outcome,
-                    keeperBodyZone,
+                    keeperBodyPart,
                   })
                 }
                 onSaveOutcome={(saveOutcome) =>
@@ -746,6 +739,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           <BenchPanel
             players={bench}
             staff={session.staff}
+            playerMinutes={replay.playerMinutes}
             replacementForLabel={substitutionSourceLabel}
             selectedPlayerId={selectedBenchPlayerId ?? undefined}
             selectedStaffId={selectedStaffId ?? undefined}
@@ -758,7 +752,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           />
         </div>
 
-        <div className="directo-timeline-wrap min-w-0">
+        {historyOpen && <div className="directo-timeline-wrap min-w-0">
           <RecentEventsPanel
             events={session.events}
             timeline={chronologyReplay.timeline}
@@ -781,8 +775,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             errorMessage={session.lastError?.startsWith("No se puede eliminar") ? session.lastError : null}
             onDismissError={() => clearError(matchId)}
             disciplineFocusRequest={disciplineFocus}
+            onClose={() => { setHistoryOpen(false); setDisciplineFocus(null); }}
           />
-        </div>
+        </div>}
       </main>
     </div>
   );

@@ -3,7 +3,7 @@ import {
   CardRecordedEvent,
   DisciplineSummary,
   DisciplineSide,
-  DefensiveThreatDetailV1,
+  DefensiveThreatDetail,
   EventPosition,
   FoulRecordedEvent,
   GameContext,
@@ -80,6 +80,15 @@ export function deriveGlobalMinute(
   return (safePeriod - 1) * duration + safeMinute;
 }
 
+/** Proyección visual de cuenta atrás; no se persiste como fuente temporal. */
+export function deriveRemainingMinute(
+  elapsedMinute: number,
+  periodDurationMinutes = REGULATION_MATCH_CLOCK.periodDurationMinutes,
+): number {
+  const duration = Math.max(1, Math.trunc(periodDurationMinutes));
+  return duration - Math.min(duration, Math.max(0, Math.trunc(elapsedMinute)));
+}
+
 export interface ReplayOptions {
   currentClock?: Pick<EventPosition, "period" | "minute">;
   throughClock?: Pick<EventPosition, "period" | "minute">;
@@ -98,10 +107,10 @@ function participationMinute(
   minute: number,
   periodDurationMinutes: number,
 ): number {
-  // El minuto oficial identifica el intervalo en curso: al mostrar 1' todavía
-  // han transcurrido 0 minutos completos de participación.
+  // El reloj interno representa tiempo transcurrido (0..20). La cuenta atrás
+  // es una proyección de interfaz y no cambia esta fuente temporal.
   const completedPeriods = Math.max(0, period - 1) * periodDurationMinutes;
-  const elapsedInPeriod = Math.max(0, minute - 1);
+  const elapsedInPeriod = Math.max(0, minute);
   return completedPeriods + elapsedInPeriod;
 }
 
@@ -183,7 +192,7 @@ export interface LiveThreatEventInput extends ThreatEventInput {
   outcome: LiveThreatOutcome;
   phase: LiveThreatPhase;
   assist?: GoalAssist;
-  defensive?: DefensiveThreatDetailV1;
+  defensive?: DefensiveThreatDetail;
   pendingReview?: boolean;
 }
 
@@ -207,7 +216,7 @@ export interface EventEditChanges {
   > & {
     outcome?: ThreatOutcome;
     assist?: GoalAssist | null;
-    defensive?: DefensiveThreatDetailV1 | null;
+    defensive?: DefensiveThreatDetail | null;
   };
   gameState?: Partial<Pick<GameStateChangedEvent, "state" | "active" | "playerId">>;
   foul?: Partial<Pick<FoulRecordedEvent, "side" | "playerId" | "origin">>;
@@ -927,14 +936,17 @@ export function replayMatch(
             "El portero debe ser un jugador que estaba en pista en ese instante.",
           );
         }
-        const validSave =
-          event.outcome === "PARADA"
+        const validSave = event.outcome === "PARADA"
+          ? detail.version === 1
             ? Boolean(
                 detail.saveOutcome &&
                   detail.keeperBodyZone === deriveKeeperBodyZone(detail.goalTarget),
               )
-            : detail.saveOutcome === undefined &&
-              detail.keeperBodyZone === undefined;
+            : Boolean(detail.saveOutcome && detail.keeperBodyPart)
+          : detail.saveOutcome === undefined &&
+            (detail.version === 1
+              ? detail.keeperBodyZone === undefined
+              : detail.keeperBodyPart === undefined);
         if (!validSave) {
           issue(
             issues,

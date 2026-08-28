@@ -1,4 +1,4 @@
-import { Player, StaffMember } from "../../types";
+import { Player, PlayerMinutes, StaffMember } from "../../types";
 import { PlayerAvatar } from "../player/PlayerAvatar";
 import { StaffAvatar } from "../player/StaffAvatar";
 import { PlayerContextActions } from "./contextual/PlayerContextActions";
@@ -6,6 +6,7 @@ import { PlayerContextActions } from "./contextual/PlayerContextActions";
 interface BenchPanelProps {
   players: Player[];
   staff: StaffMember[];
+  playerMinutes: Record<string, PlayerMinutes>;
   replacementForLabel?: string;
   selectedPlayerId?: string;
   selectedStaffId?: string;
@@ -17,7 +18,7 @@ interface BenchPanelProps {
   onCancel: () => void;
 }
 
-export function BenchPanel({ players, staff, replacementForLabel, selectedPlayerId, selectedStaffId, onPlayerTap, onStaffTap, onYellow, onRed, onStaffCard, onCancel }: BenchPanelProps) {
+export function BenchPanel({ players, staff, playerMinutes, replacementForLabel, selectedPlayerId, selectedStaffId, onPlayerTap, onStaffTap, onYellow, onRed, onStaffCard, onCancel }: BenchPanelProps) {
   const selectedStaff = staff.find((member) => member.id === selectedStaffId);
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/95 p-2 shadow-xl">
@@ -36,6 +37,7 @@ export function BenchPanel({ players, staff, replacementForLabel, selectedPlayer
             <button key={player.id} type="button" onClick={() => onPlayerTap(player.id)} className={`directo-bench-person flex min-h-[64px] min-w-0 flex-col items-center justify-start rounded-xl px-0.5 py-1 transition ${replacementForLabel ? "bg-amber-950/50 ring-2 ring-inset ring-amber-400" : selected ? "bg-cyan-950 ring-2 ring-inset ring-cyan-300" : "hover:bg-slate-800"}`} aria-label={replacementForLabel ? `${player.name} entra por ${replacementForLabel}` : `${player.name}, suplente`}>
               <PlayerAvatar player={player} selected={selected} bench />
               <span className="mt-0.5 max-w-full truncate text-[9px] font-bold leading-tight">{player.name}</span>
+              <span className="text-[9px] font-black text-cyan-300/70" aria-label={`${playerMinutes[player.id]?.totalMinutes ?? 0} minutos acumulados`}>{playerMinutes[player.id]?.totalMinutes ?? 0}&apos;</span>
             </button>
           );
         })}
