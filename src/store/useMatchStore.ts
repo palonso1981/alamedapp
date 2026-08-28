@@ -78,7 +78,12 @@ export const DEMO_EXTRA_PLAYER: Player = {
   dominantFoot: "RIGHT",
 };
 
-const DEMO_MATCH_IDS = new Set(["prueba", "prueba-8"]);
+export const CLEAN_GOAL_DEMO_MATCH_ID = "prueba-porteria";
+const DEMO_MATCH_IDS = new Set([
+  "prueba",
+  "prueba-8",
+  CLEAN_GOAL_DEMO_MATCH_ID,
+]);
 
 function demoPlayersForMatch(matchId: string): Player[] {
   return matchId === "prueba-8"
@@ -165,7 +170,11 @@ interface MatchState {
   setClock: (matchId: string, period: number, minute: number) => void;
   changePeriod: (matchId: string, period: number) => void;
   recordThreat: (matchId: string, input: RecordThreatInput) => void;
-  toggleGameState: (matchId: string, state: GameStateKind) => void;
+  toggleGameState: (
+    matchId: string,
+    state: GameStateKind,
+    playerId?: string,
+  ) => void;
   recordFoul: (
     matchId: string,
     side: DisciplineSide,
@@ -217,9 +226,10 @@ interface MatchState {
   undo: (matchId: string) => void;
   redo: (matchId: string) => void;
   clearError: (matchId: string) => void;
+  resetCleanDemo: (matchId: string) => void;
 }
 
-function createSession(matchId: string): MatchSession {
+export function createSession(matchId: string): MatchSession {
   const players = demoPlayersForMatch(matchId).map((player) => ({ ...player }));
   const staff = DEMO_STAFF.map((member) => ({ ...member }));
   const lineup = createLineupInitializedEvent({
@@ -228,13 +238,14 @@ function createSession(matchId: string): MatchSession {
     squadPlayerIds: players.map((player) => player.id),
     onCourtPlayerIds: players.slice(0, 5).map((player) => player.id),
   });
+  const initialMinute = matchId === CLEAN_GOAL_DEMO_MATCH_ID ? 0 : 1;
   return {
     matchId,
     players,
     staff,
     period: 1,
-    minute: 1,
-    periodMinutes: { 1: 1, 2: 0 },
+    minute: initialMinute,
+    periodMinutes: { 1: initialMinute, 2: 0 },
     events: [lineup],
     past: [],
     future: [],
@@ -334,6 +345,18 @@ function command(
   }
 }
 
+function assertSportsCaptureAllowed(session: MatchSession): void {
+  const validation = replayMatch(session.players, session.events, {
+    throughClock: { period: session.period, minute: session.minute },
+  }).lineupValidation;
+  if (!validation.captureBlocked) return;
+  throw new Error(
+    `Alineación bloqueada: ${validation.reasons
+      .map((reason) => reason.message)
+      .join(" ")} Corrige la cronología o la sustitución antes de registrar otra acción.`,
+  );
+}
+
 export const useMatchStore = create<MatchState>((set) => ({
   matches: {},
 
@@ -391,6 +414,7 @@ export const useMatchStore = create<MatchState>((set) => ({
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
+          assertSportsCaptureAllowed(session);
           if (input.side === "FOR" && input.outcome === "GOL" && !input.assist) {
             throw new Error("Un gol CDA requiere decidir la asistencia.");
           }
@@ -440,10 +464,13 @@ export const useMatchStore = create<MatchState>((set) => ({
       ),
     ),
 
-  toggleGameState: (matchId, stateKind) =>
+  toggleGameState: (matchId, stateKind, playerId) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
+          if (stateKind === "SUPERIORITY") {
+            assertSportsCaptureAllowed(session);
+          }
           const replay = replayMatch(session.players, session.events, {
             throughClock: { period: session.period, minute: session.minute },
           });
@@ -451,6 +478,15 @@ export const useMatchStore = create<MatchState>((set) => ({
             stateKind === "SUPERIORITY"
               ? replay.superiorityActive
               : replay.flyingGoalkeeperActive;
+          if (
+            stateKind === "FLYING_GOALKEEPER" &&
+            !active &&
+            (!playerId || !replay.onCourtPlayerIds.includes(playerId))
+          ) {
+            throw new Error(
+              "Selecciona qué jugador en pista asume la portería.",
+            );
+          }
           const event = createGameStateEvent({
             matchId,
             position: {
@@ -464,6 +500,10 @@ export const useMatchStore = create<MatchState>((set) => ({
             },
             state: stateKind,
             active: !active,
+            playerId:
+              stateKind === "FLYING_GOALKEEPER" && !active
+                ? playerId
+                : undefined,
           });
           return appendEvent(session.players, session.events, event);
         }),
@@ -474,6 +514,7 @@ export const useMatchStore = create<MatchState>((set) => ({
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
+          assertSportsCaptureAllowed(session);
           const event = createFoulEvent({
             matchId,
             position: {
@@ -504,6 +545,7 @@ export const useMatchStore = create<MatchState>((set) => ({
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
+          assertSportsCaptureAllowed(session);
           const order = getNextOrder(
             session.events,
             session.period,
@@ -549,6 +591,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             },
             playerOutId: playerId,
             playerInId: INFERIORITY_SLOT_ID,
+            relatedCardEventId: card.id,
           });
           return appendEvents(session.players, session.events, [
             card,
@@ -562,6 +605,7 @@ export const useMatchStore = create<MatchState>((set) => ({
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
+          assertSportsCaptureAllowed(session);
           if (!session.staff.some((member) => member.id === staffId)) {
             throw new Error("El miembro del cuerpo técnico no pertenece a la convocatoria.");
           }
@@ -744,4 +788,15 @@ export const useMatchStore = create<MatchState>((set) => ({
         lastError: null,
       })),
     ),
+
+  resetCleanDemo: (matchId) =>
+    set((state) => {
+      if (matchId !== CLEAN_GOAL_DEMO_MATCH_ID) return state;
+      return {
+        matches: {
+          ...state.matches,
+          [matchId]: persistSession(createSession(matchId)),
+        },
+      };
+    }),
 }));

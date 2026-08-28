@@ -40,6 +40,31 @@ Esto permite registrar tarjetas a jugadores de pista o banquillo sin deducir
 automáticamente una inferioridad. El replay deriva disciplina de las tarjetas
 y el estado numérico exclusivamente de las sustituciones.
 
+La sustitución hacia `slot:inferiority` conserva `relatedCardEventId`: el replay
+puede explicar qué roja propia a un jugador que estaba en pista originó la
+reducción. Una roja de banquillo o staff no sirve como causa. La V1 no inventa
+una duración reglamentaria automática; la inferioridad termina con una
+sustitución explícita desde la plaza especial hacia un jugador real. Duración,
+gol rival y reglas configurables quedan pendientes de modelar por competición.
+
+### Cortafuegos de alineación
+
+El replay publica una validación derivada de alineación, nunca un contador UI:
+
+- situación normal: cinco jugadores reales y un portero funcional;
+- inferioridad justificada: cuatro jugadores reales, la plaza especial y una
+  roja propia activa relacionada;
+- PORTERO-JUGADOR: siguen siendo cinco personas y el evento de estado identifica
+  qué jugador en pista asume la portería.
+
+Una plaza sin causa, cuatro personas en situación normal o un portero no
+determinable mantienen una alerta persistente y bloquean amenazas, faltas,
+tarjetas y estados deportivos nuevos. Undo/redo, edición, soft delete,
+restauración, sustituciones de reparación y selección/corrección del P-J siguen
+disponibles para evitar un bloqueo circular. Las sesiones locales antiguas no
+se reescriben: se cargan, se reproducen y muestran el diagnóstico hasta ser
+corregidas.
+
 ## Contrato de secuencias y segunda jugada
 
 Una segunda amenaza originada por un rechace o balón vivo no es una novena
@@ -126,21 +151,29 @@ El recorrido RIV tiene una definición propia:
 
 `origen → GoalTargetPicker → detalles compatibles → fase → autoguardado`.
 
-`GoalTargetPicker` representa frontalmente la portería CDA con una zona
-exterior y la silueta del portero. El toque normalizado infiere GOL dentro del
-marco, PARADA sobre la silueta o FUERA en el exterior. Una parada deriva
+`GoalTargetPicker` representa frontalmente la portería CDA con postes, larguero,
+red/profundidad, una zona exterior amplia y una figura de guardia proporcionada.
+El toque normalizado infiere FUERA fuera del marco y propone GOL o PARADA dentro.
+La zona táctil de intervención es más amplia que el cuerpo dibujado: cubre brazos,
+zonas bajas, escuadras y proximidad de postes. Como una misma coordenada real
+puede ser gol o parada, la V2 confirma el resultado interior sin desplazar el
+punto; así no obliga a falsear la posición para obtener PARADA. Una parada deriva
 `UPPER`/`LOWER` y pide solo `CATCH`, `REBOUND` o `CLEARANCE`. El operador no
 elige al portero: replay lo resuelve desde la alineación exacta del evento.
-Si Portero-Jugador no identifica de forma inequívoca al portero funcional, se
-guarda una referencia `PENDING` y se activa `pendingReview`, sin inventar una
-persona.
+Al activar Portero-Jugador se elige explícitamente una de las cinco personas en
+pista. Los eventos legacy sin esa identidad quedan `PENDING` y activan el
+cortafuegos/pending review donde corresponda; nunca se inventa una persona.
 
 El destino usa coordenadas `{x, y}` entre 0 y 1 sobre un lienzo frontal
-canónico, con `geometryVersion: 1`; no persiste píxeles ni zonas agregadas. El
+canónico, con `geometryVersion: 2`; no persiste píxeles ni zonas agregadas. El
 resultado deportivo sigue siendo un campo del evento y el detalle espacial se
 valida contra la geometría de su versión. `WOODWORK` queda reservado como
 detalle futuro del destino (palo/travesaño), no como cuarta consecuencia al
 nivel de GOL/PARADA/FUERA.
+
+La división corporal V2 es estable: `y < 0.55` deriva `UPPER` y el resto
+`LOWER`. Se calcula desde el punto real seleccionado. La versión geométrica se
+persiste para mantener exactamente la semántica V1 de sesiones anteriores.
 
 Las amenazas RIV anteriores sin `defensive` continúan siendo eventos válidos
 legacy y no reciben destinos inventados durante migración. Las capturas nuevas
@@ -225,6 +258,29 @@ el staff ausentes, y las convocatorias de sus alineaciones se amplían también
 en `past` y `future`, conservando reloj y eventos. Ningún `matchId` real usa
 esta regla. `/partido/prueba-8/directo` añade un decimotercer jugador demo para
 validar visualmente 5 en pista + 8 suplentes + 3 técnicos.
+
+`/partido/prueba-porteria/directo` es el laboratorio limpio del Directo real:
+P1 0', marcador y disciplina a cero, cinco titulares (portero determinable),
+siete suplentes y tres técnicos. Su única entrada inicial es el evento técnico
+de alineación requerido por Event Sourcing; no contiene acciones deportivas.
+El botón discreto `↺ DEMO`, visible solo en ese `matchId`, sustituye únicamente
+su sesión local por el fixture inicial tras confirmación. Nunca aparece ni
+actúa sobre un partido real o sobre `/partido/prueba/directo`.
+
+## Cabecera y ergonomía del reloj
+
+El marcador integra por equipo goles, faltas del periodo y tarjetas amarillas y
+rojas, todos derivados del replay. Pulsar un contador de faltas o tarjetas abre
+la cronología filtrada a los eventos fuente; la corrección se realiza editando,
+eliminando o restaurando esos eventos, nunca escribiendo un agregado. El énfasis
+de umbral solo se activa cuando la competición inyecta umbrales; la V1 local no
+presupone ninguno.
+
+El reloj lateral conserva lado izquierdo/derecho y añade slots discretos
+arriba/centro/abajo, persistidos como preferencia local. En tablet los botones
+`+1/-1` quedan en la columna exterior y el minuto hacia el interior para que el
+pulgar no lo tape. No se guardan coordenadas libres y en móvil se mantiene la
+composición compacta adaptada.
 
 La cronología de Directo ya no tiene un límite conceptual de cinco eventos.
 El listado compacto incluye todos los eventos —también los eliminados

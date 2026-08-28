@@ -53,6 +53,8 @@ export interface SubstitutionEvent extends MatchEventBase {
   type: "substitution";
   playerOutId: string;
   playerInId: string;
+  /** Roja propia que justifica una reducción a la plaza INFERIORIDAD. */
+  relatedCardEventId?: string;
 }
 
 export type GameStateKind = "SUPERIORITY" | "FLYING_GOALKEEPER";
@@ -66,6 +68,8 @@ export interface GameStateChangedEvent extends MatchEventBase {
   type: "game_state_changed";
   state: GameStateKind;
   active: boolean;
+  /** Persona que asume funcionalmente la portería cuando se activa P-J. */
+  playerId?: string;
 }
 
 export type LiveThreatOutcome = "GOL" | "PARADA" | "FUERA";
@@ -91,11 +95,12 @@ export interface NormalizedCoordinates {
   y: number;
 }
 
-export const GOAL_TARGET_GEOMETRY_VERSION = 1 as const;
+export const GOAL_TARGET_GEOMETRY_VERSION = 2 as const;
+export type GoalTargetGeometryVersion = 1 | typeof GOAL_TARGET_GEOMETRY_VERSION;
 
 /** Coordenada canónica normalizada sobre el lienzo frontal de portería. */
 export interface GoalTargetCoordinates extends NormalizedCoordinates {
-  geometryVersion: typeof GOAL_TARGET_GEOMETRY_VERSION;
+  geometryVersion: GoalTargetGeometryVersion;
 }
 
 export type KeeperBodyZone = "UPPER" | "LOWER";
@@ -227,7 +232,8 @@ export interface ReplayIssue {
     | "INVALID_GOALKEEPER"
     | "INVALID_SAVE_DETAIL"
     | "INVALID_CARD_TARGET"
-    | "INVALID_INFERIORITY_SLOT";
+    | "INVALID_INFERIORITY_SLOT"
+    | "INVALID_GAME_STATE_PLAYER";
   message: string;
 }
 
@@ -241,9 +247,37 @@ export interface ReplayResult {
   disciplineByPeriod: Record<number, DisciplineSummary>;
   superiorityActive: boolean;
   flyingGoalkeeperActive: boolean;
+  flyingGoalkeeperPlayerId?: string;
   inferiorityActive: boolean;
+  lineupValidation: LineupValidation;
   dismissedPlayerIds: string[];
   issues: ReplayIssue[];
+}
+
+export type LineupValidationCode =
+  | "MISSING_PLAYERS"
+  | "TOO_MANY_PLAYERS"
+  | "UNJUSTIFIED_INFERIORITY"
+  | "GOALKEEPER_UNRESOLVED";
+
+export interface InferiorityCause {
+  cardEventId: string;
+  substitutionEventId: string;
+  playerId: string;
+  inferredFromLegacy: boolean;
+}
+
+export interface LineupValidation {
+  valid: boolean;
+  captureBlocked: boolean;
+  actualPlayersOnCourt: number;
+  expectedPlayersOnCourt: number;
+  goalkeeper: GoalkeeperReference;
+  inferiorityCause?: InferiorityCause;
+  reasons: Array<{
+    code: LineupValidationCode;
+    message: string;
+  }>;
 }
 
 export interface Score {

@@ -5,12 +5,15 @@ import { useEffect, useState } from "react";
 import { REGULATION_MATCH_CLOCK } from "../../lib/matchEngine";
 
 export type ClockSide = "left" | "right";
+export type ClockVerticalSlot = "top" | "center" | "bottom";
 
 interface MatchClockControlProps {
   period: number;
   minute: number;
   side: ClockSide;
   onSideChange: (side: ClockSide) => void;
+  verticalSlot: ClockVerticalSlot;
+  onVerticalSlotChange: (slot: ClockVerticalSlot) => void;
   onIncrement: () => void;
   onDecrement: () => void;
   onPeriodChange: (period: number) => void;
@@ -75,6 +78,8 @@ export function MatchClockControl({
   minute,
   side,
   onSideChange,
+  verticalSlot,
+  onVerticalSlotChange,
   onIncrement,
   onDecrement,
   onPeriodChange,
@@ -84,6 +89,11 @@ export function MatchClockControl({
   const atStart = minute <= 0;
   const atEnd = minute >= REGULATION_MATCH_CLOCK.periodDurationMinutes;
   const sideClass = side === "left" ? "left-2" : "right-2";
+  const verticalClass = {
+    top: "top-[28%]",
+    center: "top-[55%]",
+    bottom: "top-[78%]",
+  }[verticalSlot];
 
   useEffect(() => {
     if (!periodConfirmation) return;
@@ -100,11 +110,15 @@ export function MatchClockControl({
   };
 
   const swapSide = () => onSideChange(side === "left" ? "right" : "left");
+  const cycleVerticalSlot = () => {
+    const slots: ClockVerticalSlot[] = ["top", "center", "bottom"];
+    onVerticalSlotChange(slots[(slots.indexOf(verticalSlot) + 1) % slots.length]);
+  };
 
   return (
     <>
       <aside
-        className={`fixed top-[58%] z-40 hidden w-24 -translate-y-1/2 flex-col gap-2 rounded-2xl border border-slate-600/80 bg-slate-950/95 p-2 shadow-2xl backdrop-blur sm:flex ${sideClass}`}
+        className={`fixed z-40 hidden w-28 -translate-y-1/2 flex-col gap-1.5 rounded-2xl border border-slate-600/80 bg-slate-950/95 p-1.5 shadow-2xl backdrop-blur sm:flex ${sideClass} ${verticalClass}`}
         aria-label="Control del minuto y periodo"
       >
         <PeriodSwitch
@@ -114,39 +128,15 @@ export function MatchClockControl({
           onConfirm={confirmPeriod}
           onCancel={() => setPeriodConfirmation(false)}
         />
-        <button
-          type="button"
-          onClick={onIncrement}
-          disabled={atEnd}
-          className="min-h-20 rounded-xl bg-emerald-500 text-3xl font-black text-slate-950 shadow-[0_0_22px_rgba(16,185,129,0.25)] transition active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-600 disabled:shadow-none"
-          aria-label="Sumar un minuto"
-        >
-          +1
-        </button>
-        <output
-          className="grid min-h-24 place-items-center rounded-xl border border-cyan-200/70 bg-cyan-300 font-mono text-6xl font-black leading-none text-slate-950 shadow-[0_0_24px_rgba(103,232,249,0.34)]"
-          aria-label={`Minuto ${minute}`}
-        >
-          {minute}
-        </output>
-        <button
-          type="button"
-          onClick={onDecrement}
-          disabled={atStart}
-          className="min-h-16 rounded-xl border border-slate-700 bg-slate-800 text-2xl font-black transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-25"
-          aria-label="Restar un minuto"
-        >
-          −1
-        </button>
-        <button
-          type="button"
-          onClick={swapSide}
-          className="grid min-h-10 place-items-center rounded-lg text-xl text-slate-400 hover:bg-slate-800 hover:text-white"
-          aria-label={`Mover minutero al lateral ${side === "left" ? "derecho" : "izquierdo"}`}
-          title="Cambiar de lado"
-        >
-          ⇆
-        </button>
+        <div className="grid grid-cols-[2.75rem_1fr] grid-rows-2 gap-1">
+          <button type="button" onClick={onIncrement} disabled={atEnd} className={`${side === "left" ? "col-start-1" : "col-start-2"} row-start-1 min-h-16 rounded-xl bg-emerald-500 text-xl font-black text-slate-950 shadow-[0_0_18px_rgba(16,185,129,0.25)] active:scale-95 disabled:bg-slate-800 disabled:text-slate-600`} aria-label="Sumar un minuto">+1</button>
+          <button type="button" onClick={onDecrement} disabled={atStart} className={`${side === "left" ? "col-start-1" : "col-start-2"} row-start-2 min-h-14 rounded-xl border border-slate-700 bg-slate-800 text-lg font-black active:scale-95 disabled:opacity-25`} aria-label="Restar un minuto">−1</button>
+          <output className={`${side === "left" ? "col-start-2" : "col-start-1"} row-span-2 row-start-1 grid place-items-center rounded-xl border border-cyan-200/70 bg-cyan-300 font-mono text-4xl font-black leading-none text-slate-950 shadow-[0_0_24px_rgba(103,232,249,0.34)]`} aria-label={`Minuto ${minute}`}>{minute}</output>
+        </div>
+        <div className="grid grid-cols-2 gap-1">
+          <button type="button" onClick={cycleVerticalSlot} className="grid min-h-10 place-items-center rounded-lg text-xl text-slate-400 hover:bg-slate-800 hover:text-white" aria-label={`Mover minutero a posición vertical ${verticalSlot === "top" ? "central" : verticalSlot === "center" ? "inferior" : "superior"}`} title="Cambiar altura">↕</button>
+          <button type="button" onClick={swapSide} className="grid min-h-10 place-items-center rounded-lg text-xl text-slate-400 hover:bg-slate-800 hover:text-white" aria-label={`Mover minutero al lateral ${side === "left" ? "derecho" : "izquierdo"}`} title="Cambiar de lado">⇆</button>
+        </div>
       </aside>
 
       <aside

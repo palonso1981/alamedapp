@@ -124,7 +124,8 @@ function isDefensiveDetail(value: unknown): boolean {
     isObject(value) &&
     value.version === 1 &&
     isObject(value.goalTarget) &&
-    value.goalTarget.geometryVersion === 1 &&
+    (value.goalTarget.geometryVersion === 1 ||
+      value.goalTarget.geometryVersion === 2) &&
     isOrigin(value.goalTarget) &&
     isGoalkeeperReference(value.goalkeeper) &&
     (value.keeperBodyZone === undefined ||
@@ -149,14 +150,17 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
   if (value.type === "substitution") {
     return (
       typeof value.playerOutId === "string" &&
-      typeof value.playerInId === "string"
+      typeof value.playerInId === "string" &&
+      (value.relatedCardEventId === undefined ||
+        typeof value.relatedCardEventId === "string")
     );
   }
   if (value.type === "game_state_changed") {
     return (
       (value.state === "SUPERIORITY" ||
         value.state === "FLYING_GOALKEEPER") &&
-      typeof value.active === "boolean"
+      typeof value.active === "boolean" &&
+      (value.playerId === undefined || typeof value.playerId === "string")
     );
   }
   if (value.type === "foul_recorded") {

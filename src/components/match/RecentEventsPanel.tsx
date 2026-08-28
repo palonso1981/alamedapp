@@ -1,6 +1,6 @@
 "use client";
 
-import { PointerEvent, useRef, useState } from "react";
+import { PointerEvent, useEffect, useRef, useState } from "react";
 import { EventEditChanges } from "../../lib/matchEngine";
 import { eventDescription } from "../../lib/eventPresentation";
 import { filterTimelineEvents, TimelineFilter } from "../../lib/matchReview";
@@ -19,6 +19,14 @@ interface RecentEventsPanelProps {
   onMoveWithinMinute: (eventId: string, targetEventId: string, placement: "BEFORE" | "AFTER") => void;
   errorMessage?: string | null;
   onDismissError?: () => void;
+  disciplineFocusRequest?: DisciplineFocusRequest | null;
+}
+
+export interface DisciplineFocusRequest {
+  token: number;
+  side: "FOR" | "AGAINST";
+  kind: "FOUL" | "CARD";
+  period: number;
 }
 
 function eventGlyph(event: MatchEvent): string {
@@ -34,14 +42,29 @@ function eventGlyph(event: MatchEvent): string {
   return "●";
 }
 
-export function RecentEventsPanel({ events, timeline, players, staff, onDelete, onRestore, onPendingReview, onSave, onMoveWithinMinute, errorMessage, onDismissError }: RecentEventsPanelProps) {
+export function RecentEventsPanel({ events, timeline, players, staff, onDelete, onRestore, onPendingReview, onSave, onMoveWithinMinute, errorMessage, onDismissError, disciplineFocusRequest }: RecentEventsPanelProps) {
   const [filter, setFilter] = useState<TimelineFilter>("ALL");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ eventId: string; placement: "BEFORE" | "AFTER" } | null>(null);
+  const [disciplineFocus, setDisciplineFocus] = useState<DisciplineFocusRequest | null>(null);
   const dragRef = useRef<{ eventId: string; pointerId: number; startX: number; startY: number } | null>(null);
-  const visible = filterTimelineEvents(events, filter);
+  useEffect(() => {
+    if (!disciplineFocusRequest) return;
+    setDisciplineFocus(disciplineFocusRequest);
+    setFilter("ALL");
+    setExpanded(true);
+  }, [disciplineFocusRequest]);
+  const visible = disciplineFocus
+    ? filterTimelineEvents(events, "ALL").filter((event) =>
+        disciplineFocus.kind === "FOUL"
+          ? event.type === "foul_recorded" &&
+            event.side === disciplineFocus.side &&
+            event.period === disciplineFocus.period
+          : event.type === "card_recorded" && event.side === disciplineFocus.side,
+      )
+    : filterTimelineEvents(events, filter);
   const displayed = expanded ? visible : visible.slice(0, 4);
   const pendingCount = events.filter(
     (event) =>
@@ -80,8 +103,8 @@ export function RecentEventsPanel({ events, timeline, players, staff, onDelete, 
   return (
     <section className={`directo-timeline-panel rounded-2xl border border-slate-800 bg-slate-900 p-2 shadow-xl ${expanded ? "fixed inset-2 z-[60] flex flex-col sm:inset-6" : ""}`} aria-label="Cronología completa">
       <div className="directo-timeline-toolbar mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2"><h2 className="text-xs font-black uppercase tracking-wider text-slate-300">Cronología</h2><span className="rounded-full bg-slate-950 px-2 py-1 text-[10px] text-slate-400">{visible.length}/{events.length - 1}</span>{pendingCount > 0 && <span className="rounded-full bg-amber-950 px-2 py-1 text-[10px] font-black text-amber-200">? {pendingCount}</span>}</div>
-        <div className="flex gap-1"><button type="button" onClick={() => setFilter("ALL")} className={`min-h-9 rounded-lg px-3 text-[10px] font-black ${filter === "ALL" ? "bg-cyan-700" : "bg-slate-800"}`}>TODOS</button><button type="button" onClick={() => setFilter("PENDING")} className={`min-h-9 rounded-lg px-3 text-[10px] font-black ${filter === "PENDING" ? "bg-amber-700" : "bg-slate-800"}`}>?</button><button type="button" onClick={() => setExpanded(!expanded)} className="min-h-9 min-w-10 rounded-lg bg-slate-800 text-lg" aria-label={expanded ? "Reducir cronología" : "Ampliar cronología"}>{expanded ? "↙" : "↗"}</button></div>
+        <div className="flex items-center gap-2"><h2 className="text-xs font-black uppercase tracking-wider text-slate-300">Cronología</h2><span className="rounded-full bg-slate-950 px-2 py-1 text-[10px] text-slate-400">{visible.length}/{events.length - 1}</span>{pendingCount > 0 && <span className="rounded-full bg-amber-950 px-2 py-1 text-[10px] font-black text-amber-200">? {pendingCount}</span>}{disciplineFocus && <button type="button" onClick={() => setDisciplineFocus(null)} className="min-h-8 rounded-full bg-violet-950 px-2 text-[10px] font-black text-violet-200" aria-label="Quitar filtro disciplinario">{disciplineFocus.side === "FOR" ? "CDA" : "RIV"} · {disciplineFocus.kind === "FOUL" ? `F P${disciplineFocus.period}` : "▮"} ×</button>}</div>
+        <div className="flex gap-1"><button type="button" onClick={() => { setDisciplineFocus(null); setFilter("ALL"); }} className={`min-h-9 rounded-lg px-3 text-[10px] font-black ${filter === "ALL" && !disciplineFocus ? "bg-cyan-700" : "bg-slate-800"}`}>TODOS</button><button type="button" onClick={() => { setDisciplineFocus(null); setFilter("PENDING"); }} className={`min-h-9 rounded-lg px-3 text-[10px] font-black ${filter === "PENDING" && !disciplineFocus ? "bg-amber-700" : "bg-slate-800"}`}>?</button><button type="button" onClick={() => setExpanded(!expanded)} className="min-h-9 min-w-10 rounded-lg bg-slate-800 text-lg" aria-label={expanded ? "Reducir cronología" : "Ampliar cronología"}>{expanded ? "↙" : "↗"}</button></div>
       </div>
       {errorMessage && (
         <div role="alert" className="mb-2 flex items-start justify-between gap-2 rounded-xl border border-red-500/60 bg-red-950/90 px-3 py-2 text-[11px] font-semibold leading-snug text-red-100">

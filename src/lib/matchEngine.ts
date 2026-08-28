@@ -12,6 +12,7 @@ import {
   GoalAssist,
   GoalkeeperReference,
   INFERIORITY_SLOT_ID,
+  InferiorityCause,
   LegacyThreatImportedEvent,
   LineupInitializedEvent,
   LiveThreatPhase,
@@ -21,6 +22,7 @@ import {
   MatchEvent,
   NormalizedCoordinates,
   Player,
+  LineupValidation,
   ReplayIssue,
   ReplayResult,
   SubstitutionEvent,
@@ -29,8 +31,8 @@ import {
   ThreatSide,
 } from "../types";
 import {
-  classifyGoalTarget,
   deriveKeeperBodyZone,
+  isOutcomeCompatibleWithGoalTarget,
   validGoalTarget,
 } from "./goalTarget";
 
@@ -147,11 +149,13 @@ export interface LineupEventInput extends EventFactoryBase {
 export interface SubstitutionEventInput extends EventFactoryBase {
   playerOutId: string;
   playerInId: string;
+  relatedCardEventId?: string;
 }
 
 export interface GameStateEventInput extends EventFactoryBase {
   state: GameStateKind;
   active: boolean;
+  playerId?: string;
 }
 
 export interface FoulEventInput extends EventFactoryBase {
@@ -205,7 +209,7 @@ export interface EventEditChanges {
     assist?: GoalAssist | null;
     defensive?: DefensiveThreatDetailV1 | null;
   };
-  gameState?: Partial<Pick<GameStateChangedEvent, "state" | "active">>;
+  gameState?: Partial<Pick<GameStateChangedEvent, "state" | "active" | "playerId">>;
   foul?: Partial<Pick<FoulRecordedEvent, "side" | "playerId" | "origin">>;
   card?: Partial<Pick<CardRecordedEvent, "side" | "color">> & {
     playerId?: string | null;
@@ -252,6 +256,7 @@ export function createSubstitutionEvent(
     type: "substitution",
     playerOutId: input.playerOutId,
     playerInId: input.playerInId,
+    relatedCardEventId: input.relatedCardEventId,
   };
 }
 
@@ -263,6 +268,7 @@ export function createGameStateEvent(
     type: "game_state_changed",
     state: input.state,
     active: input.active,
+    playerId: input.active ? input.playerId : undefined,
   };
 }
 
@@ -413,10 +419,23 @@ export function deriveGoalkeeperReference(
   players: Player[],
   onCourtPlayerIds: readonly string[],
   flyingGoalkeeperActive: boolean,
+  flyingGoalkeeperPlayerId?: string,
 ): GoalkeeperReference {
   const onCourt = new Set(onCourtPlayerIds);
+  if (
+    flyingGoalkeeperActive &&
+    flyingGoalkeeperPlayerId &&
+    onCourt.has(flyingGoalkeeperPlayerId)
+  ) {
+    return {
+      status: "PLAYER",
+      playerId: flyingGoalkeeperPlayerId,
+      resolution: "REPLAY",
+    };
+  }
   const candidates = players.filter(
-    (player) => onCourt.has(player.id) && goalkeeperRole(player, flyingGoalkeeperActive),
+    (player) =>
+      onCourt.has(player.id) && goalkeeperRole(player, flyingGoalkeeperActive),
   );
   return candidates.length === 1
     ? { status: "PLAYER", playerId: candidates[0].id, resolution: "REPLAY" }
@@ -443,6 +462,7 @@ export function goalkeeperAtPosition(
     players,
     replay.onCourtPlayerIds,
     replay.flyingGoalkeeperActive,
+    replay.flyingGoalkeeperPlayerId,
   );
 }
 
@@ -473,6 +493,7 @@ export function reconcileDefensiveGoalkeepers(
       players,
       snapshot.onCourtPlayerIds,
       snapshot.flyingGoalkeeperActive,
+      snapshot.flyingGoalkeeperPlayerId,
     );
     const manualStillValid =
       derived.status === "PENDING" &&
@@ -506,12 +527,11 @@ function issue(
 }
 
 function gameContexts(
-  onCourtPlayerIds: string[],
   superiorityActive: boolean,
   flyingGoalkeeperActive: boolean,
+  inferiorityActive: boolean,
 ): GameContext[] {
   const contexts: GameContext[] = [];
-  const inferiorityActive = onCourtPlayerIds.includes(INFERIORITY_SLOT_ID);
 
   if (!superiorityActive && !inferiorityActive) {
     contexts.push("EVEN");
@@ -536,6 +556,63 @@ function emptyDiscipline(): DisciplineSummary {
   };
 }
 
+export function validateLineupState(
+  players: Player[],
+  onCourtPlayerIds: readonly string[],
+  flyingGoalkeeperActive: boolean,
+  inferiorityCause?: InferiorityCause,
+  flyingGoalkeeperPlayerId?: string,
+): LineupValidation {
+  const playerIds = new Set(players.map((player) => player.id));
+  const actualPlayersOnCourt = onCourtPlayerIds.filter((id) =>
+    playerIds.has(id),
+  ).length;
+  const slotPresent = onCourtPlayerIds.includes(INFERIORITY_SLOT_ID);
+  const justifiedInferiority = slotPresent && Boolean(inferiorityCause);
+  const expectedPlayersOnCourt = justifiedInferiority ? 4 : MAX_ON_COURT;
+  const goalkeeper = deriveGoalkeeperReference(
+    players,
+    onCourtPlayerIds,
+    flyingGoalkeeperActive,
+    flyingGoalkeeperPlayerId,
+  );
+  const reasons: LineupValidation["reasons"] = [];
+
+  if (slotPresent && !inferiorityCause) {
+    reasons.push({
+      code: "UNJUSTIFIED_INFERIORITY",
+      message: "La plaza INFERIORIDAD no está justificada por una roja propia activa.",
+    });
+  }
+  if (actualPlayersOnCourt < expectedPlayersOnCourt) {
+    reasons.push({
+      code: "MISSING_PLAYERS",
+      message: `${actualPlayersOnCourt}/${expectedPlayersOnCourt} jugadores reales en pista.`,
+    });
+  } else if (actualPlayersOnCourt > expectedPlayersOnCourt) {
+    reasons.push({
+      code: "TOO_MANY_PLAYERS",
+      message: `${actualPlayersOnCourt}/${expectedPlayersOnCourt} jugadores reales en pista.`,
+    });
+  }
+  if (goalkeeper.status === "PENDING") {
+    reasons.push({
+      code: "GOALKEEPER_UNRESOLVED",
+      message: "No se puede determinar un único portero funcional en pista.",
+    });
+  }
+
+  return {
+    valid: reasons.length === 0,
+    captureBlocked: reasons.length > 0,
+    actualPlayersOnCourt,
+    expectedPlayersOnCourt,
+    goalkeeper,
+    inferiorityCause: justifiedInferiority ? inferiorityCause : undefined,
+    reasons,
+  };
+}
+
 export function replayMatch(
   players: Player[],
   events: MatchEvent[],
@@ -548,6 +625,8 @@ export function replayMatch(
   let hasLineup = false;
   let superiorityActive = false;
   let flyingGoalkeeperActive = false;
+  let flyingGoalkeeperPlayerId: string | undefined;
+  let inferiorityCause: InferiorityCause | undefined;
   const dismissedPlayerIds = new Set<string>();
   const score = { for: 0, against: 0 };
   const discipline = emptyDiscipline();
@@ -573,6 +652,8 @@ export function replayMatch(
   const matchIds = new Set(activeEvents.map((event) => event.matchId));
   const occupiedPositions = new Set<string>();
   const eventsById = new Map(events.map((event) => [event.id, event]));
+  const activeRedCardsById = new Map<string, CardRecordedEvent>();
+  const latestRedCardByPlayer = new Map<string, CardRecordedEvent>();
   const foulThresholds = Array.from(
     new Set(
       (options.foulAccumulationRules?.thresholds ?? [])
@@ -684,6 +765,7 @@ export function replayMatch(
 
       squadPlayerIds = [...event.squadPlayerIds];
       onCourtPlayerIds = [...event.onCourtPlayerIds];
+      inferiorityCause = undefined;
       refreshBench();
       enteredAt.clear();
       for (const playerId of onCourtPlayerIds) {
@@ -699,6 +781,21 @@ export function replayMatch(
       );
     } else if (event.type === "substitution") {
       const incomingIsInferiority = event.playerInId === INFERIORITY_SLOT_ID;
+      const explicitCause = event.relatedCardEventId
+        ? activeRedCardsById.get(event.relatedCardEventId)
+        : undefined;
+      const legacyCause = !event.relatedCardEventId
+        ? latestRedCardByPlayer.get(event.playerOutId)
+        : undefined;
+      const causeCard = explicitCause ?? legacyCause;
+      const validCause =
+        incomingIsInferiority &&
+        causeCard?.side === "FOR" &&
+        causeCard.color === "RED" &&
+        causeCard.playerId === event.playerOutId &&
+        compareEventPosition(causeCard, event) < 0
+          ? causeCard
+          : undefined;
       if (!onCourtPlayerIds.includes(event.playerOutId)) {
         issue(
           issues,
@@ -739,6 +836,18 @@ export function replayMatch(
         enteredAt.delete(event.playerOutId);
         enteredAt.set(event.playerInId, eventElapsedMinute);
         refreshBench();
+        if (incomingIsInferiority) {
+          inferiorityCause = validCause
+            ? {
+                cardEventId: validCause.id,
+                substitutionEventId: event.id,
+                playerId: event.playerOutId,
+                inferredFromLegacy: !event.relatedCardEventId,
+              }
+            : undefined;
+        } else if (event.playerOutId === INFERIORITY_SLOT_ID) {
+          inferiorityCause = undefined;
+        }
       }
     } else if (event.type === "threat_recorded") {
       if (!validCoordinates(event.origin)) {
@@ -780,15 +889,22 @@ export function replayMatch(
       }
       if (event.defensive) {
         const detail = event.defensive;
+        const defensiveOutcome =
+          event.outcome === "BLOQUEADO" ? null : event.outcome;
         const expectedGoalkeeper = deriveGoalkeeperReference(
           players,
           onCourtPlayerIds,
           flyingGoalkeeperActive,
+          flyingGoalkeeperPlayerId,
         );
         if (
           event.side !== "AGAINST" ||
           !validGoalTarget(detail.goalTarget) ||
-          classifyGoalTarget(detail.goalTarget) !== event.outcome
+          !defensiveOutcome ||
+          !isOutcomeCompatibleWithGoalTarget(
+            detail.goalTarget,
+            defensiveOutcome,
+          )
         ) {
           issue(
             issues,
@@ -858,6 +974,25 @@ export function replayMatch(
         superiorityActive = event.active;
       } else {
         flyingGoalkeeperActive = event.active;
+        if (!event.active) {
+          flyingGoalkeeperPlayerId = undefined;
+        } else if (
+          event.playerId &&
+          playerIds.has(event.playerId) &&
+          onCourtPlayerIds.includes(event.playerId)
+        ) {
+          flyingGoalkeeperPlayerId = event.playerId;
+        } else {
+          flyingGoalkeeperPlayerId = undefined;
+          if (event.playerId) {
+            issue(
+              issues,
+              event,
+              "INVALID_GAME_STATE_PLAYER",
+              "El portero-jugador debe ser un jugador que estaba en pista.",
+            );
+          }
+        }
       }
     } else if (event.type === "foul_recorded") {
       if (event.origin && !validCoordinates(event.origin)) {
@@ -938,6 +1073,8 @@ export function replayMatch(
         event.playerId
       ) {
         dismissedPlayerIds.add(event.playerId);
+        activeRedCardsById.set(event.id, event);
+        latestRedCardByPlayer.set(event.playerId, event);
       }
     }
 
@@ -946,9 +1083,12 @@ export function replayMatch(
       lineupPlayerIds: [...onCourtPlayerIds],
       benchPlayerIds: [...benchPlayerIds],
       gameContexts: gameContexts(
-        onCourtPlayerIds,
         superiorityActive,
         flyingGoalkeeperActive,
+        Boolean(
+          inferiorityCause &&
+            onCourtPlayerIds.includes(INFERIORITY_SLOT_ID),
+        ),
       ),
       periodFoulNumber,
       periodFoulsBefore,
@@ -987,6 +1127,13 @@ export function replayMatch(
       ];
     }),
   );
+  const lineupValidation = validateLineupState(
+    players,
+    onCourtPlayerIds,
+    flyingGoalkeeperActive,
+    inferiorityCause,
+    flyingGoalkeeperPlayerId,
+  );
 
   return {
     onCourtPlayerIds,
@@ -998,7 +1145,9 @@ export function replayMatch(
     disciplineByPeriod,
     superiorityActive,
     flyingGoalkeeperActive,
-    inferiorityActive: onCourtPlayerIds.includes(INFERIORITY_SLOT_ID),
+    flyingGoalkeeperPlayerId,
+    inferiorityActive: Boolean(lineupValidation.inferiorityCause),
+    lineupValidation,
     dismissedPlayerIds: Array.from(dismissedPlayerIds),
     issues,
   };

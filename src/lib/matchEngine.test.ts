@@ -37,12 +37,14 @@ import {
 import { contextualPlacement } from "./contextualPlacement";
 import { courtHeightForWidth, FUTSAL_COURT_ASPECT_RATIO, normalizeCourtPoint } from "./courtGeometry";
 import { CANONICAL_COURT_ORIENTATION, courtOrientationForPeriod } from "./courtGeometry";
-import { classifyGoalTarget, deriveKeeperBodyZone, normalizeGoalTargetPoint } from "./goalTarget";
+import { classifyGoalTarget, deriveKeeperBodyZone, isOutcomeCompatibleWithGoalTarget, normalizeGoalTargetPoint } from "./goalTarget";
 import { assistCandidates, filterTimelineEvents } from "./matchReview";
 import {
   DEMO_EXTRA_PLAYER,
   DEMO_PLAYERS,
   DEMO_STAFF,
+  CLEAN_GOAL_DEMO_MATCH_ID,
+  createSession,
   upgradeDemoSession,
   useMatchStore,
 } from "../store/useMatchStore";
@@ -2135,7 +2137,7 @@ test("rechace ofrece y encadena segunda jugada reversible con fase heredada", ()
   assert.throws(() => softDeleteEvent(session.players, session.events, "seq-a"), EventDeletionBlockedError);
 });
 
-test("captura defensiva persiste destino y marca P-J indeterminado para revisión", () => {
+test("captura defensiva persiste destino y deriva el P-J elegido explícitamente", () => {
   useMatchStore.setState({ matches: {} });
   const matchId = "defensive-persistence";
   const actions = useMatchStore.getState();
@@ -2150,7 +2152,7 @@ test("captura defensiva persiste destino y marca P-J indeterminado para revisió
   });
   let threat = useMatchStore.getState().matches[matchId].events.find((event) => event.id === "normal-keeper-shot");
   assert.equal(threat?.type === "threat_recorded" && threat.defensive?.goalkeeper.status === "PLAYER" ? threat.defensive.goalkeeper.playerId : null, "p5");
-  actions.toggleGameState(matchId, "FLYING_GOALKEEPER");
+  actions.toggleGameState(matchId, "FLYING_GOALKEEPER", "p2");
   actions.recordThreat(matchId, {
     id: "pj-shot",
     side: "AGAINST",
@@ -2161,8 +2163,8 @@ test("captura defensiva persiste destino y marca P-J indeterminado para revisió
   });
   const session = useMatchStore.getState().matches[matchId];
   threat = session.events.find((event) => event.id === "pj-shot");
-  assert.equal(threat?.type === "threat_recorded" && threat.defensive?.goalkeeper.status, "PENDING");
-  assert.equal(threat?.pendingReview, true);
+  assert.equal(threat?.type === "threat_recorded" && threat.defensive?.goalkeeper.status === "PLAYER" ? threat.defensive.goalkeeper.playerId : null, "p2");
+  assert.equal(threat?.pendingReview, false);
   const storage = new MemoryStorage();
   assert.equal(saveMatchSession(session, storage, 99).ok, true);
   const loaded = loadMatchSession(matchId, storage);
@@ -2497,4 +2499,236 @@ test("una amenaza RIV local anterior sin destino persiste y carga sin inventar d
   const loadedThreat = loaded?.events.find((event) => event.id === legacyThreat.id);
   assert.equal(loadedThreat?.type === "threat_recorded" && loadedThreat.defensive, undefined);
   assert.equal(replayMatch(players, loaded?.events ?? []).score.against, 1);
+});
+
+test("firewall exige cinco jugadores salvo inferioridad causada por roja activa", () => {
+  const matchId = "lineup-firewall";
+  const initialReplay = replayMatch(players, initialLineup(matchId));
+  assert.equal(initialReplay.lineupValidation.valid, true);
+  assert.equal(initialReplay.lineupValidation.actualPlayersOnCourt, 5);
+  const noKeeperLineup = createLineupInitializedEvent({
+    id: "no-keeper-lineup",
+    matchId: "no-keeper",
+    position: { period: 1, minute: 0, order: 1 },
+    squadPlayerIds: players.map((player) => player.id),
+    onCourtPlayerIds: ["p1", "p2", "p3", "p4", "p6"],
+  });
+  const noKeeperReplay = replayMatch(players, [noKeeperLineup]);
+  assert.equal(noKeeperReplay.lineupValidation.actualPlayersOnCourt, 5);
+  assert.ok(noKeeperReplay.lineupValidation.reasons.some((reason) => reason.code === "GOALKEEPER_UNRESOLVED"));
+  const red = createCardEvent({
+    id: "field-red",
+    matchId,
+    position: { period: 1, minute: 6, order: 1 },
+    side: "FOR",
+    color: "RED",
+    playerId: "p1",
+  });
+  const reduction = createSubstitutionEvent({
+    id: "field-red-reduction",
+    matchId,
+    position: { period: 1, minute: 6, order: 2 },
+    playerOutId: "p1",
+    playerInId: INFERIORITY_SLOT_ID,
+    relatedCardEventId: red.id,
+  });
+  let events = appendEvents(players, initialLineup(matchId), [red, reduction]);
+  let replay = replayMatch(players, events);
+  assert.equal(replay.lineupValidation.valid, true);
+  assert.equal(replay.lineupValidation.actualPlayersOnCourt, 4);
+  assert.equal(replay.lineupValidation.expectedPlayersOnCourt, 4);
+  assert.equal(replay.lineupValidation.inferiorityCause?.cardEventId, red.id);
+
+  events = editEvent(players, events, red.id, { card: { color: "YELLOW" } });
+  replay = replayMatch(players, events);
+  assert.equal(replay.lineupValidation.captureBlocked, true);
+  assert.equal(replay.inferiorityActive, false);
+  assert.ok(replay.lineupValidation.reasons.some((reason) => reason.code === "UNJUSTIFIED_INFERIORITY"));
+
+  events = editEvent(players, events, red.id, { card: { color: "RED" } });
+  assert.equal(replayMatch(players, events).lineupValidation.valid, true);
+  events = softDeleteEvent(players, events, red.id);
+  assert.equal(replayMatch(players, events).lineupValidation.captureBlocked, true);
+  events = restoreEvent(players, events, red.id);
+  assert.equal(replayMatch(players, events).lineupValidation.valid, true);
+});
+
+test("roja de banquillo no justifica inferioridad y expulsar al portero exige reparación", () => {
+  const benchMatch = "bench-red-firewall";
+  const benchRed = createCardEvent({
+    id: "bench-red",
+    matchId: benchMatch,
+    position: { period: 1, minute: 3, order: 1 },
+    side: "FOR",
+    color: "RED",
+    playerId: "p6",
+  });
+  const malformedReduction = createSubstitutionEvent({
+    id: "bad-reduction",
+    matchId: benchMatch,
+    position: { period: 1, minute: 3, order: 2 },
+    playerOutId: "p1",
+    playerInId: INFERIORITY_SLOT_ID,
+    relatedCardEventId: benchRed.id,
+  });
+  const malformedReplay = replayMatch(players, [
+    ...initialLineup(benchMatch),
+    benchRed,
+    malformedReduction,
+  ]);
+  assert.equal(malformedReplay.lineupValidation.captureBlocked, true);
+  assert.equal(malformedReplay.inferiorityActive, false);
+
+  const staffMatch = "staff-red-firewall";
+  const staffRed = createCardEvent({
+    id: "staff-red-firewall-card",
+    matchId: staffMatch,
+    position: { period: 1, minute: 3, order: 1 },
+    side: "FOR",
+    color: "RED",
+    staffId: DEMO_STAFF[0].id,
+  });
+  const staffReduction = createSubstitutionEvent({
+    id: "staff-bad-reduction",
+    matchId: staffMatch,
+    position: { period: 1, minute: 3, order: 2 },
+    playerOutId: "p1",
+    playerInId: INFERIORITY_SLOT_ID,
+    relatedCardEventId: staffRed.id,
+  });
+  const staffReplay = replayMatch(players, [
+    ...initialLineup(staffMatch),
+    staffRed,
+    staffReduction,
+  ]);
+  assert.equal(staffReplay.lineupValidation.captureBlocked, true);
+  assert.equal(staffReplay.inferiorityActive, false);
+
+  const keeperMatch = "keeper-red-firewall";
+  const keeperRed = createCardEvent({
+    id: "keeper-red",
+    matchId: keeperMatch,
+    position: { period: 1, minute: 4, order: 1 },
+    side: "FOR",
+    color: "RED",
+    playerId: "p5",
+  });
+  const keeperReduction = createSubstitutionEvent({
+    id: "keeper-reduction",
+    matchId: keeperMatch,
+    position: { period: 1, minute: 4, order: 2 },
+    playerOutId: "p5",
+    playerInId: INFERIORITY_SLOT_ID,
+    relatedCardEventId: keeperRed.id,
+  });
+  const keeperReplay = replayMatch(players, appendEvents(
+    players,
+    initialLineup(keeperMatch),
+    [keeperRed, keeperReduction],
+  ));
+  assert.equal(keeperReplay.inferiorityActive, true);
+  assert.equal(keeperReplay.lineupValidation.actualPlayersOnCourt, 4);
+  assert.ok(keeperReplay.lineupValidation.reasons.some((reason) => reason.code === "GOALKEEPER_UNRESOLVED"));
+});
+
+test("firewall bloquea captura nueva pero permite reparar la alineación sin borrar eventos", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "firewall-store";
+  const session = createSession(matchId);
+  const red = createCardEvent({
+    id: "deleted-cause",
+    matchId,
+    position: { period: 1, minute: 1, order: 1 },
+    side: "FOR",
+    color: "RED",
+    playerId: "p1",
+  });
+  const reduction = createSubstitutionEvent({
+    id: "orphan-reduction",
+    matchId,
+    position: { period: 1, minute: 1, order: 2 },
+    playerOutId: "p1",
+    playerInId: INFERIORITY_SLOT_ID,
+    relatedCardEventId: red.id,
+  });
+  const events = softDeleteEvent(
+    session.players,
+    appendEvents(session.players, session.events, [red, reduction]),
+    red.id,
+  );
+  useMatchStore.setState({ matches: { [matchId]: { ...session, events, minute: 2, periodMinutes: { 1: 2, 2: 0 } } } });
+  const actions = useMatchStore.getState();
+  const before = events.length;
+  actions.recordThreat(matchId, {
+    side: "AGAINST",
+    origin: { x: 0.6, y: 0.5 },
+    outcome: "FUERA",
+    phase: "POSITIONAL",
+    defensiveCapture: { goalTarget: { geometryVersion: 2, x: 0.1, y: 0.4 } },
+  });
+  let current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.events.length, before);
+  assert.match(current.lastError ?? "", /Alineación bloqueada/);
+
+  actions.swapPlayer(matchId, INFERIORITY_SLOT_ID, "p6");
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(replayMatch(current.players, current.events).lineupValidation.valid, true);
+  assert.equal(current.events.some((event) => event.id === "orphan-reduction"), true);
+});
+
+test("P-J requiere identidad explícita en pista y replay la conserva", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "explicit-flying-goalkeeper";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  actions.toggleGameState(matchId, "FLYING_GOALKEEPER");
+  let session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.events.length, 1);
+  assert.match(session.lastError ?? "", /Selecciona/);
+
+  actions.toggleGameState(matchId, "FLYING_GOALKEEPER", "p2");
+  session = useMatchStore.getState().matches[matchId];
+  const replay = replayMatch(session.players, session.events);
+  assert.equal(replay.flyingGoalkeeperActive, true);
+  assert.equal(replay.flyingGoalkeeperPlayerId, "p2");
+  assert.deepEqual(replay.lineupValidation.goalkeeper, {
+    status: "PLAYER",
+    playerId: "p2",
+    resolution: "REPLAY",
+  });
+  assert.equal(replay.lineupValidation.actualPlayersOnCourt, 5);
+});
+
+test("geometría V2 conserva coordenadas reales y solo fuerza FUERA fuera del marco", () => {
+  const center = normalizeGoalTargetPoint(250, 250, {
+    left: 0,
+    top: 0,
+    width: 500,
+    height: 500,
+  });
+  assert.deepEqual(center, { geometryVersion: 2, x: 0.5, y: 0.5 });
+  assert.equal(classifyGoalTarget(center), "PARADA");
+  assert.equal(isOutcomeCompatibleWithGoalTarget(center, "PARADA"), true);
+  assert.equal(isOutcomeCompatibleWithGoalTarget(center, "GOL"), true);
+  const nearPost = { geometryVersion: 2 as const, x: 0.25, y: 0.5 };
+  assert.equal(classifyGoalTarget(nearPost), "PARADA");
+  const outside = { geometryVersion: 2 as const, x: 0.1, y: 0.5 };
+  assert.equal(classifyGoalTarget(outside), "FUERA");
+  assert.equal(isOutcomeCompatibleWithGoalTarget(outside, "GOL"), false);
+});
+
+test("prueba-porteria es un fixture limpio, aislado y reiniciable", () => {
+  const demo = createSession(CLEAN_GOAL_DEMO_MATCH_ID);
+  const replay = replayMatch(demo.players, demo.events);
+  assert.equal(demo.period, 1);
+  assert.equal(demo.minute, 0);
+  assert.equal(demo.events.length, 1);
+  assert.equal(replay.onCourtPlayerIds.length, 5);
+  assert.equal(replay.benchPlayerIds.length, 7);
+  assert.equal(demo.staff.length, 3);
+  assert.deepEqual(replay.score, { for: 0, against: 0 });
+  assert.deepEqual(replay.discipline, {
+    for: { fouls: 0, yellowCards: 0, redCards: 0 },
+    against: { fouls: 0, yellowCards: 0, redCards: 0 },
+  });
 });

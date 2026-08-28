@@ -4,6 +4,7 @@ interface PlayerContextActionsProps {
   location: "COURT" | "BENCH";
   redDecision?: boolean;
   showCancel?: boolean;
+  captureBlocked?: boolean;
   onFoulCommitted: () => void;
   onFoulReceived: () => void;
   onYellow: () => void;
@@ -42,6 +43,7 @@ export function PlayerContextActions({
   location,
   redDecision = false,
   showCancel = false,
+  captureBlocked = false,
   onFoulCommitted,
   onFoulReceived,
   onYellow,
@@ -51,6 +53,15 @@ export function PlayerContextActions({
   onBack,
   onCancel,
 }: PlayerContextActionsProps) {
+  if (captureBlocked) {
+    return (
+      <div className="rounded-xl border border-red-500/60 bg-red-950/90 p-3 text-center text-xs font-black text-red-100">
+        <span className="text-2xl" aria-hidden="true">⇄</span>
+        <p>Repara con banquillo o cronología</p>
+        <button type="button" onClick={onCancel} className="mt-2 min-h-10 w-full rounded-lg bg-slate-800">×</button>
+      </div>
+    );
+  }
   if (redDecision) {
     return (
       <div className="grid grid-cols-2 gap-2">

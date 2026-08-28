@@ -9,13 +9,17 @@ import { DefensiveThreatContext } from "../../../../components/match/contextual/
 import { PlayerContextActions } from "../../../../components/match/contextual/PlayerContextActions";
 import { ThreatContextPicker } from "../../../../components/match/contextual/ThreatContextPicker";
 import { HistoryControls } from "../../../../components/match/HistoryControls";
+import { LineupFirewallAlert } from "../../../../components/match/LineupFirewallAlert";
 import {
   ClockSide,
+  ClockVerticalSlot,
   MatchClockControl,
 } from "../../../../components/match/MatchClockControl";
 import { MatchScoreboard } from "../../../../components/match/MatchScoreboard";
-import { RecentEventsPanel } from "../../../../components/match/RecentEventsPanel";
-import { RivalDisciplineQuickActions } from "../../../../components/match/RivalDisciplineQuickActions";
+import {
+  DisciplineFocusRequest,
+  RecentEventsPanel,
+} from "../../../../components/match/RecentEventsPanel";
 import { PlayerAvatar } from "../../../../components/player/PlayerAvatar";
 import { normalizeCourtPoint } from "../../../../lib/courtGeometry";
 import { eventDescription } from "../../../../lib/eventPresentation";
@@ -27,7 +31,10 @@ import {
 } from "../../../../lib/liveInteraction";
 import { replayMatch, sortEvents } from "../../../../lib/matchEngine";
 import { assistCandidates } from "../../../../lib/matchReview";
-import { useMatchStore } from "../../../../store/useMatchStore";
+import {
+  CLEAN_GOAL_DEMO_MATCH_ID,
+  useMatchStore,
+} from "../../../../store/useMatchStore";
 import {
   INFERIORITY_SLOT_ID,
   MatchEvent,
@@ -35,6 +42,9 @@ import {
 } from "../../../../types";
 
 const CLOCK_SIDE_STORAGE_KEY = "alamedapp:directo-clock-side:v1";
+const CLOCK_VERTICAL_STORAGE_KEY = "alamedapp:directo-clock-vertical:v1";
+/** La competición debe inyectar sus umbrales; localmente no se presupone ninguno. */
+const FOUL_THRESHOLDS: readonly number[] = [];
 
 const OUTFIELD_POSITIONS = [
   { x: 0.56, y: 0.16 },
@@ -109,6 +119,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const undo = useMatchStore((state) => state.undo);
   const redo = useMatchStore((state) => state.redo);
   const clearError = useMatchStore((state) => state.clearError);
+  const resetCleanDemo = useMatchStore((state) => state.resetCleanDemo);
 
   const [interaction, setInteraction] = useState<LiveInteractionState>(
     IDLE_LIVE_INTERACTION,
@@ -118,12 +129,19 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   );
   const [feedback, setFeedback] = useState<string | null>(null);
   const [clockSide, setClockSide] = useState<ClockSide>("right");
+  const [clockVerticalSlot, setClockVerticalSlot] = useState<ClockVerticalSlot>("center");
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
+  const [disciplineFocus, setDisciplineFocus] = useState<DisciplineFocusRequest | null>(null);
+  const [selectingFlyingGoalkeeper, setSelectingFlyingGoalkeeper] = useState(false);
 
   useEffect(() => {
     const savedSide = window.localStorage.getItem(CLOCK_SIDE_STORAGE_KEY);
     if (savedSide === "left" || savedSide === "right") {
       setClockSide(savedSide);
+    }
+    const savedVertical = window.localStorage.getItem(CLOCK_VERTICAL_STORAGE_KEY);
+    if (savedVertical === "top" || savedVertical === "center" || savedVertical === "bottom") {
+      setClockVerticalSlot(savedVertical);
     }
   }, []);
 
@@ -133,6 +151,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     setRedDecisionPlayerId(null);
     setFeedback(null);
     setSelectedStaffId(null);
+    setSelectingFlyingGoalkeeper(false);
   }, [ensureMatch, matchId]);
 
   useEffect(() => {
@@ -147,6 +166,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         ? replayMatch(session.players, session.events, {
             currentClock: { period: session.period, minute: session.minute },
             throughClock: { period: session.period, minute: session.minute },
+            foulAccumulationRules: { thresholds: FOUL_THRESHOLDS },
           })
         : null,
     [session],
@@ -220,7 +240,26 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     window.localStorage.setItem(CLOCK_SIDE_STORAGE_KEY, side);
   };
 
+  const updateClockVerticalSlot = (slot: ClockVerticalSlot) => {
+    setClockVerticalSlot(slot);
+    window.localStorage.setItem(CLOCK_VERTICAL_STORAGE_KEY, slot);
+  };
+
+  const captureBlocked = replay.lineupValidation.captureBlocked;
+  const blockedAction = () => {
+    setFeedback("⚠ Corrige la alineación antes de registrar otra acción");
+  };
+
   const applyInteraction = (action: LiveInteractionAction) => {
+    const repairAction =
+      action.type === "CANCEL" ||
+      action.type === "END_SEQUENCE" ||
+      action.type === "COURT_PLAYER_TAPPED" ||
+      action.type === "BENCH_PLAYER_TAPPED";
+    if (captureBlocked && !repairAction) {
+      blockedAction();
+      return;
+    }
     clearError(matchId);
     setSelectedStaffId(null);
     setRedDecisionPlayerId(null);
@@ -312,6 +351,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         minute={session.minute}
         side={clockSide}
         onSideChange={updateClockSide}
+        verticalSlot={clockVerticalSlot}
+        onVerticalSlotChange={updateClockVerticalSlot}
         onIncrement={() => incrementMinute(matchId)}
         onDecrement={() => decrementMinute(matchId)}
         onPeriodChange={(period) => {
@@ -336,16 +377,23 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         </div>
 
         <div className="flex items-center gap-1.5">
-          <MatchScoreboard score={chronologyReplay.score} />
-          <RivalDisciplineQuickActions
-            yellowCards={chronologyReplay.discipline.against.yellowCards}
-            redCards={chronologyReplay.discipline.against.redCards}
-            onYellow={() => {
+          <MatchScoreboard
+            score={chronologyReplay.score}
+            period={session.period}
+            periodFor={periodDiscipline.for}
+            periodAgainst={periodDiscipline.against}
+            totalFor={chronologyReplay.discipline.for}
+            totalAgainst={chronologyReplay.discipline.against}
+            foulThresholds={FOUL_THRESHOLDS}
+            onInspect={(side, kind) => setDisciplineFocus({ token: Date.now(), side, kind, period: session.period })}
+            onRivalYellow={() => {
+              if (captureBlocked) return blockedAction();
               setInteraction(IDLE_LIVE_INTERACTION);
               recordCard(matchId, "AGAINST", "YELLOW");
               setFeedback("✓ Amarilla RIV");
             }}
-            onRed={() => {
+            onRivalRed={() => {
+              if (captureBlocked) return blockedAction();
               setInteraction(IDLE_LIVE_INTERACTION);
               recordCard(matchId, "AGAINST", "RED");
               setFeedback("✓ Roja RIV");
@@ -382,13 +430,21 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               redo(matchId);
             }}
           />
+          {matchId === CLEAN_GOAL_DEMO_MATCH_ID && (
+            <button type="button" onClick={() => {
+              if (!window.confirm("¿Reiniciar solo el demo prueba-porteria?")) return;
+              setInteraction(IDLE_LIVE_INTERACTION);
+              resetCleanDemo(matchId);
+            }} className="min-h-10 rounded-lg bg-slate-900 px-2 text-xs font-bold text-slate-400" aria-label="Reiniciar demo de portería">↺ DEMO</button>
+          )}
         </div>
       </header>
 
-      <div className="mx-auto mb-2 grid max-w-7xl grid-cols-2 gap-2 sm:grid-cols-[1fr_1fr_0.7fr_auto]">
+      <div className="mx-auto mb-2 grid max-w-7xl grid-cols-2 gap-2 sm:grid-cols-3">
         <button
           type="button"
           onClick={() => {
+            if (captureBlocked) return blockedAction();
             setInteraction(IDLE_LIVE_INTERACTION);
             toggleGameState(matchId, "SUPERIORITY");
           }}
@@ -405,7 +461,12 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           type="button"
           onClick={() => {
             setInteraction(IDLE_LIVE_INTERACTION);
-            toggleGameState(matchId, "FLYING_GOALKEEPER");
+            if (replay.flyingGoalkeeperActive) {
+              toggleGameState(matchId, "FLYING_GOALKEEPER");
+              setSelectingFlyingGoalkeeper(false);
+            } else {
+              setSelectingFlyingGoalkeeper((visible) => !visible);
+            }
           }}
           className={`rounded-xl border-2 px-3 py-2 text-sm font-black transition-all ${
             replay.flyingGoalkeeperActive
@@ -425,12 +486,39 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         >
           {replay.inferiorityActive ? "▼ INFERIORIDAD" : "5v5"}
         </div>
-        <div className="col-span-2 flex items-center justify-end gap-2 font-mono text-[11px] sm:col-span-1" aria-label={`Faltas del periodo ${session.period}`}>
-          <span className="rounded-full bg-slate-900 px-2 py-1 text-orange-300">CDA F{periodDiscipline.for.fouls}</span>
-          <span className="rounded-full bg-slate-900 px-2 py-1 text-sky-300">RIV F{periodDiscipline.against.fouls}</span>
-          <span className="rounded-full bg-slate-900 px-2 py-1 text-slate-400">{chronologyReplay.discipline.for.yellowCards}▮ {chronologyReplay.discipline.for.redCards}▮</span>
-        </div>
       </div>
+
+      {selectingFlyingGoalkeeper && !replay.flyingGoalkeeperActive && (
+        <div className="mx-auto mb-2 max-w-3xl rounded-2xl border border-rose-400/60 bg-rose-950/80 p-2 shadow-xl" role="dialog" aria-label="Elegir portero-jugador funcional">
+          <div className="mb-2 flex items-center justify-between px-1">
+            <p className="text-xs font-black uppercase tracking-wide text-rose-100">¿Quién asume la portería?</p>
+            <button type="button" onClick={() => setSelectingFlyingGoalkeeper(false)} className="min-h-10 min-w-10 rounded-xl bg-slate-800 text-lg" aria-label="Cancelar selección">×</button>
+          </div>
+          <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
+            {replay.onCourtPlayerIds
+              .filter((id) => id !== INFERIORITY_SLOT_ID)
+              .map((id) => session.players.find((player) => player.id === id))
+              .filter((player): player is Player => Boolean(player))
+              .map((player) => (
+                <button
+                  key={player.id}
+                  type="button"
+                  onClick={() => {
+                    toggleGameState(matchId, "FLYING_GOALKEEPER", player.id);
+                    setSelectingFlyingGoalkeeper(false);
+                    setFeedback(`◇⁺ ${player.name}`);
+                  }}
+                  className="flex min-h-20 flex-col items-center justify-center rounded-xl border border-rose-300/40 bg-slate-900 px-1 py-2 font-bold hover:bg-rose-900"
+                >
+                  <PlayerAvatar player={player} compact />
+                  <span className="mt-1 max-w-full truncate text-[10px]">{player.name}</span>
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
+
+      <LineupFirewallAlert validation={replay.lineupValidation} players={session.players} />
 
       {session.lastError && (
         <div
@@ -581,6 +669,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 >
                   <PlayerContextActions
                     location="COURT"
+                    captureBlocked={captureBlocked}
                     redDecision={redDecisionPlayerId === selectedCourtPlayerId}
                     onFoulCommitted={() => recordPlayerFoul(selectedCourtPlayerId, false)}
                     onFoulReceived={() => recordPlayerFoul(selectedCourtPlayerId, true)}
@@ -662,9 +751,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             selectedStaffId={selectedStaffId ?? undefined}
             onPlayerTap={(playerId) => applyInteraction({ type: "BENCH_PLAYER_TAPPED", playerId })}
             onStaffTap={handleStaffTap}
-            onYellow={(playerId) => recordPlayerCard(playerId, "YELLOW")}
-            onRed={(playerId) => recordPlayerCard(playerId, "RED")}
-            onStaffCard={handleStaffCard}
+            onYellow={(playerId) => captureBlocked ? blockedAction() : recordPlayerCard(playerId, "YELLOW")}
+            onRed={(playerId) => captureBlocked ? blockedAction() : recordPlayerCard(playerId, "RED")}
+            onStaffCard={(staffId, color) => captureBlocked ? blockedAction() : handleStaffCard(staffId, color)}
             onCancel={() => { setSelectedStaffId(null); applyInteraction({ type: "CANCEL" }); }}
           />
         </div>
@@ -691,6 +780,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             }
             errorMessage={session.lastError?.startsWith("No se puede eliminar") ? session.lastError : null}
             onDismissError={() => clearError(matchId)}
+            disciplineFocusRequest={disciplineFocus}
           />
         </div>
       </main>

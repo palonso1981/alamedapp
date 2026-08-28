@@ -1,17 +1,29 @@
 import {
   GOAL_TARGET_GEOMETRY_VERSION,
   GoalTargetCoordinates,
+  GoalTargetGeometryVersion,
   KeeperBodyZone,
   LiveThreatOutcome,
-  NormalizedCoordinates,
 } from "../types";
 
-export const GOAL_FRAME = {
+const LEGACY_GOAL_FRAME = {
   left: 0.12,
   right: 0.88,
   top: 0.14,
   bottom: 0.82,
 } as const;
+
+/** Marco V2: reserva exterior amplio y cómodo en los cuatro lados. */
+export const GOAL_FRAME = {
+  left: 0.22,
+  right: 0.78,
+  top: 0.23,
+  bottom: 0.78,
+} as const;
+
+function frameFor(version: GoalTargetGeometryVersion) {
+  return version === 1 ? LEGACY_GOAL_FRAME : GOAL_FRAME;
+}
 
 export function normalizeGoalTargetPoint(
   clientX: number,
@@ -25,17 +37,17 @@ export function normalizeGoalTargetPoint(
   };
 }
 
-export function isInsideGoalFrame(point: NormalizedCoordinates): boolean {
+export function isInsideGoalFrame(point: GoalTargetCoordinates): boolean {
+  const frame = frameFor(point.geometryVersion);
   return (
-    point.x >= GOAL_FRAME.left &&
-    point.x <= GOAL_FRAME.right &&
-    point.y >= GOAL_FRAME.top &&
-    point.y <= GOAL_FRAME.bottom
+    point.x >= frame.left &&
+    point.x <= frame.right &&
+    point.y >= frame.top &&
+    point.y <= frame.bottom
   );
 }
 
-/** Silueta estable y deliberadamente simple para captura táctil. */
-export function isInsideGoalkeeper(point: NormalizedCoordinates): boolean {
+function legacyGoalkeeper(point: GoalTargetCoordinates): boolean {
   const dx = point.x - 0.5;
   const dy = point.y - 0.31;
   const head = dx * dx + dy * dy <= 0.065 * 0.065;
@@ -46,26 +58,67 @@ export function isInsideGoalkeeper(point: NormalizedCoordinates): boolean {
     point.y <= 0.82 &&
     ((point.x >= 0.39 && point.x <= 0.49) ||
       (point.x >= 0.51 && point.x <= 0.61));
-  return isInsideGoalFrame(point) && (head || torso || arms || legs);
+  return head || torso || arms || legs;
 }
 
+/** Cuerpo central dibujado; la intervención táctil es deliberadamente mayor. */
+export function isInsideGoalkeeperBody(point: GoalTargetCoordinates): boolean {
+  if (!isInsideGoalFrame(point)) return false;
+  if (point.geometryVersion === 1) return legacyGoalkeeper(point);
+  const dx = Math.abs(point.x - 0.5);
+  const head = (point.x - 0.5) ** 2 + (point.y - 0.4) ** 2 <= 0.048 ** 2;
+  const torso = point.y >= 0.45 && point.y <= 0.62 && dx <= 0.075;
+  const arms = point.y >= 0.44 && point.y <= 0.58 && dx <= 0.18;
+  const legs = point.y > 0.61 && point.y <= 0.76 && dx <= 0.13;
+  return head || torso || arms || legs;
+}
+
+/**
+ * Zona de alcance V2. Sugiere PARADA también en extensiones de brazos, junto a
+ * postes y abajo; el usuario puede confirmar GOL en la misma coordenada cuando
+ * el resultado real sea distinto, evitando falsear la posición del balón.
+ */
+export function isInsideGoalkeeperIntervention(
+  point: GoalTargetCoordinates,
+): boolean {
+  if (!isInsideGoalFrame(point)) return false;
+  if (point.geometryVersion === 1) return legacyGoalkeeper(point);
+  const dx = Math.abs(point.x - 0.5);
+  const upperReach = point.y >= 0.32 && point.y <= 0.55 && dx <= 0.265;
+  const lowerReach = point.y > 0.55 && point.y <= 0.765 && dx <= 0.235;
+  return isInsideGoalkeeperBody(point) || upperReach || lowerReach;
+}
+
+/** Inferencia sugerida por el gesto; en V2 el resultado interior se confirma. */
 export function classifyGoalTarget(
   point: GoalTargetCoordinates,
 ): LiveThreatOutcome {
   if (!isInsideGoalFrame(point)) return "FUERA";
-  if (isInsideGoalkeeper(point)) return "PARADA";
-  return "GOL";
+  return isInsideGoalkeeperIntervention(point) ? "PARADA" : "GOL";
+}
+
+export function isOutcomeCompatibleWithGoalTarget(
+  point: GoalTargetCoordinates,
+  outcome: LiveThreatOutcome,
+): boolean {
+  if (point.geometryVersion === 1) return classifyGoalTarget(point) === outcome;
+  return isInsideGoalFrame(point)
+    ? outcome === "GOL" || outcome === "PARADA"
+    : outcome === "FUERA";
 }
 
 export function deriveKeeperBodyZone(
   point: GoalTargetCoordinates,
 ): KeeperBodyZone {
-  return point.y < 0.57 ? "UPPER" : "LOWER";
+  return point.y < (point.geometryVersion === 1 ? 0.57 : 0.55)
+    ? "UPPER"
+    : "LOWER";
 }
 
 export function validGoalTarget(point: GoalTargetCoordinates): boolean {
   return (
-    point.geometryVersion === GOAL_TARGET_GEOMETRY_VERSION &&
+    (point.geometryVersion === 1 ||
+      point.geometryVersion === GOAL_TARGET_GEOMETRY_VERSION) &&
     Number.isFinite(point.x) &&
     Number.isFinite(point.y) &&
     point.x >= 0 &&
