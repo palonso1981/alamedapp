@@ -17,6 +17,7 @@ import {
 import { MatchRailControl } from "../../../../components/match/MatchRailControl";
 import { MatchScoreboard } from "../../../../components/match/MatchScoreboard";
 import { PeriodReviewBanner } from "../../../../components/match/PeriodReviewBanner";
+import { SyncStatusBadge } from "../../../../components/match/SyncStatusBadge";
 import {
   DisciplineFocusRequest,
   RecentEventsPanel,
@@ -482,6 +483,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 ? "● Error de guardado"
                 : "○ Preparando guardado"}
           </span>
+          <SyncStatusBadge matchId={matchId} />
           <HistoryControls
             canUndo={session.past.length > 0}
             canRedo={session.future.length > 0}

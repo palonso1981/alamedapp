@@ -6,6 +6,7 @@ import {
   createLiveThreatEvent,
   editEvent,
   replayMatch,
+  restoreEvent,
   softDeleteEvent,
 } from "../matchEngine";
 import {
@@ -16,7 +17,10 @@ import {
 } from "../matchPersistence";
 import { createSession } from "../../store/useMatchStore";
 import { LocalMatchRepository } from "./localMatchRepository";
-import { InMemoryRemoteMatchRepository } from "./remoteMatchRepository";
+import {
+  classifyRemoteError,
+  InMemoryRemoteMatchRepository,
+} from "./remoteMatchRepository";
 import { MatchSyncCoordinator } from "./syncCoordinator";
 
 class MemoryStorage implements LocalStorageAdapter {
@@ -219,7 +223,7 @@ test("sync incremental vacía outbox y mantiene un documento por eventId", async
   assert.equal(local.getSummary(session.matchId).errors, 0);
   assert.ok(remote.documents.has(`${session.matchId}:event:${foul.id}`));
   assert.equal(
-    [...remote.documents.keys()].filter((key) => key.endsWith(`event:${foul.id}`)).length,
+    Array.from(remote.documents.keys()).filter((key) => key.endsWith(`event:${foul.id}`)).length,
     1,
   );
 });
@@ -395,4 +399,78 @@ test("secuencia A→B→C, periodos y replay sobreviven persistencia y sync", as
   const metadata = remote.documents.get(`${session.matchId}:match`)?.payload as { activePeriod: number; reviewPeriod?: number };
   assert.equal(metadata.activePeriod, 2);
   assert.equal(metadata.reviewPeriod, 1);
+});
+
+test("soft delete y restore posteriores a sync actualizan el mismo documento", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, { isOnline: () => true });
+  const session = createSession("remote-soft-restore");
+  const foul = createFoulEvent({
+    id: "remote-soft-event",
+    matchId: session.matchId,
+    position: { period: 1, minute: 3, order: 1 },
+    side: "FOR",
+    playerId: "p1",
+    now: 20,
+  });
+  const active = { ...session, events: [...session.events, foul] };
+  local.save(active);
+  await coordinator.syncMatch(session.matchId);
+
+  const deletedEvents = softDeleteEvent(session.players, active.events, foul.id, 21);
+  local.save({ ...session, events: deletedEvents });
+  await coordinator.syncMatch(session.matchId);
+  const key = `${session.matchId}:event:${foul.id}`;
+  assert.equal((remote.documents.get(key)?.payload as typeof foul).deletedAt, 21);
+  assert.equal(remote.documents.get(key)?.removed, false);
+
+  const restoredEvents = restoreEvent(session.players, deletedEvents, foul.id, 22);
+  local.save({ ...session, events: restoredEvents });
+  await coordinator.syncMatch(session.matchId);
+  assert.equal((remote.documents.get(key)?.payload as typeof foul).deletedAt, null);
+  assert.equal(remote.documents.get(key)?.revision, 3);
+});
+
+test("GoalTarget y pendingReview llegan intactos al documento remoto", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, { isOnline: () => true });
+  const session = createSession("goal-target-sync");
+  const threat = {
+    ...createLiveThreatEvent({
+      id: "defensive-spatial",
+      matchId: session.matchId,
+      position: { period: 1, minute: 8, order: 1 },
+      side: "AGAINST",
+      origin: { x: 0.7, y: 0.25 },
+      outcome: "PARADA",
+      phase: "POSITIONAL",
+      defensive: {
+        version: 2,
+        goalTarget: { geometryVersion: 2, x: 0.3, y: 0.65 },
+        goalkeeper: { status: "PLAYER", playerId: "p5" },
+        keeperBodyPart: "LEFT_LEG_FOOT",
+        saveOutcome: "REBOUND",
+      },
+    }),
+    pendingReview: true,
+  };
+  local.save({ ...session, events: [...session.events, threat] });
+  await coordinator.syncMatch(session.matchId);
+  const payload = remote.documents.get(`${session.matchId}:event:${threat.id}`)?.payload as typeof threat;
+  assert.equal(payload.pendingReview, true);
+  assert.deepEqual(payload.defensive?.goalTarget, threat.defensive?.goalTarget);
+  assert.equal(payload.defensive?.saveOutcome, "REBOUND");
+});
+
+test("errores remotos se clasifican sin confundir permisos con offline", () => {
+  const permission = classifyRemoteError({ code: "permission-denied", message: "no" });
+  assert.equal(permission.kind, "PERMISSION");
+  assert.equal(permission.retryable, false);
+  const transient = classifyRemoteError({ code: "unavailable", message: "later" });
+  assert.equal(transient.kind, "TRANSIENT");
+  assert.equal(transient.retryable, true);
 });

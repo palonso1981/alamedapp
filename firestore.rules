@@ -1,0 +1,28 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // DEV: exige identidad Firebase, incluida anónima si se habilita.
+    // Producción deberá restringir además club, rol y partido autorizado.
+    match /matches/{matchId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+        && request.resource.data.matchId == matchId
+        && request.resource.data.entityType == "MATCH";
+      allow delete: if false;
+
+      match /events/{eventId} {
+        allow read: if request.auth != null;
+        allow create, update: if request.auth != null
+          && request.resource.data.matchId == matchId
+          && request.resource.data.entityType == "EVENT"
+          && request.resource.data.entityId == eventId;
+        allow delete: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
