@@ -20,6 +20,10 @@ interface RecentEventsPanelProps {
   errorMessage?: string | null;
   onDismissError?: () => void;
   disciplineFocusRequest?: DisciplineFocusRequest | null;
+  activePeriod: number;
+  closedPeriods: number[];
+  reviewPeriod?: number;
+  onStartPeriodReview: (period: number) => void;
   onClose: () => void;
 }
 
@@ -30,19 +34,20 @@ export interface DisciplineFocusRequest {
   period: number;
 }
 
-export function RecentEventsPanel({ events, timeline, players, staff, onDelete, onRestore, onPendingReview, onSave, onMoveWithinMinute, errorMessage, onDismissError, disciplineFocusRequest, onClose }: RecentEventsPanelProps) {
+export function RecentEventsPanel({ events, timeline, players, staff, onDelete, onRestore, onPendingReview, onSave, onMoveWithinMinute, errorMessage, onDismissError, disciplineFocusRequest, activePeriod, closedPeriods, reviewPeriod, onStartPeriodReview, onClose }: RecentEventsPanelProps) {
   const [filter, setFilter] = useState<TimelineFilter>("ACTIVE");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ eventId: string; placement: "BEFORE" | "AFTER" } | null>(null);
   const [disciplineFocus, setDisciplineFocus] = useState<DisciplineFocusRequest | null>(null);
+  const [reviewCandidate, setReviewCandidate] = useState<number | null>(null);
   const dragRef = useRef<{ eventId: string; pointerId: number; startX: number; startY: number } | null>(null);
   useEffect(() => {
     if (!disciplineFocusRequest) return;
     setDisciplineFocus(disciplineFocusRequest);
     setFilter("ACTIVE");
   }, [disciplineFocusRequest]);
-  const visible = disciplineFocus
+  const filtered = disciplineFocus
     ? filterTimelineEvents(events, "ACTIVE").filter((event) =>
         disciplineFocus.kind === "FOUL"
           ? event.type === "foul_recorded" &&
@@ -51,6 +56,9 @@ export function RecentEventsPanel({ events, timeline, players, staff, onDelete, 
           : event.type === "card_recorded" && event.side === disciplineFocus.side,
       )
     : filterTimelineEvents(events, filter);
+  const visible = reviewPeriod
+    ? filtered.filter((event) => event.period === reviewPeriod)
+    : filtered;
   const displayed = visible;
   const pendingCount = events.filter(
     (event) =>
@@ -89,7 +97,7 @@ export function RecentEventsPanel({ events, timeline, players, staff, onDelete, 
   return (
     <section className="directo-timeline-panel fixed inset-2 z-[60] flex flex-col rounded-2xl border border-slate-700 bg-slate-900 p-2 shadow-2xl sm:inset-6" aria-label="Historial completo" role="dialog">
       <div className="directo-timeline-toolbar mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2"><h2 className="text-xs font-black uppercase tracking-wider text-slate-300">Cronología</h2><span className="rounded-full bg-slate-950 px-2 py-1 text-[10px] text-slate-400">{visible.length}/{events.length - 1}</span>{pendingCount > 0 && <span className="rounded-full bg-amber-950 px-2 py-1 text-[10px] font-black text-amber-200">? {pendingCount}</span>}{disciplineFocus && <button type="button" onClick={() => setDisciplineFocus(null)} className="min-h-8 rounded-full bg-violet-950 px-2 text-[10px] font-black text-violet-200" aria-label="Quitar filtro disciplinario">{disciplineFocus.side === "FOR" ? "CDA" : "RIV"} · {disciplineFocus.kind === "FOUL" ? `F P${disciplineFocus.period}` : "▮"} ×</button>}</div>
+        <div className="flex flex-wrap items-center gap-2"><h2 className="text-xs font-black uppercase tracking-wider text-slate-300">Cronología</h2><span className="rounded-full bg-slate-950 px-2 py-1 text-[10px] text-slate-400">{visible.length}/{events.length - 1}</span>{pendingCount > 0 && <span className="rounded-full bg-amber-950 px-2 py-1 text-[10px] font-black text-amber-200">? {pendingCount}</span>}{[1, 2].map((period) => { const active = activePeriod === period; const closed = closedPeriods.includes(period); const reviewing = reviewPeriod === period; const canReview = closed && period < activePeriod; const confirming = reviewCandidate === period; return <button key={period} type="button" disabled={!canReview || reviewing} onClick={() => { if (confirming) { onStartPeriodReview(period); setReviewCandidate(null); } else setReviewCandidate(period); }} className={`min-h-8 rounded-full px-2 text-[10px] font-black ${reviewing ? "bg-amber-400 text-slate-950" : active ? "bg-cyan-800 text-cyan-100" : canReview ? "bg-slate-800 text-slate-300" : "bg-slate-900 text-slate-600"}`} aria-label={confirming ? `Confirmar revisar P${period}` : `Periodo ${period}${active ? " activo" : closed ? " finalizado" : ""}`}>{confirming ? `REVISAR P${period}` : `P${period} ${active ? "●" : closed ? "✓" : ""}`}</button>; })}{disciplineFocus && <button type="button" onClick={() => setDisciplineFocus(null)} className="min-h-8 rounded-full bg-violet-950 px-2 text-[10px] font-black text-violet-200" aria-label="Quitar filtro disciplinario">{disciplineFocus.side === "FOR" ? "CDA" : "RIV"} · {disciplineFocus.kind === "FOUL" ? `F P${disciplineFocus.period}` : "▮"} ×</button>}</div>
         <div className="flex gap-1"><button type="button" onClick={() => { setDisciplineFocus(null); setFilter("ACTIVE"); }} className={`min-h-10 rounded-lg px-3 text-[10px] font-black ${filter === "ACTIVE" && !disciplineFocus ? "bg-cyan-700" : "bg-slate-800"}`}>ACTIVOS</button><button type="button" onClick={() => { setDisciplineFocus(null); setFilter("PENDING"); }} className={`min-h-10 rounded-lg px-3 text-[10px] font-black ${filter === "PENDING" && !disciplineFocus ? "bg-amber-700" : "bg-slate-800"}`}>? {pendingCount || ""}</button><button type="button" onClick={() => { setDisciplineFocus(null); setFilter("DELETED"); }} className={`min-h-10 rounded-lg px-3 text-[10px] font-black ${filter === "DELETED" && !disciplineFocus ? "bg-red-900" : "bg-slate-800"}`}>ELIMINADOS</button><button type="button" onClick={onClose} className="min-h-10 min-w-10 rounded-lg bg-slate-800 text-lg" aria-label="Cerrar historial">×</button></div>
       </div>
       {errorMessage && (

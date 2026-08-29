@@ -16,6 +16,7 @@ import {
 } from "../../../../components/match/MatchClockControl";
 import { MatchRailControl } from "../../../../components/match/MatchRailControl";
 import { MatchScoreboard } from "../../../../components/match/MatchScoreboard";
+import { PeriodReviewBanner } from "../../../../components/match/PeriodReviewBanner";
 import {
   DisciplineFocusRequest,
   RecentEventsPanel,
@@ -101,6 +102,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const decrementMinute = useMatchStore((state) => state.decrementMinute);
   const finishCurrentPeriod = useMatchStore((state) => state.finishCurrentPeriod);
   const startSecondPeriod = useMatchStore((state) => state.startSecondPeriod);
+  const resumeFirstPeriod = useMatchStore((state) => state.resumeFirstPeriod);
+  const startPeriodReview = useMatchStore((state) => state.startPeriodReview);
+  const setReviewMinute = useMatchStore((state) => state.setReviewMinute);
+  const stopPeriodReview = useMatchStore((state) => state.stopPeriodReview);
   const recordThreat = useMatchStore((state) => state.recordThreat);
   const toggleGameState = useMatchStore((state) => state.toggleGameState);
   const recordFoul = useMatchStore((state) => state.recordFoul);
@@ -161,15 +166,30 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     return () => window.clearTimeout(timeout);
   }, [feedback]);
 
+  const capturePeriod = session?.reviewPeriod ?? session?.period ?? 1;
+  const captureMinute = session?.reviewPeriod !== undefined
+    ? session.reviewMinute ?? 20
+    : session?.minute ?? 0;
   const replay = useMemo(
     () =>
       session
         ? replayMatch(session.players, session.events, {
-            currentClock: { period: session.period, minute: session.minute },
-            throughClock: { period: session.period, minute: session.minute },
+            currentClock: { period: capturePeriod, minute: captureMinute },
+            throughClock: { period: capturePeriod, minute: captureMinute },
             foulAccumulationRules: { thresholds: FOUL_THRESHOLDS },
           })
         : null,
+    [captureMinute, capturePeriod, session],
+  );
+
+  const activeReplay = useMemo(
+    () => session
+      ? replayMatch(session.players, session.events, {
+          currentClock: { period: session.period, minute: session.minute },
+          throughClock: { period: session.period, minute: session.minute },
+          foulAccumulationRules: { thresholds: FOUL_THRESHOLDS },
+        })
+      : null,
     [session],
   );
 
@@ -178,7 +198,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     [session],
   );
 
-  if (!session || !replay || !chronologyReplay) {
+  if (!session || !replay || !activeReplay || !chronologyReplay) {
     return (
       <main className="grid min-h-screen place-items-center bg-gray-950 text-white">
         Preparando el partido…
@@ -190,7 +210,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     .map((id) => session.players.find((player) => player.id === id))
     .filter((player): player is Player => Boolean(player));
   const periodDiscipline = chronologyReplay.disciplineByPeriod[
-    session.period
+    capturePeriod
   ] ?? {
     for: { fouls: 0, yellowCards: 0, redCards: 0 },
     against: { fouls: 0, yellowCards: 0, redCards: 0 },
@@ -252,7 +272,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     window.localStorage.setItem(CLOCK_VERTICAL_STORAGE_KEY, slot);
   };
 
-  const periodClosed = session.matchFinished || session.closedPeriods?.includes(session.period) || false;
+  const periodClosed = session.matchFinished || (session.reviewPeriod === undefined && (session.closedPeriods?.includes(session.period) || false));
   const lineupBlocked = replay.lineupValidation.captureBlocked;
   const captureBlocked = lineupBlocked || periodClosed;
   const blockedAction = () => {
@@ -361,14 +381,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         elapsedMinute={session.minute}
         closedPeriods={session.closedPeriods ?? []}
         matchFinished={session.matchFinished ?? false}
+        reviewing={session.reviewPeriod !== undefined}
         side={clockSide}
         onSideChange={updateClockSide}
         verticalSlot={clockVerticalSlot}
         onVerticalSlotChange={updateClockVerticalSlot}
-        superiorityActive={replay.superiorityActive}
-        flyingGoalkeeperActive={replay.flyingGoalkeeperActive}
-        inferiorityActive={replay.inferiorityActive}
-        flyingGoalkeeperLabel={session.players.find((player) => player.id === replay.flyingGoalkeeperPlayerId)?.name}
+        superiorityActive={activeReplay.superiorityActive}
+        flyingGoalkeeperActive={activeReplay.flyingGoalkeeperActive}
+        inferiorityActive={activeReplay.inferiorityActive}
+        flyingGoalkeeperLabel={session.players.find((player) => player.id === activeReplay.flyingGoalkeeperPlayerId)?.name}
         onIncreaseRemaining={() => decrementMinute(matchId)}
         onDecreaseRemaining={() => incrementMinute(matchId)}
         onFinishPeriod={() => {
@@ -380,6 +401,11 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           setInteraction(IDLE_LIVE_INTERACTION);
           startSecondPeriod(matchId);
           setFeedback("▶ Segunda parte");
+        }}
+        onResumeFirstPeriod={() => {
+          setInteraction(IDLE_LIVE_INTERACTION);
+          resumeFirstPeriod(matchId);
+          setFeedback("↶ Primera parte reanudada");
         }}
         onToggleSuperiority={() => {
           if (captureBlocked) return blockedAction();
@@ -415,14 +441,14 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         <div className="flex items-center gap-1.5">
           <MatchScoreboard
             score={chronologyReplay.score}
-            period={session.period}
+            period={capturePeriod}
             periodFor={periodDiscipline.for}
             periodAgainst={periodDiscipline.against}
             totalFor={chronologyReplay.discipline.for}
             totalAgainst={chronologyReplay.discipline.against}
             foulThresholds={FOUL_THRESHOLDS}
             onInspect={(side, kind) => {
-              setDisciplineFocus({ token: Date.now(), side, kind, period: session.period });
+              setDisciplineFocus({ token: Date.now(), side, kind, period: capturePeriod });
               setHistoryOpen(true);
             }}
             onRivalYellow={() => {
@@ -480,6 +506,23 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           )}
         </div>
       </header>
+
+      {session.reviewPeriod !== undefined && (
+        <PeriodReviewBanner
+          activePeriod={session.period}
+          reviewPeriod={session.reviewPeriod}
+          reviewMinute={session.reviewMinute ?? 20}
+          onMinuteChange={(minute) => {
+            setInteraction(IDLE_LIVE_INTERACTION);
+            setReviewMinute(matchId, minute);
+          }}
+          onReturn={() => {
+            setInteraction(IDLE_LIVE_INTERACTION);
+            stopPeriodReview(matchId);
+            setFeedback(`▶ Vuelta a P${session.period}`);
+          }}
+        />
+      )}
 
       {selectingFlyingGoalkeeper && !replay.flyingGoalkeeperActive && (
         <div className="mx-auto mb-2 max-w-3xl rounded-2xl border border-rose-400/60 bg-rose-950/80 p-2 shadow-xl" role="dialog" aria-label="Elegir portero-jugador funcional">
@@ -775,6 +818,14 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             errorMessage={session.lastError?.startsWith("No se puede eliminar") ? session.lastError : null}
             onDismissError={() => clearError(matchId)}
             disciplineFocusRequest={disciplineFocus}
+            activePeriod={session.period}
+            closedPeriods={session.closedPeriods ?? []}
+            reviewPeriod={session.reviewPeriod}
+            onStartPeriodReview={(period) => {
+              setInteraction(IDLE_LIVE_INTERACTION);
+              startPeriodReview(matchId, period);
+              setDisciplineFocus(null);
+            }}
             onClose={() => { setHistoryOpen(false); setDisciplineFocus(null); }}
           />
         </div>}

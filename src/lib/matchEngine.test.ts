@@ -2902,6 +2902,7 @@ test("finalizar partes completa minutos, conserva eventos y exige inicio explíc
   assert.equal(current.period, 1);
   assert.equal(current.minute, 20);
   assert.deepEqual(current.closedPeriods, [1]);
+  assert.deepEqual(current.periodCloseSnapshots, { 1: 8 });
   assert.equal(current.matchFinished, false);
   assert.deepEqual(current.events, before);
   assert.equal(replayMatch(current.players, current.events, { currentClock: { period: 1, minute: 20 } }).playerMinutes.p1.totalMinutes, 20);
@@ -2922,6 +2923,130 @@ test("finalizar partes completa minutos, conserva eventos y exige inicio explíc
   assert.equal(current.minute, 20);
   assert.equal(current.matchFinished, true);
   assert.deepEqual(current.closedPeriods, [1, 2]);
+});
+
+test("finalizar P1 permite reanudar de forma deliberada antes de iniciar P2", () => {
+  const matchId = "resume-first-period";
+  useMatchStore.setState({ matches: { [matchId]: createSession(matchId) } });
+  const actions = useMatchStore.getState();
+  actions.setClock(matchId, 1, 18);
+  actions.finishCurrentPeriod(matchId);
+  let current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.minute, 20);
+  assert.deepEqual(current.closedPeriods, [1]);
+  assert.equal(current.periodCloseSnapshots?.[1], 18);
+
+  actions.resumeFirstPeriod(matchId);
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.period, 1);
+  assert.equal(current.minute, 18);
+  assert.equal(current.periodMinutes[1], 18);
+  assert.deepEqual(current.closedPeriods, []);
+  assert.equal(current.periodCloseSnapshots?.[1], undefined);
+  assert.equal(current.matchFinished, false);
+});
+
+test("P2 permanece activa mientras revisión P1 captura, edita y recalcula replay", () => {
+  const matchId = "review-closed-first-period";
+  useMatchStore.setState({ matches: { [matchId]: createSession(matchId) } });
+  const actions = useMatchStore.getState();
+  actions.setClock(matchId, 1, 18);
+  actions.finishCurrentPeriod(matchId);
+  actions.startSecondPeriod(matchId);
+  actions.incrementMinute(matchId);
+  actions.incrementMinute(matchId);
+  actions.incrementMinute(matchId);
+  actions.recordFoul(matchId, "FOR", "p1");
+  let current = useMatchStore.getState().matches[matchId];
+  const p2Foul = current.events.find(
+    (event) => event.type === "foul_recorded" && event.period === 2,
+  );
+  assert.ok(p2Foul);
+  assert.equal(current.period, 2);
+  assert.equal(current.minute, 3);
+
+  actions.startPeriodReview(matchId, 1);
+  actions.setReviewMinute(matchId, 12);
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.period, 2);
+  assert.equal(current.minute, 3);
+  assert.equal(current.reviewPeriod, 1);
+  assert.equal(current.reviewMinute, 12);
+
+  actions.recordThreat(matchId, {
+    id: "omitted-p1-goal",
+    side: "AGAINST",
+    origin: { x: 0.62, y: 0.45 },
+    outcome: "GOL",
+    phase: "TRANSITION",
+    defensiveCapture: {
+      goalTarget: { geometryVersion: 2, x: 0.5, y: 0.4 },
+    },
+  });
+  actions.swapPlayer(matchId, "p1", "p6");
+  current = useMatchStore.getState().matches[matchId];
+  const omitted = current.events.find((event) => event.id === "omitted-p1-goal");
+  assert.equal(omitted?.period, 1);
+  assert.equal(omitted?.minute, 12);
+  const replay = replayMatch(current.players, current.events, {
+    currentClock: { period: 2, minute: 3 },
+  });
+  assert.equal(replay.score.against, 1);
+  assert.equal(replay.playerMinutes.p1.totalMinutes, 12);
+  assert.equal(replay.playerMinutes.p6.totalMinutes, 11);
+
+  actions.editEvent(matchId, "omitted-p1-goal", {
+    minute: 11,
+    threat: { phase: "POSITIONAL" },
+  });
+  current = useMatchStore.getState().matches[matchId];
+  const edited = current.events.find((event) => event.id === "omitted-p1-goal");
+  assert.equal(edited?.minute, 11);
+  assert.equal(edited?.type === "threat_recorded" && edited.phase, "POSITIONAL");
+
+  actions.stopPeriodReview(matchId);
+  actions.recordFoul(matchId, "AGAINST", "p2");
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.reviewPeriod, undefined);
+  assert.equal(current.period, 2);
+  assert.equal(current.minute, 3);
+  assert.ok(
+    current.events.some(
+      (event) => event.type === "foul_recorded" && event.side === "AGAINST" && event.period === 2,
+    ),
+  );
+
+  actions.resumeFirstPeriod(matchId);
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.period, 2);
+  assert.match(current.lastError ?? "", /P2 ya ha comenzado/);
+
+  actions.changePeriod(matchId, 1);
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.period, 2);
+  assert.equal(current.minute, 3);
+  assert.match(current.lastError ?? "", /Entra en revisión/);
+});
+
+test("contexto de revisión P1 se persiste sin alterar el reloj activo P2", () => {
+  const matchId = "persisted-period-review";
+  useMatchStore.setState({ matches: { [matchId]: createSession(matchId) } });
+  const actions = useMatchStore.getState();
+  actions.setClock(matchId, 1, 17);
+  actions.finishCurrentPeriod(matchId);
+  actions.startSecondPeriod(matchId);
+  actions.incrementMinute(matchId);
+  actions.startPeriodReview(matchId, 1);
+  actions.setReviewMinute(matchId, 9);
+  const session = useMatchStore.getState().matches[matchId];
+  const storage = new MemoryStorage();
+  assert.equal(saveMatchSession(session, storage, 100).ok, true);
+  const loaded = loadMatchSession(matchId, storage);
+  assert.equal(loaded?.period, 2);
+  assert.equal(loaded?.minute, 1);
+  assert.equal(loaded?.reviewPeriod, 1);
+  assert.equal(loaded?.reviewMinute, 9);
+  assert.equal(loaded?.periodCloseSnapshots?.[1], 17);
 });
 
 test("historial separa activos, pendientes y eliminados sin alterar replay", () => {

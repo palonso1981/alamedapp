@@ -28,6 +28,9 @@ interface PersistedMatchSession {
   minute: number;
   periodMinutes: Record<number, number>;
   closedPeriods: number[];
+  periodCloseSnapshots?: Record<number, number>;
+  reviewPeriod?: number;
+  reviewMinute?: number;
   matchFinished: boolean;
   events: MatchEvent[];
   past: MatchEvent[][];
@@ -287,6 +290,30 @@ function migratePersistedSession(value: unknown): unknown {
       return [period, minute];
     }),
   );
+  const reviewPeriod =
+    typeof value.reviewPeriod === "number" &&
+    Number.isInteger(value.reviewPeriod) &&
+    value.reviewPeriod >= 1 &&
+    value.reviewPeriod <= REGULATION_MATCH_CLOCK.regulationPeriods
+      ? value.reviewPeriod
+      : undefined;
+  const reviewMinute =
+    reviewPeriod !== undefined && typeof value.reviewMinute === "number"
+      ? normalizeMatchClock(reviewPeriod, value.reviewMinute).minute
+      : undefined;
+  const periodCloseSnapshots = isObject(value.periodCloseSnapshots)
+    ? Object.fromEntries(
+        Object.entries(value.periodCloseSnapshots).flatMap(([period, minute]) => {
+          const numericPeriod = Number(period);
+          return Number.isInteger(numericPeriod) &&
+            numericPeriod >= 1 &&
+            numericPeriod <= REGULATION_MATCH_CLOCK.regulationPeriods &&
+            typeof minute === "number"
+            ? [[numericPeriod, normalizeMatchClock(numericPeriod, minute).minute]]
+            : [];
+        }),
+      )
+    : {};
   return {
     ...value,
     ...clock,
@@ -301,6 +328,10 @@ function migratePersistedSession(value: unknown): unknown {
             period <= REGULATION_MATCH_CLOCK.regulationPeriods,
         )
       : [],
+    periodCloseSnapshots,
+    ...(reviewPeriod === undefined
+      ? { reviewPeriod: undefined, reviewMinute: undefined }
+      : { reviewPeriod, reviewMinute }),
     matchFinished: value.matchFinished === true,
     events: migrateChronology(value.events, value.matchId),
     past: Array.isArray(value.past)
@@ -363,6 +394,29 @@ function validPersistedSession(
         period >= 1 &&
         period <= REGULATION_MATCH_CLOCK.regulationPeriods,
     ) ||
+    !isObject(value.periodCloseSnapshots) ||
+    !Object.entries(value.periodCloseSnapshots).every(([period, minute]) => {
+      const numericPeriod = Number(period);
+      return (
+        Number.isInteger(numericPeriod) &&
+        numericPeriod >= 1 &&
+        numericPeriod <= REGULATION_MATCH_CLOCK.regulationPeriods &&
+        typeof minute === "number" &&
+        Number.isInteger(minute) &&
+        minute >= 0 &&
+        minute <= REGULATION_MATCH_CLOCK.periodDurationMinutes
+      );
+    }) ||
+    (value.reviewPeriod !== undefined &&
+      (typeof value.reviewPeriod !== "number" ||
+        !Number.isInteger(value.reviewPeriod) ||
+        !(value.closedPeriods as number[]).includes(value.reviewPeriod) ||
+        value.reviewPeriod === value.period ||
+        typeof value.reviewMinute !== "number" ||
+        !Number.isInteger(value.reviewMinute) ||
+        value.reviewMinute < 0 ||
+        value.reviewMinute > REGULATION_MATCH_CLOCK.periodDurationMinutes)) ||
+    (value.reviewPeriod === undefined && value.reviewMinute !== undefined) ||
     typeof value.matchFinished !== "boolean" ||
     !isEventList(value.events, expectedMatchId) ||
     !Array.isArray(value.past) ||
@@ -426,6 +480,9 @@ export function saveMatchSession(
       minute: session.minute,
       periodMinutes: session.periodMinutes,
       closedPeriods: session.closedPeriods ?? [],
+      periodCloseSnapshots: session.periodCloseSnapshots ?? {},
+      reviewPeriod: session.reviewPeriod,
+      reviewMinute: session.reviewMinute,
       matchFinished: session.matchFinished ?? false,
       events: session.events,
       past: session.past,

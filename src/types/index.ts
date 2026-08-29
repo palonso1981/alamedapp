@@ -337,6 +337,12 @@ export interface MatchSession {
   periodMinutes: Record<number, number>;
   /** Periodos cerrados explícitamente desde el control de partido. */
   closedPeriods?: number[];
+  /** Minuto transcurrido anterior al cierre operativo, usado solo para reanudar. */
+  periodCloseSnapshots?: Record<number, number>;
+  /** Periodo histórico que se está revisando; `period` continúa siendo el activo. */
+  reviewPeriod?: number;
+  /** Minuto de inserción/corrección dentro del periodo revisado. */
+  reviewMinute?: number;
   /** Cierre operativo local; no sustituye ningún estado deportivo derivado. */
   matchFinished?: boolean;
   events: MatchEvent[];

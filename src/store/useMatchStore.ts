@@ -172,6 +172,10 @@ interface MatchState {
   changePeriod: (matchId: string, period: number) => void;
   finishCurrentPeriod: (matchId: string) => void;
   startSecondPeriod: (matchId: string) => void;
+  resumeFirstPeriod: (matchId: string) => void;
+  startPeriodReview: (matchId: string, period: number) => void;
+  setReviewMinute: (matchId: string, minute: number) => void;
+  stopPeriodReview: (matchId: string) => void;
   recordThreat: (matchId: string, input: RecordThreatInput) => void;
   toggleGameState: (
     matchId: string,
@@ -250,6 +254,7 @@ export function createSession(matchId: string): MatchSession {
     minute: initialMinute,
     periodMinutes: { 1: initialMinute, 2: 0 },
     closedPeriods: [],
+    periodCloseSnapshots: {},
     matchFinished: false,
     events: [lineup],
     past: [],
@@ -360,10 +365,31 @@ function assertPeriodOpen(session: MatchSession): void {
   }
 }
 
-function assertSportsCaptureAllowed(session: MatchSession): void {
+function captureClock(session: MatchSession): EventPosition {
+  if (session.matchFinished) {
+    throw new Error("Partido finalizado. El cierre completo bloquea nuevas capturas.");
+  }
+  if (session.reviewPeriod !== undefined) {
+    if (
+      session.reviewPeriod === session.period ||
+      !session.closedPeriods?.includes(session.reviewPeriod)
+    ) {
+      throw new Error("El contexto de revisión ya no es válido.");
+    }
+    return {
+      period: session.reviewPeriod,
+      minute: session.reviewMinute ?? REGULATION_MATCH_CLOCK.periodDurationMinutes,
+      order: 1,
+    };
+  }
   assertPeriodOpen(session);
+  return { period: session.period, minute: session.minute, order: 1 };
+}
+
+function assertSportsCaptureAllowed(session: MatchSession): void {
+  const clock = captureClock(session);
   const validation = replayMatch(session.players, session.events, {
-    throughClock: { period: session.period, minute: session.minute },
+    throughClock: clock,
   }).lineupValidation;
   if (!validation.captureBlocked) return;
   throw new Error(
@@ -418,8 +444,15 @@ export const useMatchStore = create<MatchState>((set) => ({
     set((state) =>
       updateAndPersistSession(state, matchId, (session) => {
         const targetPeriod = normalizeMatchClock(period, 0).period;
+        if (session.closedPeriods?.includes(targetPeriod)) {
+          return {
+            ...session,
+            lastError:
+              "La parte está finalizada. Entra en revisión sin cambiar el periodo activo.",
+          };
+        }
         return withClock(
-          session,
+          { ...session, reviewPeriod: undefined, reviewMinute: undefined, lastError: null },
           targetPeriod,
           session.periodMinutes[targetPeriod] ?? 0,
         );
@@ -429,6 +462,7 @@ export const useMatchStore = create<MatchState>((set) => ({
   finishCurrentPeriod: (matchId) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) => {
+        if (session.closedPeriods?.includes(session.period)) return session;
         const finishedClock = withClock(
           session,
           session.period,
@@ -439,6 +473,12 @@ export const useMatchStore = create<MatchState>((set) => ({
           closedPeriods: Array.from(
             new Set([...(finishedClock.closedPeriods ?? []), finishedClock.period]),
           ),
+          periodCloseSnapshots: {
+            ...(finishedClock.periodCloseSnapshots ?? {}),
+            [finishedClock.period]: session.minute,
+          },
+          reviewPeriod: undefined,
+          reviewMinute: undefined,
           matchFinished:
             finishedClock.period === REGULATION_MATCH_CLOCK.regulationPeriods,
           lastError: null,
@@ -456,11 +496,101 @@ export const useMatchStore = create<MatchState>((set) => ({
           };
         }
         return withClock(
-          { ...session, lastError: null },
+          { ...session, reviewPeriod: undefined, reviewMinute: undefined, lastError: null },
           2,
           session.periodMinutes[2] ?? 0,
         );
       }),
+    ),
+
+  resumeFirstPeriod: (matchId) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => {
+        const p2HasEvents = session.events.some(
+          (event) => event.type !== "lineup_initialized" && event.period === 2,
+        );
+        const previousMinute = session.periodCloseSnapshots?.[1];
+        if (
+          session.period !== 1 ||
+          !session.closedPeriods?.includes(1) ||
+          p2HasEvents ||
+          previousMinute === undefined
+        ) {
+          return {
+            ...session,
+            lastError:
+              session.period === 2 || p2HasEvents
+                ? "P2 ya ha comenzado. Revisa P1 sin convertirla en periodo activo."
+                : "No existe un minuto previo seguro para reanudar P1.",
+          };
+        }
+        const remainingSnapshots = Object.fromEntries(
+          Object.entries(session.periodCloseSnapshots ?? {}).filter(
+            ([period]) => period !== "1",
+          ),
+        );
+        return withClock(
+          {
+            ...session,
+            closedPeriods: (session.closedPeriods ?? []).filter((period) => period !== 1),
+            periodCloseSnapshots: remainingSnapshots,
+            reviewPeriod: undefined,
+            reviewMinute: undefined,
+            matchFinished: false,
+            lastError: null,
+          },
+          1,
+          previousMinute,
+        );
+      }),
+    ),
+
+  startPeriodReview: (matchId, period) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => {
+        const target = normalizeMatchClock(period, 0).period;
+        if (
+          session.matchFinished ||
+          target === session.period ||
+          !session.closedPeriods?.includes(target)
+        ) {
+          return {
+            ...session,
+            lastError: session.matchFinished
+              ? "El partido está finalizado. La revisión completa pertenece al futuro módulo de Revisión."
+              : "Solo puede revisarse deliberadamente un periodo anterior ya finalizado.",
+          };
+        }
+        return {
+          ...session,
+          reviewPeriod: target,
+          reviewMinute: REGULATION_MATCH_CLOCK.periodDurationMinutes,
+          lastError: null,
+        };
+      }),
+    ),
+
+  setReviewMinute: (matchId, minute) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) =>
+        session.reviewPeriod === undefined
+          ? { ...session, lastError: "Entra primero en revisión de un periodo." }
+          : {
+              ...session,
+              reviewMinute: normalizeMatchClock(session.reviewPeriod, minute).minute,
+              lastError: null,
+            },
+      ),
+    ),
+
+  stopPeriodReview: (matchId) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => ({
+        ...session,
+        reviewPeriod: undefined,
+        reviewMinute: undefined,
+        lastError: null,
+      })),
     ),
 
   recordThreat: (matchId, input) =>
@@ -468,13 +598,14 @@ export const useMatchStore = create<MatchState>((set) => ({
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
           assertSportsCaptureAllowed(session);
+          const clock = captureClock(session);
           if (input.side === "FOR" && input.outcome === "GOL" && !input.assist) {
             throw new Error("Un gol CDA requiere decidir la asistencia.");
           }
           const order = getNextOrder(
             session.events,
-            session.period,
-            session.minute,
+            clock.period,
+            clock.minute,
           );
           const defensive: DefensiveThreatDetailV2 | undefined =
             input.side === "AGAINST" && input.defensiveCapture
@@ -485,8 +616,8 @@ export const useMatchStore = create<MatchState>((set) => ({
                     session.players,
                     session.events,
                     {
-                      period: session.period,
-                      minute: session.minute,
+                      period: clock.period,
+                      minute: clock.minute,
                       order: Math.max(0, order - 1),
                     },
                   ),
@@ -498,8 +629,8 @@ export const useMatchStore = create<MatchState>((set) => ({
             id: input.id,
             matchId,
             position: {
-              period: session.period,
-              minute: session.minute,
+              period: clock.period,
+              minute: clock.minute,
               order,
             },
             side: input.side,
@@ -524,8 +655,9 @@ export const useMatchStore = create<MatchState>((set) => ({
           if (stateKind === "SUPERIORITY") {
             assertSportsCaptureAllowed(session);
           }
+          const clock = captureClock(session);
           const replay = replayMatch(session.players, session.events, {
-            throughClock: { period: session.period, minute: session.minute },
+            throughClock: clock,
           });
           const active =
             stateKind === "SUPERIORITY"
@@ -543,12 +675,12 @@ export const useMatchStore = create<MatchState>((set) => ({
           const event = createGameStateEvent({
             matchId,
             position: {
-              period: session.period,
-              minute: session.minute,
+              period: clock.period,
+              minute: clock.minute,
               order: getNextOrder(
                 session.events,
-                session.period,
-                session.minute,
+                clock.period,
+                clock.minute,
               ),
             },
             state: stateKind,
@@ -568,15 +700,16 @@ export const useMatchStore = create<MatchState>((set) => ({
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
           assertSportsCaptureAllowed(session);
+          const clock = captureClock(session);
           const event = createFoulEvent({
             matchId,
             position: {
-              period: session.period,
-              minute: session.minute,
+              period: clock.period,
+              minute: clock.minute,
               order: getNextOrder(
                 session.events,
-                session.period,
-                session.minute,
+                clock.period,
+                clock.minute,
               ),
             },
             side,
@@ -599,16 +732,17 @@ export const useMatchStore = create<MatchState>((set) => ({
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
           assertSportsCaptureAllowed(session);
+          const clock = captureClock(session);
           const order = getNextOrder(
             session.events,
-            session.period,
-            session.minute,
+            clock.period,
+            clock.minute,
           );
           const card = createCardEvent({
             matchId,
             position: {
-              period: session.period,
-              minute: session.minute,
+              period: clock.period,
+              minute: clock.minute,
               order,
             },
             side,
@@ -627,7 +761,7 @@ export const useMatchStore = create<MatchState>((set) => ({
           }
 
           const replay = replayMatch(session.players, session.events, {
-            throughClock: { period: session.period, minute: session.minute },
+            throughClock: clock,
           });
           if (!playerId || !replay.onCourtPlayerIds.includes(playerId)) {
             throw new Error("Selecciona al jugador en pista que ha sido expulsado.");
@@ -638,8 +772,8 @@ export const useMatchStore = create<MatchState>((set) => ({
           const substitution = createSubstitutionEvent({
             matchId,
             position: {
-              period: session.period,
-              minute: session.minute,
+              period: clock.period,
+              minute: clock.minute,
               order: order + 1,
             },
             playerOutId: playerId,
@@ -659,15 +793,16 @@ export const useMatchStore = create<MatchState>((set) => ({
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
           assertSportsCaptureAllowed(session);
+          const clock = captureClock(session);
           if (!session.staff.some((member) => member.id === staffId)) {
             throw new Error("El miembro del cuerpo técnico no pertenece a la convocatoria.");
           }
           const card = createCardEvent({
             matchId,
             position: {
-              period: session.period,
-              minute: session.minute,
-              order: getNextOrder(session.events, session.period, session.minute),
+              period: clock.period,
+              minute: clock.minute,
+              order: getNextOrder(session.events, clock.period, clock.minute),
             },
             side: "FOR",
             color,
@@ -693,16 +828,16 @@ export const useMatchStore = create<MatchState>((set) => ({
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
-          assertPeriodOpen(session);
+          const clock = captureClock(session);
           const event = createSubstitutionEvent({
             matchId,
             position: {
-              period: session.period,
-              minute: session.minute,
+              period: clock.period,
+              minute: clock.minute,
               order: getNextOrder(
                 session.events,
-                session.period,
-                session.minute,
+                clock.period,
+                clock.minute,
               ),
             },
             playerOutId,
