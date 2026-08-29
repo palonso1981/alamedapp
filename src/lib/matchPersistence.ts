@@ -11,8 +11,14 @@ import {
   Player,
   StaffMember,
 } from "../types";
+import {
+  emptyMatchSyncState,
+  migrateMatchSyncState,
+  PersistedMatchSyncState,
+} from "./sync/syncTypes";
 
-export const MATCH_LOCAL_STORAGE_VERSION = 1 as const;
+export const MATCH_LOCAL_STORAGE_VERSION = 2 as const;
+const LEGACY_MATCH_LOCAL_STORAGE_VERSION = 1 as const;
 const STORAGE_PREFIX = "alamedapp:match:v1:";
 
 export interface LocalStorageAdapter {
@@ -38,9 +44,19 @@ interface PersistedMatchSession {
 }
 
 interface PersistedMatchEnvelope {
-  storageVersion: typeof MATCH_LOCAL_STORAGE_VERSION;
+  storageVersion:
+    | typeof LEGACY_MATCH_LOCAL_STORAGE_VERSION
+    | typeof MATCH_LOCAL_STORAGE_VERSION;
   savedAt: number;
   session: PersistedMatchSession;
+  sync?: PersistedMatchSyncState;
+}
+
+export interface PersistedMatchRecord {
+  session: MatchSession;
+  sync: PersistedMatchSyncState;
+  storageVersion: number;
+  savedAt: number;
 }
 
 export type SaveMatchResult =
@@ -51,7 +67,7 @@ export function matchStorageKey(matchId: string): string {
   return `${STORAGE_PREFIX}${encodeURIComponent(matchId)}`;
 }
 
-function browserStorage(): LocalStorageAdapter | null {
+export function browserMatchStorage(): LocalStorageAdapter | null {
   if (typeof window === "undefined") {
     return null;
   }
@@ -458,7 +474,17 @@ function validPersistedSession(
 
 export function saveMatchSession(
   session: MatchSession,
-  storage: LocalStorageAdapter | null = browserStorage(),
+  storage: LocalStorageAdapter | null = browserMatchStorage(),
+  now = Date.now(),
+): SaveMatchResult {
+  const sync = loadMatchRecord(session.matchId, storage)?.sync ?? emptyMatchSyncState();
+  return saveMatchRecord(session, sync, storage, now);
+}
+
+export function saveMatchRecord(
+  session: MatchSession,
+  sync: PersistedMatchSyncState,
+  storage: LocalStorageAdapter | null = browserMatchStorage(),
   now = Date.now(),
 ): SaveMatchResult {
   if (!storage) {
@@ -488,6 +514,7 @@ export function saveMatchSession(
       past: session.past,
       future: session.future,
     },
+    sync,
   };
 
   try {
@@ -504,8 +531,15 @@ export function saveMatchSession(
 
 export function loadMatchSession(
   matchId: string,
-  storage: LocalStorageAdapter | null = browserStorage(),
+  storage: LocalStorageAdapter | null = browserMatchStorage(),
 ): MatchSession | null {
+  return loadMatchRecord(matchId, storage)?.session ?? null;
+}
+
+export function loadMatchRecord(
+  matchId: string,
+  storage: LocalStorageAdapter | null = browserMatchStorage(),
+): PersistedMatchRecord | null {
   if (!storage) {
     return null;
   }
@@ -521,7 +555,8 @@ export function loadMatchSession(
       : null;
     if (
       !isObject(envelope) ||
-      envelope.storageVersion !== MATCH_LOCAL_STORAGE_VERSION ||
+      (envelope.storageVersion !== LEGACY_MATCH_LOCAL_STORAGE_VERSION &&
+        envelope.storageVersion !== MATCH_LOCAL_STORAGE_VERSION) ||
       typeof envelope.savedAt !== "number" ||
       !validPersistedSession(migratedSession, matchId)
     ) {
@@ -529,10 +564,18 @@ export function loadMatchSession(
     }
 
     return {
-      ...migratedSession,
-      lastError: null,
-      persistenceStatus: "saved",
-      lastSavedAt: envelope.savedAt,
+      session: {
+        ...migratedSession,
+        lastError: null,
+        persistenceStatus: "saved",
+        lastSavedAt: envelope.savedAt,
+      },
+      sync:
+        envelope.storageVersion === MATCH_LOCAL_STORAGE_VERSION
+          ? migrateMatchSyncState(envelope.sync, matchId)
+          : emptyMatchSyncState(),
+      storageVersion: envelope.storageVersion,
+      savedAt: envelope.savedAt,
     };
   } catch {
     return null;

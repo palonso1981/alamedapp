@@ -22,7 +22,7 @@ import {
   SameMinutePlacement,
   softDeleteEvent as softDeleteChronologyEvent,
 } from "../lib/matchEngine";
-import { loadMatchSession, saveMatchSession } from "../lib/matchPersistence";
+import { browserMatchRepository } from "../lib/sync/localMatchRepository";
 import {
   CardColor,
   DefensiveThreatDetailV2,
@@ -282,7 +282,7 @@ function withClock(
 }
 
 function persistSession(session: MatchSession): MatchSession {
-  const result = saveMatchSession(session);
+  const result = browserMatchRepository.save(session);
   if (result.ok) {
     return {
       ...session,
@@ -407,7 +407,7 @@ export const useMatchStore = create<MatchState>((set) => ({
       if (state.matches[matchId]) {
         return state;
       }
-      const loaded = loadMatchSession(matchId);
+      const loaded = browserMatchRepository.load(matchId);
       const session = loaded
         ? persistSession(upgradeDemoSession(loaded))
         : persistSession(createSession(matchId));

@@ -17,6 +17,11 @@
     "src/lib/contextualPlacement.ts",
     "src/lib/courtGeometry.ts",
     "src/lib/matchReview.ts",
+    "src/lib/sync/syncTypes.ts",
+    "src/lib/sync/localMatchRepository.ts",
+    "src/lib/sync/remoteMatchRepository.ts",
+    "src/lib/sync/syncCoordinator.ts",
+    "src/lib/sync/sync.test.ts",
     "src/store/useMatchStore.ts",
     "src/types/index.ts"
   ]
