@@ -3,7 +3,7 @@
 import { MouseEvent, useMemo, useState } from "react";
 import { FutsalCourtMarkings } from "../court/FutsalCourtMarkings";
 import { normalizeCourtPoint } from "../../lib/courtGeometry";
-import { EventEditChanges, REGULATION_MATCH_CLOCK } from "../../lib/matchEngine";
+import { effectiveThreatPhase, EventEditChanges, REGULATION_MATCH_CLOCK } from "../../lib/matchEngine";
 import { assistCandidates } from "../../lib/matchReview";
 import { EventPosition, GoalAssist, GoalkeeperReference, GoalTargetCoordinates, KeeperBodyPart, LiveThreatOutcome, LiveThreatPhase, MatchEvent, Player, SaveOutcome, StaffMember, TimelineEntry } from "../../types";
 import { GoalTargetPicker } from "./contextual/GoalTargetPicker";
@@ -12,6 +12,7 @@ const PHASES: LiveThreatPhase[] = ["POSITIONAL", "TRANSITION", "SET_PIECE_CORNER
 
 interface EventEditorProps {
   event: MatchEvent;
+  events: MatchEvent[];
   entry?: TimelineEntry;
   players: Player[];
   staff: StaffMember[];
@@ -19,12 +20,16 @@ interface EventEditorProps {
   onClose: () => void;
 }
 
-export function EventEditor({ event, entry, players, staff, onSave, onClose }: EventEditorProps) {
+export function EventEditor({ event, events, entry, players, staff, onSave, onClose }: EventEditorProps) {
   const [period, setPeriod] = useState(event.period);
   const [minute, setMinute] = useState(event.minute);
   const [order, setOrder] = useState(event.order);
   const [draft, setDraft] = useState<MatchEvent>(event);
   const scorerId = draft.type === "threat_recorded" ? draft.playerId : undefined;
+  const inheritedPhase =
+    draft.type === "threat_recorded" && draft.parentEventId
+      ? effectiveThreatPhase(events, draft)
+      : null;
   const assistIds = useMemo(
     () => entry ? assistCandidates(entry.lineupPlayerIds, scorerId) : [],
     [entry, scorerId],
@@ -33,7 +38,7 @@ export function EventEditor({ event, entry, players, staff, onSave, onClose }: E
   const save = () => {
     const changes: EventEditChanges = { pendingReview: draft.pendingReview };
     if (draft.type === "substitution") changes.substitution = { playerOutId: draft.playerOutId, playerInId: draft.playerInId };
-    if (draft.type === "threat_recorded") changes.threat = { side: draft.side, playerId: draft.playerId, origin: draft.origin, phase: draft.phase as LiveThreatPhase, outcome: draft.outcome, sequenceId: draft.sequenceId, parentEventId: draft.parentEventId, assist: draft.side === "FOR" && draft.outcome === "GOL" ? draft.assist ?? { status: "NONE" } : null, defensive: draft.side === "AGAINST" ? draft.defensive ?? null : null };
+    if (draft.type === "threat_recorded") changes.threat = { side: draft.side, playerId: draft.playerId, origin: draft.origin, ...(!draft.parentEventId ? { phase: draft.phase as LiveThreatPhase } : {}), outcome: draft.outcome, sequenceId: draft.sequenceId, parentEventId: draft.parentEventId, assist: draft.side === "FOR" && draft.outcome === "GOL" ? draft.assist ?? { status: "NONE" } : null, defensive: draft.side === "AGAINST" ? draft.defensive ?? null : null };
     if (draft.type === "foul_recorded") changes.foul = { side: draft.side, playerId: draft.playerId, origin: draft.origin };
     if (draft.type === "card_recorded") changes.card = { side: draft.side, color: draft.color, playerId: draft.playerId ?? null, staffId: draft.staffId ?? null };
     if (draft.type === "game_state_changed") changes.gameState = { state: draft.state, active: draft.active, playerId: draft.playerId };
@@ -62,7 +67,14 @@ export function EventEditor({ event, entry, players, staff, onSave, onClose }: E
             </div>
             {draft.side === "FOR" && <div className="grid grid-cols-3 gap-2">{(["GOL", "PARADA", "FUERA"] as LiveThreatOutcome[]).map((outcome) => <button key={outcome} type="button" onClick={() => setDraft({ ...draft, outcome, assist: outcome === "GOL" ? draft.assist : undefined })} className={`min-h-12 rounded-xl font-black ${draft.outcome === outcome ? "bg-cyan-600" : "bg-slate-800"}`}>{outcome}</button>)}</div>}
             {draft.side === "FOR" && <Select label="Jugador" value={draft.playerId ?? ""} onChange={(playerId) => setDraft({ ...draft, playerId })} options={players.map((player) => ({ value: player.id, label: `${player.number} · ${player.name}` }))} />}
-            <Select label="Fase" value={draft.phase} onChange={(phase) => setDraft({ ...draft, phase: phase as LiveThreatPhase })} options={PHASES.map((phase) => ({ value: phase, label: phase }))} />
+            {draft.parentEventId ? (
+              <div className="rounded-xl border border-emerald-900 bg-emerald-950/30 px-3 py-2">
+                <p className="text-[10px] font-bold uppercase text-emerald-400">Fase heredada de la secuencia</p>
+                <p className="mt-1 text-sm font-black text-emerald-100">{String(inheritedPhase ?? draft.phase).replaceAll("_", " ")}</p>
+              </div>
+            ) : (
+              <Select label="Fase" value={draft.phase} onChange={(phase) => setDraft({ ...draft, phase: phase as LiveThreatPhase })} options={PHASES.map((phase) => ({ value: phase, label: phase }))} />
+            )}
             <CourtPointEditor value={draft.origin} onChange={(origin) => setDraft({ ...draft, origin })} />
             {draft.side === "AGAINST" && (
               <DefensiveDetailEditor

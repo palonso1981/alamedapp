@@ -67,9 +67,10 @@ corregidas.
 
 ## Contrato de secuencias y segunda jugada
 
-Una segunda amenaza originada por un rechace o balón vivo no es una novena
-fase. Continúa conservando su propia fase táctica y se relaciona causalmente
-con la amenaza anterior mediante dos campos opcionales del evento:
+Una segunda amenaza originada por un rechace no es una novena fase ni una
+segunda parte del mismo evento. Es otro disparo, con sus propias coordenadas y
+desenlace, relacionado causalmente con la amenaza anterior mediante dos campos
+opcionales del evento:
 
 - `sequenceId`: identificador estable de toda la cadena. En una amenaza raíz
   coincide con el `id` de esa amenaza.
@@ -92,11 +93,21 @@ continuación antes de su causa se rechaza por integridad y nunca provoca una
 cascada silenciosa.
 
 La UX defensiva ofrece “2ª jugada” únicamente tras una parada con `REBOUND`.
-El nuevo origen crea otro evento con el mismo `sequenceId` y con el anterior
-como `parentEventId`; la cadena puede continuar A → B → C. La fase anterior se
-propone visualmente, pero se confirma o cambia. `CATCH` cierra la acción y
-`CLEARANCE` no fuerza continuidad. Cancelar una continuación no elimina el
-padre ya guardado.
+El rechace ya queda guardado y no crea nada por sí solo. Si se inicia la
+continuación, el nuevo origen crea otro evento con el mismo `sequenceId` y con
+el anterior como `parentEventId`; la cadena puede continuar A → B → C.
+`CATCH` cierra la acción y `CLEARANCE` no fuerza continuidad. Cancelar la
+oferta o una captura hija incompleta no elimina el padre ya guardado ni crea un
+evento fantasma.
+
+La fase es contexto de la secuencia. La amenaza raíz exige siempre selección
+explícita —también cuando termina en `FUERA`— y ninguna amenaza RIV moderna se
+guarda sin ella. Las hijas no muestran selector: heredan automáticamente la
+fase efectiva de la raíz tanto en `GOL` como en `FUERA` o `PARADA`. El campo
+`phase` se mantiene materializado en cada evento por compatibilidad local, pero
+el motor lo sincroniza con la raíz y el editor solo permite cambiarlo desde
+ella. Editar la fase de A actualiza B/C; una acción que realmente cambia de
+fase debe cerrarse y comenzar como una nueva secuencia ROOT.
 
 ## Captura en Directo y enriquecimiento posterior
 

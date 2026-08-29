@@ -55,14 +55,7 @@ export function DefensiveThreatContext({
         </div>
       )}
       {threat.step === "PHASE" && (
-        <div>
-          {threat.suggestedPhase && (
-            <button type="button" onClick={() => onPhase(threat.suggestedPhase!)} className="mb-2 min-h-12 w-full rounded-xl border border-emerald-400 bg-emerald-950 font-black text-emerald-100">
-              ✓ {threat.suggestedPhase.replaceAll("_", " ")}
-            </button>
-          )}
-          <PhasePicker onPhase={onPhase} selected={threat.suggestedPhase} />
-        </div>
+        <PhasePicker onPhase={onPhase} />
       )}
     </ContextualSurface>
   );

@@ -2,6 +2,7 @@ import {
   assertValidChronology,
   normalizeMatchClock,
   REGULATION_MATCH_CLOCK,
+  synchronizeThreatSequencePhases,
 } from "./matchEngine";
 import {
   MATCH_EVENT_SCHEMA_VERSION,
@@ -253,6 +254,13 @@ function migrateEventList(value: unknown): unknown {
   return Array.isArray(value) ? value.map(migrateEvent) : value;
 }
 
+function migrateChronology(value: unknown, matchId: unknown): unknown {
+  const migrated = migrateEventList(value);
+  return typeof matchId === "string" && isEventList(migrated, matchId)
+    ? synchronizeThreatSequencePhases(migrated)
+    : migrated;
+}
+
 function migratePersistedSession(value: unknown): unknown {
   if (!isObject(value)) {
     return value;
@@ -294,12 +302,12 @@ function migratePersistedSession(value: unknown): unknown {
         )
       : [],
     matchFinished: value.matchFinished === true,
-    events: migrateEventList(value.events),
+    events: migrateChronology(value.events, value.matchId),
     past: Array.isArray(value.past)
-      ? value.past.map(migrateEventList)
+      ? value.past.map((events) => migrateChronology(events, value.matchId))
       : value.past,
     future: Array.isArray(value.future)
-      ? value.future.map(migrateEventList)
+      ? value.future.map((events) => migrateChronology(events, value.matchId))
       : value.future,
   };
 }

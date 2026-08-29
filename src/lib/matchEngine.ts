@@ -28,6 +28,7 @@ import {
   SubstitutionEvent,
   ThreatOutcome,
   ThreatPhase,
+  ThreatRecordedEvent,
   ThreatSide,
 } from "../types";
 import {
@@ -370,6 +371,64 @@ export function compareEventPosition(a: MatchEvent, b: MatchEvent): number {
 
 export function sortEvents(events: MatchEvent[]): MatchEvent[] {
   return [...events].sort(compareEventPosition);
+}
+
+function sequenceRootThreat(
+  events: MatchEvent[],
+  event: ThreatRecordedEvent,
+): ThreatRecordedEvent | undefined {
+  const sequenceId = event.sequenceId ?? event.id;
+  const canonicalRoot = events.find(
+    (candidate): candidate is ThreatRecordedEvent =>
+      candidate.type === "threat_recorded" && candidate.id === sequenceId,
+  );
+  if (canonicalRoot) return canonicalRoot;
+
+  let current: ThreatRecordedEvent | undefined = event;
+  const visited = new Set<string>();
+  while (current?.parentEventId && !visited.has(current.id)) {
+    visited.add(current.id);
+    const parent = events.find(
+      (candidate): candidate is ThreatRecordedEvent =>
+        candidate.type === "threat_recorded" &&
+        candidate.id === current?.parentEventId,
+    );
+    if (!parent) break;
+    current = parent;
+  }
+  return current;
+}
+
+/**
+ * La fase analítica de una continuación procede siempre de la raíz. El helper
+ * permite consumir cronologías antiguas sin convertir la fase en otro estado.
+ */
+export function effectiveThreatPhase(
+  events: MatchEvent[],
+  event: ThreatRecordedEvent,
+): ThreatPhase {
+  return sequenceRootThreat(events, event)?.phase ?? event.phase;
+}
+
+/**
+ * Mantiene el campo redundante de fase de eventos locales antiguos coherente
+ * con la raíz. Se conserva por compatibilidad de esquema, no como verdad
+ * independiente.
+ */
+export function synchronizeThreatSequencePhases(
+  events: MatchEvent[],
+  now?: number,
+): MatchEvent[] {
+  return events.map((event) => {
+    if (event.type !== "threat_recorded" || !event.parentEventId) return event;
+    const phase = effectiveThreatPhase(events, event);
+    if (event.phase === phase) return event;
+    return {
+      ...event,
+      phase,
+      ...(now === undefined ? {} : { updatedAt: now }),
+    } as MatchEvent;
+  });
 }
 
 export function getNextOrder(
@@ -979,6 +1038,30 @@ export function replayMatch(
             "INVALID_EVENT_LINK",
             "La continuación debe apuntar a una amenaza anterior de la misma secuencia.",
           );
+        } else if (
+          event.source === "live" &&
+          event.side === "AGAINST" &&
+          (parent.source !== "live" ||
+            parent.side !== "AGAINST" ||
+            parent.outcome !== "PARADA" ||
+            parent.defensive?.saveOutcome !== "REBOUND")
+        ) {
+          issue(
+            issues,
+            event,
+            "INVALID_EVENT_LINK",
+            "Una segunda jugada rival solo puede continuar una parada con rechace.",
+          );
+        } else if (
+          parent.type === "threat_recorded" &&
+          event.phase !== effectiveThreatPhase(events, event)
+        ) {
+          issue(
+            issues,
+            event,
+            "INVALID_EVENT_LINK",
+            "La fase de una continuación debe heredarse de la raíz de su secuencia.",
+          );
         }
       }
     } else if (event.type === "game_state_changed") {
@@ -1239,6 +1322,17 @@ export function editEvent(
     throw new Error(`No existe el evento ${eventId}.`);
   }
 
+  if (
+    current.type === "threat_recorded" &&
+    current.parentEventId &&
+    changes.threat?.phase !== undefined &&
+    changes.threat.phase !== effectiveThreatPhase(events, current)
+  ) {
+    throw new Error(
+      "La fase de una segunda jugada se edita desde la amenaza raíz.",
+    );
+  }
+
   let edited: MatchEvent = {
     ...current,
     period: changes.period ?? current.period,
@@ -1337,8 +1431,26 @@ export function editEvent(
     edited = { ...edited, pendingReview: true };
   }
 
+  let editedEvents = events.map((event) =>
+    event.id === eventId ? edited : event,
+  );
+  if (
+    edited.type === "threat_recorded" &&
+    !edited.parentEventId &&
+    changes.threat?.phase !== undefined
+  ) {
+    const sequenceId = edited.sequenceId ?? edited.id;
+    editedEvents = editedEvents.map((event) =>
+      event.type === "threat_recorded" &&
+      event.id !== edited.id &&
+      (event.sequenceId ?? event.id) === sequenceId
+        ? ({ ...event, phase: edited.phase, updatedAt: now } as MatchEvent)
+        : event,
+    );
+  }
+  editedEvents = synchronizeThreatSequencePhases(editedEvents, now);
   const next = reconcileDefensiveGoalkeepers(players, normalizeOrders(
-    events.map((event) => (event.id === eventId ? edited : event)),
+    editedEvents,
   ));
   assertValidChronology(players, next);
   return sortEvents(next);

@@ -68,7 +68,6 @@ export type LiveInteractionState =
       saveOutcome: SaveOutcome | null;
       sequenceId: string;
       parentEventId?: string;
-      suggestedPhase?: LiveThreatPhase;
     }
   | {
       kind: "SECOND_PLAY_OFFER" | "SECOND_PLAY_ARMED";
@@ -151,7 +150,7 @@ function startThreat(
     playerId,
     origin,
     step: firstStep,
-    phase: null,
+    phase: sequence?.phase ?? null,
     outcome: null,
     assist: null,
     goalTarget: null,
@@ -159,7 +158,44 @@ function startThreat(
     saveOutcome: null,
     sequenceId: sequence?.sequenceId ?? eventId,
     parentEventId: sequence?.parentEventId,
-    suggestedPhase: sequence?.phase,
+  };
+}
+
+type PendingThreat = Extract<LiveInteractionState, { kind: "THREAT_PENDING" }>;
+
+function recordDefensiveThreat(
+  state: PendingThreat,
+  phase: LiveThreatPhase,
+): LiveInteractionTransition {
+  if (state.side !== "AGAINST" || !state.outcome || !state.goalTarget) {
+    return { state };
+  }
+  const effect: Extract<LiveInteractionEffect, { type: "RECORD_THREAT" }> = {
+    type: "RECORD_THREAT",
+    id: state.eventId,
+    side: "AGAINST",
+    origin: state.origin,
+    phase,
+    outcome: state.outcome,
+    sequenceId: state.sequenceId,
+    parentEventId: state.parentEventId,
+    defensiveCapture: {
+      goalTarget: state.goalTarget,
+      keeperBodyPart: state.keeperBodyPart ?? undefined,
+      saveOutcome: state.saveOutcome ?? undefined,
+    },
+  };
+  return {
+    state:
+      state.saveOutcome === "REBOUND"
+        ? {
+            kind: "SECOND_PLAY_OFFER",
+            parentEventId: state.eventId,
+            sequenceId: state.sequenceId,
+            phase,
+          }
+        : IDLE_LIVE_INTERACTION,
+    effect,
   };
 }
 
@@ -269,29 +305,31 @@ export function reduceLiveInteraction(
     if (state.side !== "AGAINST" || state.step !== "GOAL_TARGET") {
       return { state };
     }
-    return {
-      state: {
-        ...state,
-        goalTarget: action.goalTarget,
-        outcome: action.outcome,
-        keeperBodyPart: action.keeperBodyPart ?? null,
-        saveOutcome: null,
-        step: action.outcome === "PARADA" ? "DETAILS" : "PHASE",
-      },
+    const targeted: PendingThreat = {
+      ...state,
+      goalTarget: action.goalTarget,
+      outcome: action.outcome,
+      keeperBodyPart: action.keeperBodyPart ?? null,
+      saveOutcome: null,
+      step: action.outcome === "PARADA" ? "DETAILS" : "PHASE",
     };
+    return action.outcome !== "PARADA" && targeted.parentEventId && targeted.phase
+      ? recordDefensiveThreat(targeted, targeted.phase)
+      : { state: targeted };
   }
 
   if (action.type === "SAVE_OUTCOME_SELECTED") {
     if (state.side !== "AGAINST" || state.step !== "DETAILS") {
       return { state };
     }
-    return {
-      state: {
-        ...state,
-        saveOutcome: action.saveOutcome,
-        step: "PHASE",
-      },
+    const detailed: PendingThreat = {
+      ...state,
+      saveOutcome: action.saveOutcome,
+      step: "PHASE",
     };
+    return detailed.parentEventId && detailed.phase
+      ? recordDefensiveThreat(detailed, detailed.phase)
+      : { state: detailed };
   }
 
   if (action.type === "PHASE_SELECTED") {
@@ -304,37 +342,10 @@ export function reduceLiveInteraction(
       };
     }
     if (state.side === "AGAINST") {
-      if (!state.goalTarget) return { state };
-      const effect: Extract<
-        LiveInteractionEffect,
-        { type: "RECORD_THREAT" }
-      > = {
-        type: "RECORD_THREAT",
-        id: state.eventId,
-        side: "AGAINST",
-        origin: state.origin,
-        phase: action.phase,
-        outcome: state.outcome,
-        sequenceId: state.sequenceId,
-        parentEventId: state.parentEventId,
-        defensiveCapture: {
-          goalTarget: state.goalTarget,
-          keeperBodyPart: state.keeperBodyPart ?? undefined,
-          saveOutcome: state.saveOutcome ?? undefined,
-        },
-      };
-      return {
-        state:
-          state.saveOutcome === "REBOUND"
-            ? {
-                kind: "SECOND_PLAY_OFFER",
-                parentEventId: state.eventId,
-                sequenceId: state.sequenceId,
-                phase: action.phase,
-              }
-            : IDLE_LIVE_INTERACTION,
-        effect,
-      };
+      // Una continuación nunca llega a PHASE: se completa en el paso anterior
+      // con la fase heredada. Este guard evita divergencias ante acciones stale.
+      if (state.parentEventId) return { state };
+      return recordDefensiveThreat(state, action.phase);
     }
     return {
       state: IDLE_LIVE_INTERACTION,

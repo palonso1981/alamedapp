@@ -118,7 +118,7 @@ export function RecentEventsPanel({ events, timeline, players, staff, onDelete, 
           );
         })}
       </div>
-      {editingEvent && <EventEditor event={editingEvent} entry={editingEntry} players={players} staff={staff} onClose={() => setEditingId(null)} onSave={(target, changes) => { onSave(editingEvent.id, target, changes); setEditingId(null); }} />}
+      {editingEvent && <EventEditor event={editingEvent} events={events} entry={editingEntry} players={players} staff={staff} onClose={() => setEditingId(null)} onSave={(target, changes) => { onSave(editingEvent.id, target, changes); setEditingId(null); }} />}
     </section>
   );
 }

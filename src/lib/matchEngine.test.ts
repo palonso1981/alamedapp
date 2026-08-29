@@ -13,6 +13,7 @@ import {
   deriveGoalkeeperReference,
   deriveGlobalMinute,
   deriveRemainingMinute,
+  effectiveThreatPhase,
   editEvent,
   EventDeletionBlockedError,
   MatchIntegrityError,
@@ -2123,11 +2124,11 @@ test("rechace ofrece y encadena segunda jugada reversible con fase heredada", ()
   const firstEffect = transition.effect;
   transition = reduceLiveInteraction(transition.state, { type: "START_SECOND_PLAY" });
   transition = reduceLiveInteraction(transition.state, { type: "COURT_TAPPED", origin: { x: 0.35, y: 0.5 }, eventId: "seq-b" });
-  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.suggestedPhase, "TRANSITION");
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.phase, "TRANSITION");
   transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.25, y: 0.3 }, outcome: "GOL" });
-  transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "TRANSITION" });
   assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.parentEventId, "seq-a");
   assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.sequenceId, "seq-a");
+  assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.phase, "TRANSITION");
 
   useMatchStore.setState({ matches: {} });
   const actions = useMatchStore.getState();
@@ -2137,6 +2138,73 @@ test("rechace ofrece y encadena segunda jugada reversible con fase heredada", ()
   const session = useMatchStore.getState().matches["sequence-store"];
   assert.deepEqual(replayMatch(session.players, session.events).issues, []);
   assert.throws(() => softDeleteEvent(session.players, session.events, "seq-a"), EventDeletionBlockedError);
+});
+
+test("toda amenaza RIV raíz exige fase, también FUERA, y cancelar no crea evento", () => {
+  for (const outcome of ["GOL", "FUERA"] as const) {
+    let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+      type: "COURT_TAPPED",
+      origin: { x: 0.62, y: 0.45 },
+      eventId: `root-${outcome}`,
+    });
+    transition = reduceLiveInteraction(transition.state, {
+      type: "GOAL_TARGET_SELECTED",
+      goalTarget: outcome === "FUERA"
+        ? { geometryVersion: 2, x: 0.1, y: 0.4 }
+        : { geometryVersion: 2, x: 0.5, y: 0.4 },
+      outcome,
+    });
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "PHASE");
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.phase, null);
+    assert.equal(transition.effect, undefined);
+    const cancelled = reduceLiveInteraction(transition.state, { type: "CANCEL" });
+    assert.equal(cancelled.effect, undefined);
+    assert.deepEqual(cancelled.state, IDLE_LIVE_INTERACTION);
+  }
+});
+
+test("segunda jugada GOL, FUERA y PARADA se guardan con fase heredada sin paso PHASE", () => {
+  const armed = {
+    kind: "SECOND_PLAY_ARMED",
+    parentEventId: "root-rebound",
+    sequenceId: "root-rebound",
+    phase: "SET_PIECE_CORNER",
+  } as const;
+  for (const outcome of ["GOL", "FUERA"] as const) {
+    let transition = reduceLiveInteraction(armed, {
+      type: "COURT_TAPPED",
+      origin: { x: 0.48, y: 0.52 },
+      eventId: `child-${outcome}`,
+    });
+    transition = reduceLiveInteraction(transition.state, {
+      type: "GOAL_TARGET_SELECTED",
+      goalTarget: outcome === "FUERA"
+        ? { geometryVersion: 2, x: 0.9, y: 0.4 }
+        : { geometryVersion: 2, x: 0.5, y: 0.4 },
+      outcome,
+    });
+    assert.equal(transition.effect?.type, "RECORD_THREAT");
+    assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.phase, "SET_PIECE_CORNER");
+    assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.parentEventId, "root-rebound");
+    assert.equal(transition.state.kind, "IDLE");
+  }
+
+  let saved = reduceLiveInteraction(armed, {
+    type: "COURT_TAPPED",
+    origin: { x: 0.42, y: 0.5 },
+    eventId: "child-save",
+  });
+  saved = reduceLiveInteraction(saved.state, {
+    type: "GOAL_TARGET_SELECTED",
+    goalTarget: { geometryVersion: 2, x: 0.55, y: 0.55 },
+    outcome: "PARADA",
+    keeperBodyPart: "RIGHT_ARM_HAND",
+  });
+  assert.equal(saved.state.kind === "THREAT_PENDING" && saved.state.step, "DETAILS");
+  saved = reduceLiveInteraction(saved.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "CATCH" });
+  assert.equal(saved.effect?.type === "RECORD_THREAT" && saved.effect.phase, "SET_PIECE_CORNER");
+  assert.equal(saved.effect?.type === "RECORD_THREAT" && saved.effect.defensiveCapture?.keeperBodyPart, "RIGHT_ARM_HAND");
+  assert.equal(saved.state.kind, "IDLE");
 });
 
 test("captura defensiva persiste destino y deriva el P-J elegido explícitamente", () => {
@@ -2370,7 +2438,7 @@ test("editor defensivo limpia incompatibilidades PARADA→GOL y exige detalle GO
   assert.equal(replayMatch(players, events).score.against, 0);
 });
 
-test("segunda jugada admite A→B→C, fase editable y cancelación sin eventos fantasma", () => {
+test("segunda jugada A→B→C hereda fase sin interacción y cancela sin eventos fantasma", () => {
   const start = (id: string, state = IDLE_LIVE_INTERACTION) =>
     reduceLiveInteraction(state, {
       type: "COURT_TAPPED",
@@ -2396,10 +2464,10 @@ test("segunda jugada admite A→B→C, fase editable y cancelación sin eventos 
     keeperBodyPart: "LEFT_LEG_FOOT",
   });
   transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "REBOUND" });
-  transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "POSITIONAL" });
   const b = transition.effect;
   assert.equal(b?.type === "RECORD_THREAT" && b.parentEventId, "chain-a");
-  assert.equal(b?.type === "RECORD_THREAT" && b.phase, "POSITIONAL");
+  assert.equal(b?.type === "RECORD_THREAT" && b.phase, "TRANSITION");
+  assert.equal(transition.state.kind, "SECOND_PLAY_OFFER");
   transition = reduceLiveInteraction(transition.state, { type: "START_SECOND_PLAY" });
   transition = start("chain-c", transition.state);
   transition = reduceLiveInteraction(transition.state, {
@@ -2407,10 +2475,10 @@ test("segunda jugada admite A→B→C, fase editable y cancelación sin eventos 
     goalTarget: { geometryVersion: 1, x: 0.2, y: 0.3 },
     outcome: "GOL",
   });
-  transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "POSITIONAL" });
   const c = transition.effect;
   assert.equal(c?.type === "RECORD_THREAT" && c.parentEventId, "chain-b");
   assert.equal(c?.type === "RECORD_THREAT" && c.sequenceId, "chain-a");
+  assert.equal(c?.type === "RECORD_THREAT" && c.phase, "TRANSITION");
   assert.equal(transition.state.kind, "IDLE");
 
   for (const effect of [a, b, c]) assert.equal(effect?.type, "RECORD_THREAT");
@@ -2423,6 +2491,80 @@ test("segunda jugada admite A→B→C, fase editable y cancelación sin eventos 
   );
   assert.equal(cancelOffer.effect, undefined);
   assert.deepEqual(cancelOffer.state, IDLE_LIVE_INTERACTION);
+
+  const cancelChild = reduceLiveInteraction(
+    { kind: "SECOND_PLAY_ARMED", parentEventId: "chain-a", sequenceId: "chain-a", phase: "TRANSITION" },
+    { type: "COURT_TAPPED", origin: { x: 0.4, y: 0.4 }, eventId: "cancelled-child" },
+  );
+  const cancelledIncomplete = reduceLiveInteraction(cancelChild.state, { type: "CANCEL" });
+  assert.equal(cancelledIncomplete.effect, undefined);
+  assert.deepEqual(cancelledIncomplete.state, IDLE_LIVE_INTERACTION);
+});
+
+test("editar la fase ROOT sincroniza toda la secuencia y el hijo no admite una fase divergente", () => {
+  const matchId = "sequence-phase-edit";
+  const goalkeeper = { status: "PLAYER", playerId: "p5" } as const;
+  const root = createLiveThreatEvent({
+    id: "phase-a", matchId, position: { period: 1, minute: 4, order: 1 },
+    side: "AGAINST", origin: { x: 0.6, y: 0.4 }, outcome: "PARADA", phase: "TRANSITION",
+    defensive: { version: 2, goalTarget: { geometryVersion: 2, x: 0.5, y: 0.5 }, goalkeeper, keeperBodyPart: "TORSO", saveOutcome: "REBOUND" },
+  });
+  const child = createLiveThreatEvent({
+    id: "phase-b", matchId, position: { period: 1, minute: 4, order: 2 },
+    side: "AGAINST", origin: { x: 0.4, y: 0.5 }, outcome: "PARADA", phase: "TRANSITION",
+    sequenceId: root.id, parentEventId: root.id,
+    defensive: { version: 2, goalTarget: { geometryVersion: 2, x: 0.45, y: 0.7 }, goalkeeper, keeperBodyPart: "LEFT_LEG_FOOT", saveOutcome: "REBOUND" },
+  });
+  const grandchild = createLiveThreatEvent({
+    id: "phase-c", matchId, position: { period: 1, minute: 4, order: 3 },
+    side: "AGAINST", origin: { x: 0.3, y: 0.6 }, outcome: "GOL", phase: "TRANSITION",
+    sequenceId: root.id, parentEventId: child.id,
+    defensive: { version: 2, goalTarget: { geometryVersion: 2, x: 0.7, y: 0.3 }, goalkeeper },
+  });
+  let events = appendEvents(players, initialLineup(matchId), [root, child, grandchild]);
+  events = editEvent(players, events, root.id, { threat: { phase: "POSITIONAL" } }, 99);
+  for (const event of events.filter((candidate) => candidate.type === "threat_recorded")) {
+    assert.equal(event.phase, "POSITIONAL");
+    assert.equal(effectiveThreatPhase(events, event), "POSITIONAL");
+  }
+  assert.throws(
+    () => editEvent(players, events, child.id, { threat: { phase: "TRANSITION" } }),
+    /se edita desde la amenaza raíz/,
+  );
+});
+
+test("persistencia local corrige fases divergentes antiguas usando la raíz", () => {
+  const matchId = "legacy-divergent-sequence";
+  const base = createSession(matchId);
+  const goalkeeper = { status: "PLAYER", playerId: "p5" } as const;
+  const root = createLiveThreatEvent({
+    id: "legacy-phase-a", matchId, position: { period: 1, minute: 3, order: 1 },
+    side: "AGAINST", origin: { x: 0.6, y: 0.5 }, outcome: "PARADA", phase: "TRANSITION",
+    defensive: { version: 2, goalTarget: { geometryVersion: 2, x: 0.5, y: 0.5 }, goalkeeper, keeperBodyPart: "TORSO", saveOutcome: "REBOUND" },
+  });
+  const child = createLiveThreatEvent({
+    id: "legacy-phase-b", matchId, position: { period: 1, minute: 3, order: 2 },
+    side: "AGAINST", origin: { x: 0.4, y: 0.4 }, outcome: "GOL", phase: "TRANSITION",
+    sequenceId: root.id, parentEventId: root.id,
+    defensive: { version: 2, goalTarget: { geometryVersion: 2, x: 0.4, y: 0.4 }, goalkeeper },
+  });
+  const storage = new MemoryStorage();
+  const session = {
+    ...base,
+    minute: 3,
+    periodMinutes: { 1: 3, 2: 0 },
+    events: appendEvents(base.players, base.events, [root, child]),
+  };
+  assert.equal(saveMatchSession(session, storage, 10).ok, true);
+  const raw = JSON.parse(storage.getItem(matchStorageKey(matchId))!);
+  raw.session.events = raw.session.events.map((event: MatchEvent) =>
+    event.id === child.id ? { ...event, phase: "POSITIONAL" } : event,
+  );
+  storage.setItem(matchStorageKey(matchId), JSON.stringify(raw));
+  const loaded = loadMatchSession(matchId, storage);
+  const loadedChild = loaded?.events.find((event) => event.id === child.id);
+  assert.equal(loadedChild?.type === "threat_recorded" && loadedChild.phase, "TRANSITION");
+  assert.deepEqual(replayMatch(loaded?.players ?? [], loaded?.events ?? []).issues, []);
 });
 
 test("blocaje y despeje cierran la secuencia; editar o borrar un padre activo queda protegido", () => {
@@ -2445,9 +2587,9 @@ test("blocaje y despeje cierran la secuencia; editar o borrar un padre activo qu
     position: { period: 1, minute: 5, order: 1 },
     side: "AGAINST",
     origin: { x: 0.5, y: 0.5 },
-    outcome: "FUERA",
+    outcome: "PARADA",
     phase: "POSITIONAL",
-    defensive: { version: 1, goalTarget: { geometryVersion: 1, x: 0.02, y: 0.2 }, goalkeeper: { status: "PLAYER", playerId: "p5" } },
+    defensive: { version: 1, goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, goalkeeper: { status: "PLAYER", playerId: "p5" }, keeperBodyZone: "UPPER", saveOutcome: "REBOUND" },
   });
   const child = createLiveThreatEvent({
     id: "protected-b",
@@ -2456,7 +2598,7 @@ test("blocaje y despeje cierran la secuencia; editar o borrar un padre activo qu
     side: "AGAINST",
     origin: { x: 0.4, y: 0.4 },
     outcome: "GOL",
-    phase: "TRANSITION",
+    phase: "POSITIONAL",
     sequenceId: root.id,
     parentEventId: root.id,
     defensive: { version: 1, goalTarget: { geometryVersion: 1, x: 0.2, y: 0.3 }, goalkeeper: { status: "PLAYER", playerId: "p5" } },
@@ -2465,6 +2607,11 @@ test("blocaje y despeje cierran la secuencia; editar o borrar un padre activo qu
   assert.throws(() => softDeleteEvent(players, events, root.id), EventDeletionBlockedError);
   assert.throws(
     () => editEvent(players, events, root.id, { threat: { sequenceId: "another-sequence" } }),
+    MatchIntegrityError,
+  );
+  const divergentChild = { ...child, phase: "TRANSITION" as const };
+  assert.throws(
+    () => appendEvents(players, initialLineup(matchId), [root, divergentChild]),
     MatchIntegrityError,
   );
 });
