@@ -32,7 +32,9 @@ export class MatchSyncCoordinator {
   syncMatch(matchId: string): Promise<MatchSyncSummary> {
     const existing = this.running.get(matchId);
     if (existing) return existing;
-    const running = this.process(matchId).finally(() => {
+    // Defer process until the running promise is registered. claim/mark methods
+    // notify subscribers synchronously and a subscriber may request another sync.
+    const running = Promise.resolve().then(() => this.process(matchId)).finally(() => {
       this.running.delete(matchId);
     });
     this.running.set(matchId, running);

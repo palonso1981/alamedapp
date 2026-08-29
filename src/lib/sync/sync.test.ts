@@ -228,6 +228,27 @@ test("sync incremental vacía outbox y mantiene un documento por eventId", async
   );
 });
 
+test("una notificación síncrona durante sync reutiliza la ejecución activa", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, {
+    isOnline: () => true,
+  });
+  const session = createSession("sync-reentrant-subscriber");
+  local.save(session);
+  const unsubscribe = local.subscribe(session.matchId, () => {
+    void coordinator.syncMatch(session.matchId);
+  });
+
+  await coordinator.syncMatch(session.matchId);
+  unsubscribe();
+
+  assert.equal(local.getSummary(session.matchId).pending, 0);
+  assert.equal(local.getSummary(session.matchId).syncing, 0);
+  assert.equal(remote.applyCalls, 2);
+});
+
 test("ACK perdido reintenta el mismo operationId sin duplicar el remoto", async () => {
   const storage = new MemoryStorage();
   const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
