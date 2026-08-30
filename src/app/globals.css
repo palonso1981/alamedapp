@@ -102,7 +102,7 @@ body {
   }
 
   .directo-court {
-    width: min(100%, calc((100dvh - 16rem) * 2));
+    width: min(100%, calc((100dvh - 20.5rem) * 2));
     min-height: 0;
   }
 

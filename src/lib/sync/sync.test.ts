@@ -586,6 +586,31 @@ test("soft delete y restore posteriores a sync actualizan el mismo documento", a
   assert.equal(remote.documents.get(key)?.revision, 3);
 });
 
+test("falta genérica conserva playerId null en outbox, reload y remoto", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, { isOnline: () => true });
+  const session = createSession("generic-foul-sync");
+  const foul = createFoulEvent({
+    id: "generic-foul-remote",
+    matchId: session.matchId,
+    position: { period: 1, minute: 6, order: 1 },
+    side: "AGAINST",
+    playerId: null,
+  });
+  local.save({ ...session, events: [...session.events, foul] });
+  const pendingPayload = local.getSyncState(session.matchId).outbox.find(
+    (operation) => operation.entityId === foul.id,
+  )?.payload as typeof foul;
+  assert.equal(pendingPayload.playerId, null);
+  assert.equal(local.load(session.matchId)?.events.find((event) => event.id === foul.id)?.type, "foul_recorded");
+  await coordinator.syncMatch(session.matchId);
+  const remotePayload = remote.documents.get(`${session.matchId}:event:${foul.id}`)?.payload as typeof foul;
+  assert.equal(remotePayload.playerId, null);
+  assert.equal(local.getSummary(session.matchId).pending, 0);
+});
+
 test("GoalTarget y pendingReview llegan intactos al documento remoto", async () => {
   const storage = new MemoryStorage();
   const local = new LocalMatchRepository({ storage, idFactory: idFactory() });

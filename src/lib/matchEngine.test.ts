@@ -129,6 +129,110 @@ test("replay reconstruye pista, banquillo y alineación de cada amenaza", () => 
   assert.deepEqual(threat.lineupPlayerIds, ["p6", "p2", "p3", "p4", "p5"]);
 });
 
+test("la sustitución transfiere el slot funcional de portero sin usar la posición natural", () => {
+  const matchId = "functional-goalkeeper-slot";
+  const squad = players.map((player) =>
+    player.id === "p6" ? { ...player, goalkeeperCapable: true, naturalPosition: "GOALKEEPER" as const } : player,
+  );
+  const lineup = createLineupInitializedEvent({
+    id: "functional-lineup",
+    matchId,
+    position: { period: 1, minute: 0, order: 1 },
+    squadPlayerIds: squad.map((player) => player.id),
+    onCourtPlayerIds: ["p1", "p2", "p3", "p4", "p5"],
+    goalkeeperPlayerId: "p5",
+  });
+  const replaceKeeperWithField = appendEvent(squad, [lineup], createSubstitutionEvent({
+    id: "keeper-to-field",
+    matchId,
+    position: { period: 1, minute: 4, order: 1 },
+    playerOutId: "p5",
+    playerInId: "p7",
+  }));
+  assert.deepEqual(replayMatch(squad, replaceKeeperWithField).lineupValidation.goalkeeper, {
+    status: "PLAYER",
+    playerId: "p7",
+    resolution: "REPLAY",
+  });
+
+  const replaceKeeperWithNaturalKeeper = appendEvent(squad, [lineup], createSubstitutionEvent({
+    id: "keeper-to-natural-keeper",
+    matchId,
+    position: { period: 1, minute: 4, order: 1 },
+    playerOutId: "p5",
+    playerInId: "p6",
+  }));
+  const naturalReplacementGoalkeeper = replayMatch(
+    squad,
+    replaceKeeperWithNaturalKeeper,
+  ).lineupValidation.goalkeeper;
+  assert.equal(naturalReplacementGoalkeeper.status, "PLAYER");
+  assert.equal(
+    naturalReplacementGoalkeeper.status === "PLAYER"
+      ? naturalReplacementGoalkeeper.playerId
+      : null,
+    "p6",
+  );
+
+  const naturalKeeperEntersAnOutfieldSlot = appendEvent(squad, [lineup], createSubstitutionEvent({
+    id: "field-to-natural-keeper",
+    matchId,
+    position: { period: 1, minute: 4, order: 1 },
+    playerOutId: "p1",
+    playerInId: "p6",
+  }));
+  const replay = replayMatch(squad, naturalKeeperEntersAnOutfieldSlot);
+  assert.deepEqual(replay.lineupValidation.goalkeeper, {
+    status: "PLAYER",
+    playerId: "p5",
+    resolution: "REPLAY",
+  });
+
+  const legacyLineup = { ...lineup, id: "legacy-functional-lineup", goalkeeperPlayerId: undefined };
+  const legacyReplacement = appendEvent(squad, [legacyLineup], createSubstitutionEvent({
+    id: "legacy-keeper-to-field",
+    matchId,
+    position: { period: 1, minute: 6, order: 1 },
+    playerOutId: "p5",
+    playerInId: "p7",
+  }));
+  assert.deepEqual(replayMatch(squad, legacyReplacement).lineupValidation.goalkeeper, {
+    status: "PLAYER",
+    playerId: "p7",
+    resolution: "REPLAY",
+  });
+});
+
+test("undo/redo y P-J conservan el rol funcional ligado al slot sustituido", () => {
+  const matchId = "functional-goalkeeper-history";
+  useMatchStore.setState({ matches: { [matchId]: createSession(matchId) } });
+  const actions = useMatchStore.getState();
+  actions.swapPlayer(matchId, "p5", "p6");
+  let current = useMatchStore.getState().matches[matchId];
+  assert.deepEqual(replayMatch(current.players, current.events).lineupValidation.goalkeeper, {
+    status: "PLAYER", playerId: "p6", resolution: "REPLAY",
+  });
+  const storage = new MemoryStorage();
+  assert.equal(saveMatchSession(current, storage, 10).ok, true);
+  const reloaded = loadMatchSession(matchId, storage);
+  assert.ok(reloaded);
+  assert.deepEqual(replayMatch(reloaded!.players, reloaded!.events).lineupValidation.goalkeeper, {
+    status: "PLAYER", playerId: "p6", resolution: "REPLAY",
+  });
+  actions.undo(matchId);
+  current = useMatchStore.getState().matches[matchId];
+  assert.deepEqual(replayMatch(current.players, current.events).lineupValidation.goalkeeper, {
+    status: "PLAYER", playerId: "p5", resolution: "REPLAY",
+  });
+  actions.redo(matchId);
+  actions.toggleGameState(matchId, "FLYING_GOALKEEPER", "p2");
+  actions.swapPlayer(matchId, "p2", "p7");
+  current = useMatchStore.getState().matches[matchId];
+  const replay = replayMatch(current.players, current.events);
+  assert.equal(replay.flyingGoalkeeperActive, true);
+  assert.equal(replay.flyingGoalkeeperPlayerId, "p7");
+});
+
 test("una sustitución inválida se rechaza de forma atómica", () => {
   const events = initialLineup();
   const invalid = createSubstitutionEvent({
@@ -1054,7 +1158,7 @@ test("persistencia migra faltas locales antiguas sin destruir la sesión", () =>
   assert.equal(migratedFoul?.type, "foul_recorded");
   if (migratedFoul?.type === "foul_recorded") {
     assert.equal(migratedFoul.source, "legacy_local");
-    assert.equal(migratedFoul.playerId, undefined);
+    assert.equal(migratedFoul.playerId, null);
     assert.equal(migratedFoul.pendingReview, false);
   }
   assert.equal(replayMatch(restored.players, restored.events).issues.length, 0);
@@ -2923,6 +3027,157 @@ test("finalizar partes completa minutos, conserva eventos y exige inicio explíc
   assert.equal(current.minute, 20);
   assert.equal(current.matchFinished, true);
   assert.deepEqual(current.closedPeriods, [1, 2]);
+});
+
+test("partido finalizado permanece FINISHED y admite corrección deliberada por periodo", () => {
+  const matchId = "finished-review";
+  const prepared = {
+    ...createSession(matchId),
+    preparation: {
+      teamId: "cd-alameda",
+      opponent: "Rival",
+      venue: "HOME" as const,
+      date: "2026-09-06",
+      status: "LIVE" as const,
+      calledPlayerIds: players.slice(0, 7).map((player) => player.id),
+      starterPlayerIds: players.slice(0, 5).map((player) => player.id),
+      startingGoalkeeperId: "p5",
+      selectedStaffIds: [],
+      targetMinutes: {},
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  };
+  useMatchStore.setState({ matches: { [matchId]: prepared } });
+  const actions = useMatchStore.getState();
+  actions.finishCurrentPeriod(matchId);
+  actions.startSecondPeriod(matchId);
+  actions.finishCurrentPeriod(matchId);
+  let current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.matchFinished, true);
+  assert.equal(current.preparation?.status, "FINISHED");
+  const before = current.events.length;
+  actions.recordFoul(matchId, "FOR", null);
+  assert.equal(useMatchStore.getState().matches[matchId].events.length, before);
+
+  actions.startFinishedReview(matchId);
+  actions.setReviewMinute(matchId, 7);
+  actions.recordFoul(matchId, "FOR", null);
+  current = useMatchStore.getState().matches[matchId];
+  const generic = current.events.find((event) => event.type === "foul_recorded" && event.playerId === null);
+  assert.ok(generic);
+  assert.equal(generic?.period, 2);
+  assert.equal(generic?.minute, 7);
+  assert.equal(current.matchFinished, true);
+  assert.equal(current.preparation?.status, "FINISHED");
+  actions.editEvent(matchId, generic!.id, { minute: 8, foul: { playerId: "p1" } });
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.events.find((event) => event.id === generic!.id)?.minute, 8);
+  actions.softDeleteEvent(matchId, generic!.id);
+  assert.equal(replayMatch(current.players, useMatchStore.getState().matches[matchId].events).discipline.for.fouls, 0);
+  actions.restoreEvent(matchId, generic!.id);
+  assert.equal(replayMatch(current.players, useMatchStore.getState().matches[matchId].events).discipline.for.fouls, 1);
+  actions.startPeriodReview(matchId, 1);
+  actions.setReviewMinute(matchId, 9);
+  actions.recordFoul(matchId, "AGAINST", null);
+  current = useMatchStore.getState().matches[matchId];
+  assert.ok(current.events.some((event) => event.type === "foul_recorded" && event.period === 1 && event.minute === 9));
+  assert.equal(current.matchFinished, true);
+  actions.stopPeriodReview(matchId);
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.reviewPeriod, undefined);
+  assert.equal(current.matchFinished, true);
+  assert.equal(current.preparation?.status, "FINISHED");
+});
+
+test("revisión FINISHED repara metadata legacy sin periodos cerrados", () => {
+  const matchId = "legacy-finished-review";
+  const legacy = {
+    ...createSession(matchId),
+    period: 2,
+    minute: 20,
+    periodMinutes: { 1: 20, 2: 20 },
+    closedPeriods: [],
+    matchFinished: true,
+  };
+  useMatchStore.setState({ matches: { [matchId]: legacy } });
+  const actions = useMatchStore.getState();
+  actions.startFinishedReview(matchId);
+  actions.setReviewMinute(matchId, 6);
+  actions.recordFoul(matchId, "FOR", null);
+  const current = useMatchStore.getState().matches[matchId];
+  assert.deepEqual(current.closedPeriods, [1, 2]);
+  assert.equal(current.reviewPeriod, 2);
+  assert.ok(current.events.some((event) => event.type === "foul_recorded" && event.period === 2 && event.minute === 6));
+  assert.equal(current.matchFinished, true);
+});
+
+test("faltas genéricas son válidas, numeradas, editables, reordenables y persistentes", () => {
+  const matchId = "generic-fouls";
+  let events = initialLineup(matchId);
+  const generic = createFoulEvent({
+    id: "generic-foul",
+    matchId,
+    position: { period: 1, minute: 5, order: 1 },
+    side: "FOR",
+    playerId: null,
+  });
+  const assigned = createFoulEvent({
+    id: "assigned-foul",
+    matchId,
+    position: { period: 1, minute: 5, order: 2 },
+    side: "FOR",
+    playerId: "p2",
+  });
+  events = appendEvents(players, events, [generic, assigned]);
+  let replay = replayMatch(players, events);
+  assert.deepEqual(replay.issues, []);
+  assert.deepEqual(
+    replay.timeline.filter((entry) => entry.event.type === "foul_recorded").map((entry) => entry.periodFoulNumber),
+    [1, 2],
+  );
+  events = reorderEvent(players, events, "assigned-foul", { period: 1, minute: 5, order: 1 });
+  replay = replayMatch(players, events);
+  assert.equal(replay.timeline.find((entry) => entry.event.id === "assigned-foul")?.periodFoulNumber, 1);
+  events = editEvent(players, events, "generic-foul", { foul: { playerId: "p1" } });
+  const editedGeneric = events.find((event) => event.id === "generic-foul");
+  assert.equal(editedGeneric?.type === "foul_recorded" && editedGeneric.playerId, "p1");
+  const storage = new MemoryStorage();
+  const session = { ...createSession(matchId), events };
+  assert.equal(saveMatchSession(session, storage, 10).ok, true);
+  const loaded = loadMatchSession(matchId, storage);
+  const loadedGeneric = loaded?.events.find((event) => event.id === "generic-foul");
+  assert.equal(loadedGeneric?.type === "foul_recorded" && loadedGeneric.playerId, "p1");
+});
+
+test("faltas genéricas CDA/RIV soportan undo, soft delete y restore sin pending automático", () => {
+  const matchId = "generic-fouls-store";
+  useMatchStore.setState({ matches: { [matchId]: createSession(matchId) } });
+  const actions = useMatchStore.getState();
+  actions.recordFoul(matchId, "FOR", null);
+  actions.recordFoul(matchId, "AGAINST", null);
+  let current = useMatchStore.getState().matches[matchId];
+  let replay = replayMatch(current.players, current.events);
+  assert.equal(replay.discipline.for.fouls, 1);
+  assert.equal(replay.discipline.against.fouls, 1);
+  const genericEvents = current.events.filter((event) => event.type === "foul_recorded");
+  assert.equal(genericEvents.length, 2);
+  assert.ok(genericEvents.every((event) => event.playerId === null && event.pendingReview === false));
+  actions.undo(matchId);
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(replayMatch(current.players, current.events).discipline.against.fouls, 0);
+  actions.redo(matchId);
+  current = useMatchStore.getState().matches[matchId];
+  const rivalFoul = current.events.find((event) => event.type === "foul_recorded" && event.side === "AGAINST");
+  assert.ok(rivalFoul);
+  actions.softDeleteEvent(matchId, rivalFoul!.id);
+  current = useMatchStore.getState().matches[matchId];
+  replay = replayMatch(current.players, current.events);
+  assert.equal(replay.discipline.against.fouls, 0);
+  actions.restoreEvent(matchId, rivalFoul!.id);
+  current = useMatchStore.getState().matches[matchId];
+  replay = replayMatch(current.players, current.events);
+  assert.equal(replay.discipline.against.fouls, 1);
 });
 
 test("finalizar P1 permite reanudar de forma deliberada antes de iniciar P2", () => {

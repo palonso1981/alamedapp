@@ -78,7 +78,7 @@ export function eventDescription(
     const direction = event.side === "FOR" ? "cometida" : "recibida";
     const player = event.playerId
       ? playerLabel(players, event.playerId)
-      : "sin identificar";
+      : "equipo · sin asignar";
     return `${number} · ${player} · ${direction}`;
   }
   if (event.type === "card_recorded") {

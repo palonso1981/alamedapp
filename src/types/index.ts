@@ -1,4 +1,5 @@
 export type DominantFoot = "RIGHT" | "LEFT" | "BOTH" | "UNKNOWN";
+export type FutsalPosition = "GOALKEEPER" | "FIXO" | "WINGER" | "PIVOT" | "UNIVERSAL";
 
 export interface Player {
   id: string;
@@ -10,6 +11,9 @@ export interface Player {
   position?: string;
   /** Capacidad natural; `position` sigue representando el rol funcional inicial. */
   goalkeeperCapable?: boolean;
+  /** Perfil maestro congelado; no determina el slot funcional durante el partido. */
+  naturalPosition?: FutsalPosition;
+  dateOfBirth?: string;
   dominantFoot?: DominantFoot;
 }
 
@@ -31,6 +35,12 @@ export interface MasterPlayer {
   displayName: string;
   number: number;
   photoUrl?: string;
+  dateOfBirth?: string;
+  primaryPosition?: FutsalPosition;
+  dominantFoot?: Exclude<DominantFoot, "UNKNOWN">;
+  /** Capacidad del perfil, independiente del rol funcional que ocupa en pista. */
+  canPlayGoalkeeper?: boolean;
+  /** Compatibilidad V1 inicial; preferir `canPlayGoalkeeper`. */
   role: MasterPlayerRole;
   active: boolean;
   createdAt: number;
@@ -64,6 +74,7 @@ export interface TeamRoster {
 
 export type MatchLifecycleStatus = "DRAFT" | "READY" | "LIVE" | "FINISHED";
 export type MatchVenue = "HOME" | "AWAY";
+export type CompetitionType = "LEAGUE" | "CUP" | "FRIENDLY" | "OTHER";
 
 export interface MatchPreparation {
   teamId: string;
@@ -71,9 +82,11 @@ export interface MatchPreparation {
   venue: MatchVenue;
   date: string;
   time?: string;
+  competitionType?: CompetitionType;
+  competitionOtherDetail?: string;
   competition?: string;
   category?: string;
-  matchday?: string;
+  matchday?: number;
   status: MatchLifecycleStatus;
   calledPlayerIds: string[];
   starterPlayerIds: string[];
@@ -267,7 +280,7 @@ export interface FoulRecordedEvent extends MatchEventBase {
   side: DisciplineSide;
   source: "live" | "legacy_local";
   /** Jugador CDA que comete (FOR) o recibe (AGAINST) la falta. */
-  playerId?: string;
+  playerId: string | null;
   /** Posición opcional, normalizada y enriquecible tras el partido. */
   origin?: NormalizedCoordinates;
 }

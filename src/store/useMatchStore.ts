@@ -174,6 +174,7 @@ interface MatchState {
   startSecondPeriod: (matchId: string) => void;
   resumeFirstPeriod: (matchId: string) => void;
   startPeriodReview: (matchId: string, period: number) => void;
+  startFinishedReview: (matchId: string) => void;
   setReviewMinute: (matchId: string, minute: number) => void;
   stopPeriodReview: (matchId: string) => void;
   recordThreat: (matchId: string, input: RecordThreatInput) => void;
@@ -185,7 +186,7 @@ interface MatchState {
   recordFoul: (
     matchId: string,
     side: DisciplineSide,
-    playerId: string,
+    playerId?: string | null,
     origin?: NormalizedCoordinates,
   ) => void;
   recordCard: (
@@ -244,6 +245,9 @@ export function createSession(matchId: string): MatchSession {
     position: { period: 1, minute: 0, order: 1 },
     squadPlayerIds: players.map((player) => player.id),
     onCourtPlayerIds: players.slice(0, 5).map((player) => player.id),
+    goalkeeperPlayerId: players.slice(0, 5).find((player) =>
+      player.position?.toUpperCase().includes("PORTERO"),
+    )?.id,
   });
   const initialMinute = 0;
   return {
@@ -366,12 +370,8 @@ function assertPeriodOpen(session: MatchSession): void {
 }
 
 function captureClock(session: MatchSession): EventPosition {
-  if (session.matchFinished) {
-    throw new Error("Partido finalizado. El cierre completo bloquea nuevas capturas.");
-  }
   if (session.reviewPeriod !== undefined) {
     if (
-      session.reviewPeriod === session.period ||
       !session.closedPeriods?.includes(session.reviewPeriod)
     ) {
       throw new Error("El contexto de revisión ya no es válido.");
@@ -381,6 +381,9 @@ function captureClock(session: MatchSession): EventPosition {
       minute: session.reviewMinute ?? REGULATION_MATCH_CLOCK.periodDurationMinutes,
       order: 1,
     };
+  }
+  if (session.matchFinished) {
+    throw new Error("Partido finalizado. Entra en revisión para corregir la cronología.");
   }
   assertPeriodOpen(session);
   return { period: session.period, minute: session.minute, order: 1 };
@@ -481,6 +484,16 @@ export const useMatchStore = create<MatchState>((set) => ({
           reviewMinute: undefined,
           matchFinished:
             finishedClock.period === REGULATION_MATCH_CLOCK.regulationPeriods,
+          preparation: finishedClock.preparation
+            ? {
+                ...finishedClock.preparation,
+                status:
+                  finishedClock.period === REGULATION_MATCH_CLOCK.regulationPeriods
+                    ? "FINISHED"
+                    : finishedClock.preparation.status,
+                updatedAt: Date.now(),
+              }
+            : undefined,
           lastError: null,
         };
       }),
@@ -549,22 +562,39 @@ export const useMatchStore = create<MatchState>((set) => ({
     set((state) =>
       updateAndPersistSession(state, matchId, (session) => {
         const target = normalizeMatchClock(period, 0).period;
-        if (
-          session.matchFinished ||
-          target === session.period ||
-          !session.closedPeriods?.includes(target)
-        ) {
+        if (!session.closedPeriods?.includes(target) || (!session.matchFinished && target === session.period)) {
           return {
             ...session,
-            lastError: session.matchFinished
-              ? "El partido está finalizado. La revisión completa pertenece al futuro módulo de Revisión."
-              : "Solo puede revisarse deliberadamente un periodo anterior ya finalizado.",
+            lastError: "Solo puede revisarse deliberadamente un periodo ya finalizado.",
           };
         }
         return {
           ...session,
           reviewPeriod: target,
           reviewMinute: REGULATION_MATCH_CLOCK.periodDurationMinutes,
+          lastError: null,
+        };
+      }),
+    ),
+
+  startFinishedReview: (matchId) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => {
+        if (!session.matchFinished) {
+          return { ...session, lastError: "El partido todavía no está finalizado." };
+        }
+        const closedPeriods = session.closedPeriods?.length
+          ? session.closedPeriods
+          : Array.from(
+              { length: REGULATION_MATCH_CLOCK.regulationPeriods },
+              (_, index) => index + 1,
+            );
+        const target = Math.max(...closedPeriods);
+        return {
+          ...session,
+          closedPeriods,
+          reviewPeriod: target,
+          reviewMinute: session.periodMinutes[target] ?? REGULATION_MATCH_CLOCK.periodDurationMinutes,
           lastError: null,
         };
       }),

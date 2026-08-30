@@ -92,6 +92,9 @@ function isPlayer(value: unknown): value is Player {
     typeof value.number === "number" &&
     (value.fullName === undefined || typeof value.fullName === "string") &&
     (value.goalkeeperCapable === undefined || typeof value.goalkeeperCapable === "boolean") &&
+    (value.naturalPosition === undefined || ["GOALKEEPER", "FIXO", "WINGER", "PIVOT", "UNIVERSAL"].includes(String(value.naturalPosition))) &&
+    (value.dateOfBirth === undefined || typeof value.dateOfBirth === "string") &&
+    (value.dominantFoot === undefined || ["RIGHT", "LEFT", "BOTH", "UNKNOWN"].includes(String(value.dominantFoot))) &&
     (value.photoUrl === undefined || typeof value.photoUrl === "string")
   );
 }
@@ -202,9 +205,8 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
     return (
       (value.side === "FOR" || value.side === "AGAINST") &&
       (value.source === "live" || value.source === "legacy_local") &&
-      (value.playerId === undefined || typeof value.playerId === "string") &&
-      (value.origin === undefined || isOrigin(value.origin)) &&
-      (value.source !== "live" || typeof value.playerId === "string")
+      (value.playerId === null || typeof value.playerId === "string") &&
+      (value.origin === undefined || isOrigin(value.origin))
     );
   }
   if (value.type === "card_recorded") {
@@ -267,6 +269,9 @@ function migrateEvent(value: unknown): unknown {
   let migrated = value;
   if (migrated.type === "foul_recorded" && migrated.source === undefined) {
     migrated = { ...migrated, source: "legacy_local" };
+  }
+  if (migrated.type === "foul_recorded" && migrated.playerId === undefined) {
+    migrated = { ...migrated, playerId: null };
   }
   if (migrated.type === "threat_recorded" && migrated.sequenceId === undefined) {
     migrated = { ...migrated, sequenceId: migrated.id };
@@ -338,8 +343,20 @@ function migratePersistedSession(value: unknown): unknown {
         }),
       )
     : {};
+  const preparation = isObject(value.preparation)
+    ? {
+        ...value.preparation,
+        matchday:
+          typeof value.preparation.matchday === "string"
+            ? /^\d+$/.test(value.preparation.matchday) && Number(value.preparation.matchday) > 0
+              ? Number(value.preparation.matchday)
+              : undefined
+            : value.preparation.matchday,
+      }
+    : value.preparation;
   return {
     ...value,
+    preparation,
     ...clock,
     staff: Array.isArray(value.staff) ? value.staff : [],
     periodMinutes,
@@ -374,6 +391,11 @@ function validPreparation(value: unknown): value is MatchPreparation {
     typeof value.opponent === "string" &&
     (value.venue === "HOME" || value.venue === "AWAY") &&
     typeof value.date === "string" &&
+    (value.competitionType === undefined || ["LEAGUE", "CUP", "FRIENDLY", "OTHER"].includes(String(value.competitionType))) &&
+    (value.competitionOtherDetail === undefined || typeof value.competitionOtherDetail === "string") &&
+    (value.competition === undefined || typeof value.competition === "string") &&
+    (value.category === undefined || typeof value.category === "string") &&
+    (value.matchday === undefined || (typeof value.matchday === "number" && Number.isInteger(value.matchday) && value.matchday > 0)) &&
     ["DRAFT", "READY", "LIVE", "FINISHED"].includes(String(value.status)) &&
     isStringArray(value.calledPlayerIds) &&
     isStringArray(value.starterPlayerIds) &&

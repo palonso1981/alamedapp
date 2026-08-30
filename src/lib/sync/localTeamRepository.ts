@@ -46,6 +46,10 @@ function validPlayer(value: unknown): value is MasterPlayer {
     typeof player.displayName === "string" &&
     typeof player.number === "number" &&
     (player.role === "GOALKEEPER" || player.role === "FIELD") &&
+    (player.dateOfBirth === undefined || typeof player.dateOfBirth === "string") &&
+    (player.primaryPosition === undefined || ["GOALKEEPER", "FIXO", "WINGER", "PIVOT", "UNIVERSAL"].includes(String(player.primaryPosition))) &&
+    (player.dominantFoot === undefined || ["RIGHT", "LEFT", "BOTH"].includes(String(player.dominantFoot))) &&
+    (player.canPlayGoalkeeper === undefined || typeof player.canPlayGoalkeeper === "boolean") &&
     typeof player.active === "boolean" &&
     typeof player.createdAt === "number" &&
     typeof player.updatedAt === "number"

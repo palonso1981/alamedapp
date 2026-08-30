@@ -59,8 +59,9 @@ function courtPlayerPosition(
   slotId: string,
   onCourtIds: readonly string[],
   players: readonly Player[],
+  functionalGoalkeeperId?: string,
 ) {
-  const keeperId = onCourtIds.find((id) =>
+  const keeperId = functionalGoalkeeperId ?? onCourtIds.find((id) =>
     players.find((player) => player.id === id)?.position
       ?.toUpperCase()
       .includes("PORTERO"),
@@ -105,6 +106,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const startSecondPeriod = useMatchStore((state) => state.startSecondPeriod);
   const resumeFirstPeriod = useMatchStore((state) => state.resumeFirstPeriod);
   const startPeriodReview = useMatchStore((state) => state.startPeriodReview);
+  const startFinishedReview = useMatchStore((state) => state.startFinishedReview);
   const setReviewMinute = useMatchStore((state) => state.setReviewMinute);
   const stopPeriodReview = useMatchStore((state) => state.stopPeriodReview);
   const recordThreat = useMatchStore((state) => state.recordThreat);
@@ -140,6 +142,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const [disciplineFocus, setDisciplineFocus] = useState<DisciplineFocusRequest | null>(null);
   const [selectingFlyingGoalkeeper, setSelectingFlyingGoalkeeper] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [genericFoulConfirm, setGenericFoulConfirm] = useState<"FOR" | "AGAINST" | null>(null);
 
   useEffect(() => {
     const savedSide = window.localStorage.getItem(CLOCK_SIDE_STORAGE_KEY);
@@ -166,6 +169,12 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     const timeout = window.setTimeout(() => setFeedback(null), 1_800);
     return () => window.clearTimeout(timeout);
   }, [feedback]);
+
+  useEffect(() => {
+    if (!genericFoulConfirm) return;
+    const timeout = window.setTimeout(() => setGenericFoulConfirm(null), 3_000);
+    return () => window.clearTimeout(timeout);
+  }, [genericFoulConfirm]);
 
   const capturePeriod = session?.reviewPeriod ?? session?.period ?? 1;
   const captureMinute = session?.reviewPeriod !== undefined
@@ -250,6 +259,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         selectedCourtPlayerId,
         replay.onCourtPlayerIds,
         session.players,
+        replay.lineupValidation.goalkeeper.status === "PLAYER"
+          ? replay.lineupValidation.goalkeeper.playerId
+          : undefined,
       )
     : undefined;
   const pendingThreat =
@@ -273,7 +285,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     window.localStorage.setItem(CLOCK_VERTICAL_STORAGE_KEY, slot);
   };
 
-  const periodClosed = session.matchFinished || (session.reviewPeriod === undefined && (session.closedPeriods?.includes(session.period) || false));
+  const periodClosed = session.reviewPeriod === undefined && (session.matchFinished || (session.closedPeriods?.includes(session.period) || false));
   const lineupBlocked = replay.lineupValidation.captureBlocked;
   const captureBlocked = lineupBlocked || periodClosed;
   const blockedAction = () => {
@@ -354,6 +366,17 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const recordPlayerFoul = (playerId: string, received: boolean) => {
     recordFoul(matchId, received ? "AGAINST" : "FOR", playerId);
     finishPlayerAction(received ? "✓ Falta recibida" : "✓ Falta cometida");
+  };
+
+  const recordGenericFoul = (side: "FOR" | "AGAINST") => {
+    if (captureBlocked) return blockedAction();
+    if (genericFoulConfirm !== side) {
+      setGenericFoulConfirm(side);
+      return;
+    }
+    recordFoul(matchId, side, null);
+    setGenericFoulConfirm(null);
+    setFeedback(side === "FOR" ? "✓ Falta CDA · sin asignar" : "✓ Falta recibida · sin asignar");
   };
 
   const recordPlayerCard = (
@@ -448,6 +471,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             totalFor={chronologyReplay.discipline.for}
             totalAgainst={chronologyReplay.discipline.against}
             foulThresholds={FOUL_THRESHOLDS}
+            onGenericFoul={recordGenericFoul}
+            confirmFoulSide={genericFoulConfirm}
             onInspect={(side, kind) => {
               setDisciplineFocus({ token: Date.now(), side, kind, period: capturePeriod });
               setHistoryOpen(true);
@@ -509,11 +534,19 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         </div>
       </header>
 
+      {session.matchFinished && session.reviewPeriod === undefined && (
+        <section className="mx-auto mb-2 flex max-w-4xl items-center justify-between gap-3 rounded-2xl border border-slate-600 bg-slate-900 px-4 py-3">
+          <div><p className="text-sm font-black text-slate-100">PARTIDO FINALIZADO</p><p className="text-[10px] font-bold text-slate-400">La captura está cerrada; la cronología sigue siendo corregible.</p></div>
+          <button type="button" onClick={() => { setInteraction(IDLE_LIVE_INTERACTION); startFinishedReview(matchId); }} className="min-h-12 rounded-xl bg-amber-400 px-4 text-xs font-black text-slate-950">REVISAR / CORREGIR</button>
+        </section>
+      )}
+
       {session.reviewPeriod !== undefined && (
         <PeriodReviewBanner
           activePeriod={session.period}
           reviewPeriod={session.reviewPeriod}
           reviewMinute={session.reviewMinute ?? 20}
+          matchFinished={session.matchFinished ?? false}
           onMinuteChange={(minute) => {
             setInteraction(IDLE_LIVE_INTERACTION);
             setReviewMinute(matchId, minute);
@@ -627,6 +660,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 slotId,
                 replay.onCourtPlayerIds,
                 session.players,
+                replay.lineupValidation.goalkeeper.status === "PLAYER"
+                  ? replay.lineupValidation.goalkeeper.playerId
+                  : undefined,
               );
               if (slotId === INFERIORITY_SLOT_ID) {
                 const selected = selectedPlayerId === slotId;
@@ -821,6 +857,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             onDismissError={() => clearError(matchId)}
             disciplineFocusRequest={disciplineFocus}
             activePeriod={session.period}
+            matchFinished={session.matchFinished ?? false}
             closedPeriods={session.closedPeriods ?? []}
             reviewPeriod={session.reviewPeriod}
             onStartPeriodReview={(period) => {

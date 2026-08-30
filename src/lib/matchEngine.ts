@@ -171,7 +171,7 @@ export interface GameStateEventInput extends EventFactoryBase {
 
 export interface FoulEventInput extends EventFactoryBase {
   side: DisciplineSide;
-  playerId: string;
+  playerId?: string | null;
   origin?: NormalizedCoordinates;
 }
 
@@ -292,7 +292,7 @@ export function createFoulEvent(input: FoulEventInput): FoulRecordedEvent {
     type: "foul_recorded",
     side: input.side,
     source: "live",
-    playerId: input.playerId,
+    playerId: input.playerId ?? null,
     origin: input.origin ? { ...input.origin } : undefined,
   };
 }
@@ -510,11 +510,7 @@ export function deriveGoalkeeperReference(
     !flyingGoalkeeperActive &&
     explicitGoalkeeperPlayerId &&
     onCourt.has(explicitGoalkeeperPlayerId) &&
-    players.some(
-      (player) =>
-        player.id === explicitGoalkeeperPlayerId &&
-        (player.goalkeeperCapable || goalkeeperRole(player, false)),
-    )
+    players.some((player) => player.id === explicitGoalkeeperPlayerId)
   ) {
     return {
       status: "PLAYER",
@@ -863,11 +859,17 @@ export function replayMatch(
 
       squadPlayerIds = [...event.squadPlayerIds];
       onCourtPlayerIds = [...event.onCourtPlayerIds];
+      const legacyGoalkeeperCandidates = event.onCourtPlayerIds.filter((playerId) => {
+        const player = players.find((candidate) => candidate.id === playerId);
+        return player && (player.goalkeeperCapable || goalkeeperRole(player, false));
+      });
       explicitGoalkeeperPlayerId =
         event.goalkeeperPlayerId &&
         event.onCourtPlayerIds.includes(event.goalkeeperPlayerId)
           ? event.goalkeeperPlayerId
-          : undefined;
+          : legacyGoalkeeperCandidates.length === 1
+            ? legacyGoalkeeperCandidates[0]
+            : undefined;
       inferiorityCause = undefined;
       refreshBench();
       enteredAt.clear();
@@ -937,12 +939,14 @@ export function replayMatch(
           id === event.playerOutId ? event.playerInId : id,
         );
         if (explicitGoalkeeperPlayerId === event.playerOutId) {
-          const incoming = players.find((player) => player.id === event.playerInId);
-          explicitGoalkeeperPlayerId =
-            incoming &&
-            (incoming.goalkeeperCapable || goalkeeperRole(incoming, false))
-              ? incoming.id
-              : undefined;
+          explicitGoalkeeperPlayerId = incomingIsInferiority
+            ? undefined
+            : event.playerInId;
+        }
+        if (flyingGoalkeeperPlayerId === event.playerOutId) {
+          flyingGoalkeeperPlayerId = incomingIsInferiority
+            ? undefined
+            : event.playerInId;
         }
         enteredAt.delete(event.playerOutId);
         enteredAt.set(event.playerInId, eventElapsedMinute);
@@ -1141,17 +1145,7 @@ export function replayMatch(
           "La ubicación opcional de la falta debe usar coordenadas entre 0 y 1.",
         );
       }
-      if (
-        event.source === "live" &&
-        (!event.playerId || !squadPlayerIds.includes(event.playerId))
-      ) {
-        issue(
-          issues,
-          event,
-          "INVALID_FOUL_PLAYER",
-          "Una falta en directo debe identificar al jugador CDA implicado.",
-        );
-      } else if (event.playerId && !squadPlayerIds.includes(event.playerId)) {
+      if (event.playerId && !squadPlayerIds.includes(event.playerId)) {
         issue(
           issues,
           event,

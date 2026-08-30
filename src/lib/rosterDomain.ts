@@ -6,6 +6,8 @@ import {
   Player,
   StaffMember,
   TeamRoster,
+  DominantFoot,
+  FutsalPosition,
 } from "../types";
 
 export interface MasterPlayerInput {
@@ -14,6 +16,10 @@ export interface MasterPlayerInput {
   number: number;
   photoUrl?: string;
   role: MasterPlayerRole;
+  dateOfBirth?: string;
+  primaryPosition?: FutsalPosition;
+  dominantFoot?: Exclude<DominantFoot, "UNKNOWN">;
+  canPlayGoalkeeper?: boolean;
 }
 
 export interface MasterStaffInput {
@@ -43,6 +49,19 @@ function validNumber(number: number): number {
   return normalized;
 }
 
+function validDateOfBirth(value?: string): string | undefined {
+  const cleaned = cleanOptional(value);
+  if (!cleaned) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(cleaned) || Number.isNaN(Date.parse(`${cleaned}T00:00:00Z`))) {
+    throw new Error("La fecha de nacimiento no es válida.");
+  }
+  return cleaned;
+}
+
+export function canPlayGoalkeeper(player: MasterPlayer): boolean {
+  return player.canPlayGoalkeeper ?? player.role === "GOALKEEPER";
+}
+
 export function assertUniqueActiveNumber(
   players: readonly MasterPlayer[],
   number: number,
@@ -67,13 +86,18 @@ export function createMasterPlayer(
   const number = validNumber(input.number);
   assertUniqueActiveNumber(players, number);
   const now = options.now ?? Date.now();
+  const goalkeeperCapable = input.canPlayGoalkeeper ?? input.role === "GOALKEEPER";
   return {
     playerId: options.id ?? globalThis.crypto.randomUUID(),
     fullName: cleanRequired(input.fullName, "El nombre"),
     displayName: cleanRequired(input.displayName, "El nombre corto"),
     number,
     photoUrl: cleanOptional(input.photoUrl),
-    role: input.role,
+    dateOfBirth: validDateOfBirth(input.dateOfBirth),
+    primaryPosition: input.primaryPosition,
+    dominantFoot: input.dominantFoot,
+    canPlayGoalkeeper: goalkeeperCapable,
+    role: goalkeeperCapable ? "GOALKEEPER" : "FIELD",
     active: true,
     createdAt: now,
     updatedAt: now,
@@ -88,6 +112,11 @@ export function updateMasterPlayer(
 ): MasterPlayer[] {
   const current = players.find((player) => player.playerId === playerId);
   if (!current) throw new Error("El jugador no existe en la plantilla.");
+  const goalkeeperCapable =
+    changes.canPlayGoalkeeper ??
+    (changes.role !== undefined
+      ? changes.role === "GOALKEEPER"
+      : canPlayGoalkeeper(current));
   const next: MasterPlayer = {
     ...current,
     fullName:
@@ -104,7 +133,20 @@ export function updateMasterPlayer(
       changes.photoUrl === undefined
         ? current.photoUrl
         : cleanOptional(changes.photoUrl),
-    role: changes.role ?? current.role,
+    dateOfBirth:
+      changes.dateOfBirth === undefined
+        ? current.dateOfBirth
+        : validDateOfBirth(changes.dateOfBirth),
+    primaryPosition:
+      changes.primaryPosition === undefined
+        ? current.primaryPosition
+        : changes.primaryPosition,
+    dominantFoot:
+      changes.dominantFoot === undefined
+        ? current.dominantFoot
+        : changes.dominantFoot,
+    canPlayGoalkeeper: goalkeeperCapable,
+    role: goalkeeperCapable ? "GOALKEEPER" : "FIELD",
     active: changes.active ?? current.active,
     updatedAt: now,
   };
@@ -165,7 +207,7 @@ export function updateMasterStaff(
 
 export function playerSnapshot(
   player: MasterPlayer,
-  functionalGoalkeeper = player.role === "GOALKEEPER",
+  functionalGoalkeeper = canPlayGoalkeeper(player),
 ): Player {
   return {
     id: player.playerId,
@@ -174,7 +216,10 @@ export function playerSnapshot(
     number: player.number,
     photoUrl: player.photoUrl,
     position: functionalGoalkeeper ? "PORTERO" : "JUGADOR",
-    goalkeeperCapable: player.role === "GOALKEEPER",
+    goalkeeperCapable: canPlayGoalkeeper(player),
+    naturalPosition: player.primaryPosition,
+    dateOfBirth: player.dateOfBirth,
+    dominantFoot: player.dominantFoot,
   };
 }
 

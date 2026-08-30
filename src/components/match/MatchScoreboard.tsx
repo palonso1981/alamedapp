@@ -14,6 +14,8 @@ interface MatchScoreboardProps {
   totalAgainst: DisciplineTeamSummary;
   foulThresholds?: readonly number[];
   onInspect: (side: DisciplineFocusSide, kind: DisciplineFocusKind) => void;
+  onGenericFoul: (side: DisciplineFocusSide) => void;
+  confirmFoulSide?: DisciplineFocusSide | null;
   onRivalYellow: () => void;
   onRivalRed: () => void;
 }
@@ -27,6 +29,8 @@ export function MatchScoreboard({
   totalAgainst,
   foulThresholds = [],
   onInspect,
+  onGenericFoul,
+  confirmFoulSide,
   onRivalYellow,
   onRivalRed,
 }: MatchScoreboardProps) {
@@ -43,6 +47,8 @@ export function MatchScoreboard({
         totalDiscipline={totalFor}
         foulThresholds={foulThresholds}
         onInspect={onInspect}
+        onGenericFoul={onGenericFoul}
+        confirmingFoul={confirmFoulSide === "FOR"}
       />
       <div className="grid min-w-[4.75rem] place-items-center border-x border-slate-700 bg-slate-900 px-2 font-mono text-3xl font-black tabular-nums text-white sm:min-w-24 sm:text-4xl">
         {score.for}–{score.against}
@@ -55,6 +61,8 @@ export function MatchScoreboard({
         totalDiscipline={totalAgainst}
         foulThresholds={foulThresholds}
         onInspect={onInspect}
+        onGenericFoul={onGenericFoul}
+        confirmingFoul={confirmFoulSide === "AGAINST"}
         onYellow={onRivalYellow}
         onRed={onRivalRed}
       />
@@ -62,7 +70,7 @@ export function MatchScoreboard({
   );
 }
 
-function TeamDiscipline({ label, side, period, periodDiscipline, totalDiscipline, foulThresholds, onInspect, onYellow, onRed }: {
+function TeamDiscipline({ label, side, period, periodDiscipline, totalDiscipline, foulThresholds, onInspect, onGenericFoul, confirmingFoul, onYellow, onRed }: {
   label: string;
   side: DisciplineFocusSide;
   period: number;
@@ -70,6 +78,8 @@ function TeamDiscipline({ label, side, period, periodDiscipline, totalDiscipline
   totalDiscipline: DisciplineTeamSummary;
   foulThresholds: readonly number[];
   onInspect: (side: DisciplineFocusSide, kind: DisciplineFocusKind) => void;
+  onGenericFoul: (side: DisciplineFocusSide) => void;
+  confirmingFoul: boolean;
   onYellow?: () => void;
   onRed?: () => void;
 }) {
@@ -85,6 +95,9 @@ function TeamDiscipline({ label, side, period, periodDiscipline, totalDiscipline
       <div className="flex items-center gap-1">
         <button type="button" onClick={() => onInspect(side, "FOUL")} className={`min-h-10 min-w-11 rounded-lg border px-1 font-mono text-xl font-black ${thresholdReached ? "border-red-300 bg-red-600 text-white" : nearThreshold ? "border-amber-300 bg-amber-950 text-amber-100" : "border-slate-700 bg-slate-900 text-orange-200"}`} aria-label={`Faltas ${label} del periodo ${period}: ${periodDiscipline.fouls}`}>
           F{periodDiscipline.fouls}
+        </button>
+        <button type="button" onClick={() => onGenericFoul(side)} className={`grid min-h-10 min-w-10 place-items-center rounded-lg border text-lg font-black ${confirmingFoul ? "border-emerald-200 bg-emerald-500 text-slate-950" : "border-slate-700 bg-slate-900 text-orange-200"}`} aria-label={confirmingFoul ? `Confirmar falta ${label} sin jugador` : `Añadir falta ${label} sin jugador`}>
+          {confirmingFoul ? "✓" : "+"}
         </button>
         <CardCounter color="YELLOW" count={totalDiscipline.yellowCards} onClick={onYellow ?? (() => onInspect(side, "CARD"))} add={Boolean(onYellow)} label={label} />
         <CardCounter color="RED" count={totalDiscipline.redCards} onClick={onRed ?? (() => onInspect(side, "CARD"))} add={Boolean(onRed)} label={label} />

@@ -1,7 +1,8 @@
 import { createLineupInitializedEvent } from "./matchEngine";
-import { playerSnapshot, staffSnapshot } from "./rosterDomain";
+import { canPlayGoalkeeper, playerSnapshot, staffSnapshot } from "./rosterDomain";
 import {
   CDA_TEAM_ID,
+  CompetitionType,
   MatchPreparation,
   MatchSession,
   MatchVenue,
@@ -16,9 +17,11 @@ export interface CreateMatchInput {
   venue: MatchVenue;
   date: string;
   time?: string;
+  competitionType?: CompetitionType;
+  competitionOtherDetail?: string;
   competition?: string;
   category?: string;
-  matchday?: string;
+  matchday?: number;
 }
 
 export interface PreparationValidation {
@@ -79,9 +82,17 @@ export function createDraftMatch(
       venue: input.venue,
       date: input.date,
       time: cleaned(input.time),
+      competitionType: input.competitionType,
+      competitionOtherDetail:
+        input.competitionType === "OTHER"
+          ? cleaned(input.competitionOtherDetail)
+          : undefined,
       competition: cleaned(input.competition),
       category: cleaned(input.category),
-      matchday: cleaned(input.matchday),
+      matchday:
+        Number.isFinite(input.matchday) && (input.matchday ?? 0) > 0
+          ? Math.trunc(input.matchday!)
+          : undefined,
       status: "DRAFT",
       calledPlayerIds: [],
       starterPlayerIds: [],
@@ -125,6 +136,13 @@ export function updateMatchDetails(
       venue: changes.venue ?? preparation.venue,
       date: changes.date ?? preparation.date,
       time: changes.time === undefined ? preparation.time : cleaned(changes.time),
+      competitionType: changes.competitionType ?? preparation.competitionType,
+      competitionOtherDetail:
+        changes.competitionType !== undefined && changes.competitionType !== "OTHER"
+          ? undefined
+          : changes.competitionOtherDetail === undefined
+            ? preparation.competitionOtherDetail
+            : cleaned(changes.competitionOtherDetail),
       competition:
         changes.competition === undefined
           ? preparation.competition
@@ -133,10 +151,11 @@ export function updateMatchDetails(
         changes.category === undefined
           ? preparation.category
           : cleaned(changes.category),
-      matchday:
-        changes.matchday === undefined
-          ? preparation.matchday
-          : cleaned(changes.matchday),
+      matchday: changes.matchday === undefined
+        ? preparation.matchday
+        : Number.isFinite(changes.matchday) && changes.matchday > 0
+          ? Math.trunc(changes.matchday)
+          : undefined,
       status: "DRAFT",
       updatedAt: now,
     },
@@ -195,7 +214,7 @@ export function toggleStarter(
     : [...preparation.starterPlayerIds, playerId];
   const next: MatchPreparation = {
     ...preparation,
-    status: "DRAFT",
+    status: preparation.status,
     starterPlayerIds,
     startingGoalkeeperId:
       preparation.startingGoalkeeperId && starterPlayerIds.includes(preparation.startingGoalkeeperId)
@@ -214,12 +233,12 @@ export function selectStartingGoalkeeper(
 ): MatchSession {
   const preparation = assertEditable(session);
   const player = roster.players.find((candidate) => candidate.playerId === playerId);
-  if (!preparation.starterPlayerIds.includes(playerId) || player?.role !== "GOALKEEPER") {
+  if (!preparation.starterPlayerIds.includes(playerId) || !player || !canPlayGoalkeeper(player)) {
     throw new Error("El portero inicial debe ser un portero incluido en el quinteto.");
   }
   return withRosterSnapshots(session, roster, {
     ...preparation,
-    status: "DRAFT",
+    status: preparation.status,
     startingGoalkeeperId: playerId,
     updatedAt: now,
   });
@@ -237,7 +256,7 @@ export function toggleMatchStaff(
   const selected = preparation.selectedStaffIds.includes(staffId);
   return withRosterSnapshots(session, roster, {
     ...preparation,
-    status: "DRAFT",
+    status: preparation.status,
     selectedStaffIds: selected
       ? preparation.selectedStaffIds.filter((id) => id !== staffId)
       : [...preparation.selectedStaffIds, staffId],
@@ -262,7 +281,7 @@ export function setTargetMinutes(
     ...session,
     preparation: {
       ...preparation,
-      status: "DRAFT",
+      status: preparation.status,
       targetMinutes: targets,
       updatedAt: now,
     },
@@ -280,10 +299,22 @@ export function validatePreparation(
   if (!preparation.date) reasons.push("Indica la fecha.");
   if (preparation.calledPlayerIds.length < STARTER_COUNT) reasons.push("Convoca al menos cinco jugadores.");
   if (preparation.calledPlayerIds.length > MAX_CALLED_PLAYERS) reasons.push("La convocatoria supera 13 jugadores.");
+  if (preparation.calledPlayerIds.some((id) => !roster.players.some((player) => player.playerId === id))) reasons.push("La convocatoria contiene jugadores que ya no existen en Plantilla.");
+  return { valid: reasons.length === 0, reasons };
+}
+
+export function validateStartingLineup(
+  session: MatchSession,
+  roster: TeamRoster,
+): PreparationValidation {
+  const preparation = session.preparation;
+  const base = validatePreparation(session, roster);
+  if (!preparation) return base;
+  const reasons = [...base.reasons];
   if (preparation.starterPlayerIds.length !== STARTER_COUNT) reasons.push("Selecciona exactamente cinco titulares.");
   if (preparation.starterPlayerIds.some((id) => !preparation.calledPlayerIds.includes(id))) reasons.push("Todos los titulares deben estar convocados.");
   const goalkeeper = roster.players.find((player) => player.playerId === preparation.startingGoalkeeperId);
-  if (!goalkeeper || goalkeeper.role !== "GOALKEEPER" || !preparation.starterPlayerIds.includes(goalkeeper.playerId)) reasons.push("Selecciona un portero funcional entre los cinco titulares.");
+  if (!goalkeeper || !canPlayGoalkeeper(goalkeeper) || !preparation.starterPlayerIds.includes(goalkeeper.playerId)) reasons.push("Selecciona un portero funcional entre los cinco titulares.");
   return { valid: reasons.length === 0, reasons };
 }
 
@@ -312,6 +343,8 @@ export function startPreparedMatch(
     return session;
   }
   const ready = markMatchReady(session, roster, now);
+  const startValidation = validateStartingLineup(ready, roster);
+  if (!startValidation.valid) throw new Error(startValidation.reasons.join(" "));
   const preparation = ready.preparation!;
   const lineup = createLineupInitializedEvent({
     id: `lineup-${session.matchId}-initial`,

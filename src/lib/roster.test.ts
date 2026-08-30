@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createDraftMatch,
+  markMatchReady,
   plannedMinutes,
   selectStartingGoalkeeper,
   setTargetMinutes,
@@ -11,6 +12,7 @@ import {
   toggleMatchStaff,
   toggleStarter,
   validatePreparation,
+  validateStartingLineup,
 } from "./preMatch";
 import {
   createMasterPlayer,
@@ -51,7 +53,7 @@ class TeamRemote implements RevisionedRemoteRepository<TeamSyncOperation> {
 
 function rosterFixture(): TeamRoster {
   const players: MasterPlayer[] = [
-    createMasterPlayer([], { fullName: "Daniel Portero", displayName: "Dani", number: 1, role: "GOALKEEPER" }, { id: "gk-1", now: 1 }),
+    createMasterPlayer([], { fullName: "Daniel Portero", displayName: "Dani", number: 1, role: "GOALKEEPER", dateOfBirth: "2000-01-02", primaryPosition: "GOALKEEPER", dominantFoot: "RIGHT", canPlayGoalkeeper: true }, { id: "gk-1", now: 1 }),
   ];
   for (let index = 2; index <= 8; index += 1) {
     players.push(createMasterPlayer(players, { fullName: `Jugador ${index}`, displayName: `J${index}`, number: index, role: index === 8 ? "GOALKEEPER" : "FIELD" }, { id: `p-${index}`, now: index }));
@@ -72,6 +74,27 @@ test("jugador maestro conserva ID al editar dorsal, nombre, rol y estado", () =>
   assert.equal(edited.active, false);
   assert.equal(edited.createdAt, 10);
   assert.equal(edited.updatedAt, 20);
+});
+
+test("ficha maestra separa perfil natural, capacidad de portero y rol funcional", () => {
+  const player = createMasterPlayer([], {
+    fullName: "Lucía Universal",
+    displayName: "Lucía",
+    number: 13,
+    role: "FIELD",
+    dateOfBirth: "2004-02-29",
+    primaryPosition: "UNIVERSAL",
+    dominantFoot: "BOTH",
+    canPlayGoalkeeper: true,
+  }, { id: "profile-player", now: 1 });
+  assert.equal(player.playerId, "profile-player");
+  assert.equal(player.primaryPosition, "UNIVERSAL");
+  assert.equal(player.canPlayGoalkeeper, true);
+  const snapshot = playerSnapshot(player, false);
+  assert.equal(snapshot.position, "JUGADOR");
+  assert.equal(snapshot.goalkeeperCapable, true);
+  assert.equal(snapshot.naturalPosition, "UNIVERSAL");
+  assert.equal(snapshot.dateOfBirth, "2004-02-29");
 });
 
 test("dorsales activos no se duplican y un inactivo no bloquea el dorsal", () => {
@@ -100,6 +123,9 @@ test("plantilla persiste offline, reaparece y sincroniza fichas sin duplicados",
   assert.equal(local.getSummary(roster.teamId).pending, 9);
   const reopened = new LocalTeamRepository({ storage, idFactory: () => `reopen-${++id}` });
   assert.equal(reopened.load(roster.teamId).players.length, 8);
+  assert.equal(reopened.load(roster.teamId).players[0].primaryPosition, "GOALKEEPER");
+  assert.equal(reopened.load(roster.teamId).players[0].dateOfBirth, "2000-01-02");
+  assert.equal(reopened.load(roster.teamId).players[0].canPlayGoalkeeper, true);
   assert.equal(reopened.load(roster.teamId).staff.length, 1);
   remote.online = true;
   const reopenedCoordinator = new SyncCoordinator(reopened, remote, { isOnline: () => true });
@@ -135,6 +161,33 @@ test("Prepartido deriva convocatoria, cinco, banquillo, portero, staff y plan", 
   assert.equal(session.preparation?.starterPlayerIds.length, 5);
   assert.equal(session.preparation!.calledPlayerIds.filter((id) => !session.preparation!.starterPlayerIds.includes(id)).length, 2);
   assert.equal(plannedMinutes(session.preparation), 45);
+});
+
+test("Prepartido puede quedar LISTO sin quinteto pero INICIAR exige cinco y portero", () => {
+  const roster = rosterFixture();
+  let session = createDraftMatch("ready-without-lineup", {
+    opponent: "Rival",
+    venue: "HOME",
+    date: "2026-09-05",
+    competitionType: "LEAGUE",
+    competition: "Liga juvenil",
+    matchday: 4,
+  });
+  for (const player of roster.players.slice(0, 7)) {
+    session = toggleCalledPlayer(session, roster, player.playerId);
+  }
+  assert.equal(validatePreparation(session, roster).valid, true);
+  assert.equal(validateStartingLineup(session, roster).valid, false);
+  session = markMatchReady(session, roster, 10);
+  assert.equal(session.preparation?.status, "READY");
+  assert.throws(() => startPreparedMatch(session, roster), /cinco titulares/i);
+  for (const player of roster.players.slice(0, 5)) {
+    session = toggleStarter(session, roster, player.playerId);
+  }
+  assert.equal(session.preparation?.status, "READY");
+  session = selectStartingGoalkeeper(session, roster, "gk-1");
+  assert.equal(validateStartingLineup(session, roster).valid, true);
+  assert.equal(startPreparedMatch(session, roster).preparation?.status, "LIVE");
 });
 
 test("Prepartido admite 5+8, rechaza el decimocuarto y excluye inactivos", () => {
@@ -192,7 +245,7 @@ test("Prepartido persiste, reabre offline y sincroniza metadata e inicio", async
   const storage = new MemoryStorage(); let nextId = 0;
   const local = new LocalMatchRepository({ storage, idFactory: () => `match-op-${++nextId}` });
   const remote = new InMemoryRemoteMatchRepository(); remote.online = false;
-  const roster = rosterFixture(); let session = createDraftMatch("offline-prematch", { opponent: "Rival offline", venue: "AWAY", date: "2026-09-04" });
+  const roster = rosterFixture(); let session = createDraftMatch("offline-prematch", { opponent: "Rival offline", venue: "AWAY", date: "2026-09-04", competitionType: "CUP", competition: "Copa local", matchday: 2 });
   for (const player of roster.players.slice(0, 7)) session = toggleCalledPlayer(session, roster, player.playerId);
   for (const player of roster.players.slice(0, 5)) session = toggleStarter(session, roster, player.playerId);
   session = selectStartingGoalkeeper(session, roster, "gk-1");
@@ -203,6 +256,9 @@ test("Prepartido persiste, reabre offline y sincroniza metadata e inicio", async
   const reopened = new LocalMatchRepository({ storage, idFactory: () => `reopen-${++nextId}` });
   const loaded = reopened.load(session.matchId)!;
   assert.equal(loaded.preparation?.opponent, "Rival offline");
+  assert.equal(loaded.preparation?.competitionType, "CUP");
+  assert.equal(loaded.preparation?.competition, "Copa local");
+  assert.equal(loaded.preparation?.matchday, 2);
   assert.equal(loaded.preparation?.targetMinutes["p-2"], 17);
   assert.equal(reopened.getSummary(session.matchId).pending, 1);
   const started = startPreparedMatch(loaded, roster);
