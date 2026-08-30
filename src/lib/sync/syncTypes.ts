@@ -1,4 +1,4 @@
-import { MatchEvent, Player, StaffMember } from "../../types";
+import { MatchEvent, MatchPreparation, Player, StaffMember } from "../../types";
 
 export const MATCH_SYNC_SCHEMA_VERSION = 1 as const;
 export const MATCH_REMOTE_SCHEMA_VERSION = 1 as const;
@@ -27,6 +27,7 @@ export interface MatchRemoteMetadata {
   reviewPeriod?: number;
   reviewMinute?: number;
   matchFinished: boolean;
+  preparation?: MatchPreparation;
 }
 
 export type SyncOperationPayload = MatchRemoteMetadata | MatchEvent;

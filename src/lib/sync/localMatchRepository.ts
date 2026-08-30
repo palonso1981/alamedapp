@@ -6,6 +6,7 @@ import {
   saveMatchRecord,
 } from "../matchPersistence";
 import { MatchEvent, MatchSession } from "../../types";
+import { updateMatchCatalog } from "../matchCatalog";
 import {
   emptyMatchSyncState,
   MATCH_REMOTE_SCHEMA_VERSION,
@@ -52,6 +53,7 @@ export function matchRemoteMetadata(session: MatchSession): MatchRemoteMetadata 
     reviewPeriod: session.reviewPeriod,
     reviewMinute: session.reviewMinute,
     matchFinished: session.matchFinished ?? false,
+    preparation: session.preparation,
   };
 }
 
@@ -233,7 +235,10 @@ export class LocalMatchRepository {
       );
     }
     const result = saveMatchRecord(session, sync, storage, now);
-    if (result.ok) this.notify(session.matchId);
+    if (result.ok) {
+      updateMatchCatalog(session, storage);
+      this.notify(session.matchId);
+    }
     return result.ok
       ? { ...result, pending: summarizeSyncState(sync).pending }
       : result;

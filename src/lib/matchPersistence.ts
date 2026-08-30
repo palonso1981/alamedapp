@@ -7,6 +7,7 @@ import {
 import {
   MATCH_EVENT_SCHEMA_VERSION,
   MatchEvent,
+  MatchPreparation,
   MatchSession,
   Player,
   StaffMember,
@@ -28,6 +29,7 @@ export interface LocalStorageAdapter {
 
 interface PersistedMatchSession {
   matchId: string;
+  preparation?: MatchPreparation;
   players: Player[];
   staff: StaffMember[];
   period: number;
@@ -88,6 +90,8 @@ function isPlayer(value: unknown): value is Player {
     typeof value.id === "string" &&
     typeof value.name === "string" &&
     typeof value.number === "number" &&
+    (value.fullName === undefined || typeof value.fullName === "string") &&
+    (value.goalkeeperCapable === undefined || typeof value.goalkeeperCapable === "boolean") &&
     (value.photoUrl === undefined || typeof value.photoUrl === "string")
   );
 }
@@ -97,6 +101,7 @@ function isStaffMember(value: unknown): value is StaffMember {
     isObject(value) &&
     typeof value.id === "string" &&
     typeof value.name === "string" &&
+    (value.fullName === undefined || typeof value.fullName === "string") &&
     typeof value.role === "string" &&
     (value.photoUrl === undefined || typeof value.photoUrl === "string")
   );
@@ -171,7 +176,10 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
   }
   if (value.type === "lineup_initialized") {
     return (
-      isStringArray(value.squadPlayerIds) && isStringArray(value.onCourtPlayerIds)
+      isStringArray(value.squadPlayerIds) &&
+      isStringArray(value.onCourtPlayerIds) &&
+      (value.goalkeeperPlayerId === undefined ||
+        typeof value.goalkeeperPlayerId === "string")
     );
   }
   if (value.type === "substitution") {
@@ -359,6 +367,34 @@ function migratePersistedSession(value: unknown): unknown {
   };
 }
 
+function validPreparation(value: unknown): value is MatchPreparation {
+  if (!isObject(value)) return false;
+  return (
+    typeof value.teamId === "string" &&
+    typeof value.opponent === "string" &&
+    (value.venue === "HOME" || value.venue === "AWAY") &&
+    typeof value.date === "string" &&
+    ["DRAFT", "READY", "LIVE", "FINISHED"].includes(String(value.status)) &&
+    isStringArray(value.calledPlayerIds) &&
+    isStringArray(value.starterPlayerIds) &&
+    isStringArray(value.selectedStaffIds) &&
+    (value.startingGoalkeeperId === undefined ||
+      typeof value.startingGoalkeeperId === "string") &&
+    isObject(value.targetMinutes) &&
+    Object.entries(value.targetMinutes).every(
+      ([playerId, minutes]) =>
+        playerId.length > 0 &&
+        typeof minutes === "number" &&
+        Number.isInteger(minutes) &&
+        minutes >= 0 &&
+        minutes <= 40,
+    ) &&
+    typeof value.createdAt === "number" &&
+    typeof value.updatedAt === "number" &&
+    (value.startedAt === undefined || typeof value.startedAt === "number")
+  );
+}
+
 function validPeriodMinutes(value: unknown): value is Record<number, number> {
   if (!isObject(value)) {
     return false;
@@ -388,6 +424,7 @@ function validPersistedSession(
   if (
     !isObject(value) ||
     value.matchId !== expectedMatchId ||
+    (value.preparation !== undefined && !validPreparation(value.preparation)) ||
     !Array.isArray(value.players) ||
     !value.players.every(isPlayer) ||
     !Array.isArray(value.staff) ||
@@ -500,6 +537,7 @@ export function saveMatchRecord(
     savedAt: now,
     session: {
       matchId: session.matchId,
+      preparation: session.preparation,
       players: session.players,
       staff: session.staff,
       period: session.period,
