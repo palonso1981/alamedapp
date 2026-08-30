@@ -1,4 +1,16 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AlamedAPP
+
+Accesos locales principales:
+
+- `/plantilla`: plantilla maestra de jugadores y staff.
+- `/partidos`: listado y creación de partidos.
+- `/partido/{matchId}/prepartido`: convocatoria y preparación.
+- `/partido/{matchId}/directo`: captura deportiva.
+
+Las decisiones de Plantilla y Prepartido V1 están documentadas en
+`docs/plantilla-prepartido-v1.md`.
+
+Este proyecto usa [Next.js](https://nextjs.org).
 
 ## Getting Started
 

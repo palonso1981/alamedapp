@@ -22,6 +22,12 @@
     "src/lib/sync/remoteMatchRepository.ts",
     "src/lib/sync/syncCoordinator.ts",
     "src/lib/sync/sync.test.ts",
+    "src/lib/rosterDomain.ts",
+    "src/lib/preMatch.ts",
+    "src/lib/roster.test.ts",
+    "src/lib/matchCatalog.ts",
+    "src/lib/sync/teamSyncTypes.ts",
+    "src/lib/sync/localTeamRepository.ts",
     "src/store/useMatchStore.ts",
     "src/types/index.ts"
   ]
