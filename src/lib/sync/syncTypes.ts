@@ -140,7 +140,7 @@ export function migrateMatchSyncState(
         ),
       ) as Record<string, number>)
     : {};
-  const outbox = Array.isArray(value.outbox)
+  const validOutbox = Array.isArray(value.outbox)
     ? value.outbox.filter((operation) => validOperation(operation, matchId)).map(
         (operation) => ({
           ...operation,
@@ -148,6 +148,30 @@ export function migrateMatchSyncState(
         }),
       )
     : [];
+  // Older clients could append one CONFLICT operation per local edit of the
+  // same entity. Keep only the latest local payload: there is still one
+  // unresolved entity conflict, not several independent conflicts.
+  const latestConflictIndexByEntity = new Map<string, number>();
+  validOutbox.forEach((operation, index) => {
+    if (operation.status !== "CONFLICT") return;
+    const key = syncEntityKey(operation.entityType, operation.entityId);
+    const previousIndex = latestConflictIndexByEntity.get(key);
+    if (
+      previousIndex === undefined ||
+      validOutbox[previousIndex].clientUpdatedAt <= operation.clientUpdatedAt
+    ) {
+      latestConflictIndexByEntity.set(key, index);
+    }
+  });
+  const outbox = validOutbox.filter((operation, index) => {
+    if (operation.status !== "CONFLICT") return true;
+    return (
+      latestConflictIndexByEntity.get(
+        syncEntityKey(operation.entityType, operation.entityId),
+      ) === index
+    );
+  });
+  const retainedOperationIds = new Set(outbox.map((operation) => operation.id));
   return {
     schemaVersion: MATCH_SYNC_SCHEMA_VERSION,
     outbox,
@@ -161,7 +185,12 @@ export function migrateMatchSyncState(
         ? (value.lastErrorKind as SyncErrorKind)
         : null,
     conflicts: Array.isArray(value.conflicts)
-      ? (value.conflicts.filter(isObject) as unknown as MatchSyncConflict[])
+      ? (value.conflicts.filter(
+          (conflict) =>
+            isObject(conflict) &&
+            typeof conflict.operationId === "string" &&
+            retainedOperationIds.has(conflict.operationId),
+        ) as unknown as MatchSyncConflict[])
       : [],
   };
 }

@@ -79,28 +79,32 @@ function enqueueLatest(
   const compactableIndex = state.outbox.findIndex(
     (operation) =>
       syncEntityKey(operation.entityType, operation.entityId) === key &&
-      (operation.status === "PENDING" || operation.status === "ERROR"),
+      (operation.status === "PENDING" ||
+        operation.status === "ERROR" ||
+        operation.status === "CONFLICT"),
   );
+  const compactedOperation =
+    compactableIndex >= 0 ? state.outbox[compactableIndex] : null;
+  const keepsConflict = compactedOperation?.status === "CONFLICT";
   const baseRevision = state.knownRemoteRevisions[key] ?? 0;
   const operation: MatchSyncOperation = {
     id:
-      compactableIndex >= 0
-        ? state.outbox[compactableIndex].id
-        : idFactory(),
+      compactedOperation ? compactedOperation.id : idFactory(),
     matchId: input.matchId,
     entityType: input.entityType,
     entityId: input.entityId,
     kind: input.kind,
     payload: input.payload,
     baseRevision:
-      compactableIndex >= 0
-        ? state.outbox[compactableIndex].baseRevision
-        : baseRevision,
+      compactedOperation ? compactedOperation.baseRevision : baseRevision,
     clientUpdatedAt: now,
-    attempts:
-      compactableIndex >= 0 ? state.outbox[compactableIndex].attempts : 0,
-    status: "PENDING",
-    nextAttemptAt: 0,
+    attempts: compactedOperation?.attempts ?? 0,
+    status: keepsConflict ? "CONFLICT" : "PENDING",
+    nextAttemptAt: keepsConflict
+      ? compactedOperation.nextAttemptAt
+      : 0,
+    lastError: keepsConflict ? compactedOperation.lastError : undefined,
+    errorKind: keepsConflict ? compactedOperation.errorKind : undefined,
   };
   const outbox = [...state.outbox];
   if (compactableIndex >= 0) outbox[compactableIndex] = operation;
@@ -108,9 +112,16 @@ function enqueueLatest(
   return {
     ...state,
     outbox,
+    conflicts: keepsConflict
+      ? state.conflicts.map((conflict) =>
+          conflict.operationId === operation.id
+            ? { ...conflict, localPayload: input.payload }
+            : conflict,
+        )
+      : state.conflicts,
     lastLocalMutationAt: now,
-    lastError: null,
-    lastErrorKind: null,
+    lastError: keepsConflict ? state.lastError : null,
+    lastErrorKind: keepsConflict ? state.lastErrorKind : null,
   };
 }
 

@@ -11,7 +11,10 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
   const state = !eligible
     ? { label: "○ Solo local", tone: "bg-slate-900 text-slate-400" }
     : summary.conflicts > 0
-      ? { label: `! ${summary.conflicts} conflicto`, tone: "bg-red-950 text-red-300" }
+      ? {
+          label: `! ${summary.conflicts} conflicto${summary.conflicts === 1 ? "" : "s"}`,
+          tone: "bg-red-950 text-red-300",
+        }
       : summary.errors > 0
         ? { label: `! ${summary.errors} sin enviar`, tone: "bg-red-950 text-red-300" }
         : summary.syncing > 0
@@ -43,6 +46,8 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
                 ? "Firebase DEV no está configurado. Todo sigue seguro localmente."
                 : !online
                   ? "Sin conexión. La cola se enviará al recuperar la red."
+                  : summary.conflicts > 0
+                    ? `${summary.conflicts} ${summary.conflicts === 1 ? "entidad necesita" : "entidades necesitan"} revisión. La versión local se conserva y no se sobrescribe.`
                   : summary.pending > 0 || summary.errors > 0
                     ? `${summary.pending + summary.errors} operaciones guardadas pendientes de envío.`
                     : "No hay operaciones locales pendientes."}

@@ -120,6 +120,17 @@ Si el remoto tiene otra revisión, se conserva:
 No hay last-write-wins silencioso. V1 asume un registrador activo principal por
 partido y todavía no ofrece merge gráfico de conflictos.
 
+El conflicto se contabiliza por entidad, no por cada edición local posterior.
+Mientras una entidad sigue en conflicto, sus nuevos cambios actualizan el mismo
+registro local conservando el payload más reciente. La migración de la envoltura
+consolida también los duplicados que pudieran haber generado clientes V1
+anteriores, sin descartar la sesión ni el último payload local.
+
+Abrir en un dispositivo sin estado local un `matchId` que ya existe en remoto no
+equivale a crear un partido limpio: la recuperación integral desde Firestore
+sigue fuera de V1. En ese caso la revisión remota protege el documento y evita
+que el navegador nuevo lo sobrescriba silenciosamente.
+
 ## Offline, cierre y reconexión
 
 Sin red o sin configuración Firebase DEV, el partido carga y funciona desde el

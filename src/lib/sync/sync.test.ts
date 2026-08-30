@@ -16,12 +16,16 @@ import {
   saveMatchSession,
 } from "../matchPersistence";
 import { createSession } from "../../store/useMatchStore";
-import { LocalMatchRepository } from "./localMatchRepository";
+import {
+  LocalMatchRepository,
+  matchRemoteMetadata,
+} from "./localMatchRepository";
 import {
   classifyRemoteError,
   InMemoryRemoteMatchRepository,
 } from "./remoteMatchRepository";
 import { MatchSyncCoordinator } from "./syncCoordinator";
+import { migrateMatchSyncState } from "./syncTypes";
 
 class MemoryStorage implements LocalStorageAdapter {
   private readonly values = new Map<string, string>();
@@ -247,6 +251,134 @@ test("una notificación síncrona durante sync reutiliza la ejecución activa", 
   assert.equal(local.getSummary(session.matchId).pending, 0);
   assert.equal(local.getSummary(session.matchId).syncing, 0);
   assert.equal(remote.applyCalls, 2);
+});
+
+test("partido limpio en una sesión admite capturas consecutivas sin conflictos", async () => {
+  const storage = new MemoryStorage();
+  let now = 1_000;
+  const local = new LocalMatchRepository({
+    storage,
+    now: () => now,
+    idFactory: idFactory(),
+  });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, {
+    isOnline: () => true,
+  });
+  let session = createSession("clean-single-recorder");
+
+  local.save(session);
+  await coordinator.syncMatch(session.matchId);
+
+  for (let index = 1; index <= 4; index += 1) {
+    now += 1;
+    const event = createFoulEvent({
+      id: `single-recorder-event-${index}`,
+      matchId: session.matchId,
+      position: { period: 1, minute: index, order: 1 },
+      side: index % 2 === 0 ? "AGAINST" : "FOR",
+      playerId: `p${index}`,
+      now,
+    });
+    session = {
+      ...session,
+      minute: index,
+      periodMinutes: { 1: index, 2: 0 },
+      events: [...session.events, event],
+    };
+    local.save(session);
+    await coordinator.syncMatch(session.matchId);
+  }
+
+  const summary = local.getSummary(session.matchId);
+  assert.equal(summary.conflicts, 0);
+  assert.equal(summary.pending, 0);
+  assert.equal(summary.syncing, 0);
+  assert.equal(summary.errors, 0);
+  assert.equal(remote.documents.size, 6);
+  assert.equal(remote.documents.get(`${session.matchId}:match`)?.revision, 5);
+});
+
+test("varias ediciones locales de una entidad en conflicto conservan un único conflicto", async () => {
+  const storage = new MemoryStorage();
+  let now = 2_000;
+  const local = new LocalMatchRepository({
+    storage,
+    now: () => now,
+    idFactory: idFactory(),
+  });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, {
+    isOnline: () => true,
+  });
+  let session = createSession("contaminated-match-id");
+  remote.seed(
+    session.matchId,
+    "MATCH",
+    session.matchId,
+    1,
+    { ...matchRemoteMetadata(session), remoteBaseline: true },
+  );
+
+  local.save(session);
+  await coordinator.syncMatch(session.matchId);
+  assert.equal(local.getSummary(session.matchId).conflicts, 1);
+
+  for (let minute = 1; minute <= 4; minute += 1) {
+    now += 1;
+    session = {
+      ...session,
+      minute,
+      periodMinutes: { 1: minute, 2: 0 },
+    };
+    local.save(session);
+    await coordinator.syncMatch(session.matchId);
+  }
+
+  const state = local.getSyncState(session.matchId);
+  assert.equal(state.outbox.filter((item) => item.status === "CONFLICT").length, 1);
+  assert.equal(state.conflicts.length, 1);
+  assert.equal(state.conflicts[0].entityKey, "match");
+  assert.equal((state.conflicts[0].localPayload as { minute: number }).minute, 4);
+});
+
+test("migración consolida conflictos legacy duplicados sin perder el payload local más reciente", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, {
+    isOnline: () => true,
+  });
+  const session = createSession("legacy-duplicate-conflicts");
+  remote.seed(session.matchId, "MATCH", session.matchId, 1, { remote: true });
+  local.save(session);
+  await coordinator.syncMatch(session.matchId);
+
+  const original = local.getSyncState(session.matchId);
+  const operation = original.outbox.find((item) => item.status === "CONFLICT");
+  const conflict = original.conflicts[0];
+  assert.ok(operation);
+  assert.ok(conflict);
+  const legacy = {
+    ...original,
+    outbox: [1, 2, 3, 4].map((minute) => ({
+      ...operation,
+      id: `legacy-conflict-${minute}`,
+      clientUpdatedAt: minute,
+      payload: { ...operation.payload, minute },
+    })),
+    conflicts: [1, 2, 3, 4].map((minute) => ({
+      ...conflict,
+      operationId: `legacy-conflict-${minute}`,
+      localPayload: { ...operation.payload, minute },
+    })),
+  };
+
+  const migrated = migrateMatchSyncState(legacy, session.matchId);
+  assert.equal(migrated.outbox.length, 1);
+  assert.equal(migrated.conflicts.length, 1);
+  assert.equal(migrated.outbox[0].id, "legacy-conflict-4");
+  assert.equal((migrated.conflicts[0].localPayload as { minute: number }).minute, 4);
 });
 
 test("ACK perdido reintenta el mismo operationId sin duplicar el remoto", async () => {
