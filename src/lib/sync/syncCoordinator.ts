@@ -1,9 +1,12 @@
-import { LocalMatchRepository } from "./localMatchRepository";
 import {
   classifyRemoteError,
-  RemoteMatchRepository,
+  RemoteApplyResult,
 } from "./remoteMatchRepository";
-import { MatchSyncSummary } from "./syncTypes";
+import {
+  MatchSyncOperation,
+  MatchSyncSummary,
+  SyncErrorKind,
+} from "./syncTypes";
 
 export interface SyncCoordinatorOptions {
   isOnline?: () => boolean;
@@ -11,15 +14,41 @@ export interface SyncCoordinatorOptions {
   debug?: (message: string, data?: unknown) => void;
 }
 
-export class MatchSyncCoordinator {
+export interface SyncQueueRepository<TOperation> {
+  getSummary(scopeId: string): MatchSyncSummary;
+  claimNextOperation(scopeId: string): TOperation | null;
+  markSynced(scopeId: string, operationId: string, remoteRevision: number): void;
+  markError(
+    scopeId: string,
+    operationId: string,
+    kind: SyncErrorKind,
+    message: string,
+    retryable: boolean,
+  ): void;
+  markConflict(
+    scopeId: string,
+    operationId: string,
+    remoteRevision: number,
+    remotePayload: unknown,
+  ): void;
+  retryErrors(scopeId: string): void;
+}
+
+export interface RevisionedRemoteRepository<TOperation> {
+  apply(operation: TOperation): Promise<RemoteApplyResult>;
+}
+
+export class SyncCoordinator<
+  TOperation extends { id: string; entityType: string; entityId: string; attempts: number },
+> {
   private readonly running = new Map<string, Promise<MatchSyncSummary>>();
   private readonly isOnline: () => boolean;
   private readonly maxOperationsPerRun: number;
   private readonly debug?: (message: string, data?: unknown) => void;
 
   constructor(
-    private readonly local: LocalMatchRepository,
-    private readonly remote: RemoteMatchRepository,
+    private readonly local: SyncQueueRepository<TOperation>,
+    private readonly remote: RevisionedRemoteRepository<TOperation>,
     options: SyncCoordinatorOptions = {},
   ) {
     this.isOnline =
@@ -104,3 +133,5 @@ export class MatchSyncCoordinator {
     return this.local.getSummary(matchId);
   }
 }
+
+export class MatchSyncCoordinator extends SyncCoordinator<MatchSyncOperation> {}

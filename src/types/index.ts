@@ -3,17 +3,87 @@ export type DominantFoot = "RIGHT" | "LEFT" | "BOTH" | "UNKNOWN";
 export interface Player {
   id: string;
   name: string;
+  /** Nombre completo congelado para el partido cuando procede de Plantilla. */
+  fullName?: string;
   number: number;
   photoUrl?: string;
   position?: string;
+  /** Capacidad natural; `position` sigue representando el rol funcional inicial. */
+  goalkeeperCapable?: boolean;
   dominantFoot?: DominantFoot;
 }
 
 export interface StaffMember {
   id: string;
   name: string;
+  fullName?: string;
   role: string;
   photoUrl?: string;
+}
+
+export const CDA_TEAM_ID = "cd-alameda" as const;
+
+export type MasterPlayerRole = "GOALKEEPER" | "FIELD";
+
+export interface MasterPlayer {
+  playerId: string;
+  fullName: string;
+  displayName: string;
+  number: number;
+  photoUrl?: string;
+  role: MasterPlayerRole;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type MasterStaffRole =
+  | "HEAD_COACH"
+  | "ASSISTANT_COACH"
+  | "DELEGATE"
+  | "FITNESS_COACH"
+  | "OTHER";
+
+export interface MasterStaffMember {
+  staffId: string;
+  fullName: string;
+  displayName: string;
+  role: MasterStaffRole;
+  customRole?: string;
+  photoUrl?: string;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface TeamRoster {
+  teamId: string;
+  players: MasterPlayer[];
+  staff: MasterStaffMember[];
+}
+
+export type MatchLifecycleStatus = "DRAFT" | "READY" | "LIVE" | "FINISHED";
+export type MatchVenue = "HOME" | "AWAY";
+
+export interface MatchPreparation {
+  teamId: string;
+  opponent: string;
+  venue: MatchVenue;
+  date: string;
+  time?: string;
+  competition?: string;
+  category?: string;
+  matchday?: string;
+  status: MatchLifecycleStatus;
+  calledPlayerIds: string[];
+  starterPlayerIds: string[];
+  startingGoalkeeperId?: string;
+  selectedStaffIds: string[];
+  /** Metadata opcional; los minutos reales continúan derivados del replay. */
+  targetMinutes: Record<string, number>;
+  createdAt: number;
+  updatedAt: number;
+  startedAt?: number;
 }
 
 export interface Match {
@@ -47,6 +117,8 @@ export interface LineupInitializedEvent extends MatchEventBase {
   type: "lineup_initialized";
   squadPlayerIds: string[];
   onCourtPlayerIds: string[];
+  /** Identidad funcional elegida en Prepartido; legacy puede omitirla. */
+  goalkeeperPlayerId?: string;
 }
 
 export interface SubstitutionEvent extends MatchEventBase {
@@ -329,6 +401,7 @@ export type LocalPersistenceStatus = "idle" | "saved" | "error";
 
 export interface MatchSession {
   matchId: string;
+  preparation?: MatchPreparation;
   players: Player[];
   staff: StaffMember[];
   period: number;

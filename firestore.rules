@@ -21,6 +21,32 @@ service cloud.firestore {
       }
     }
 
+    // TEMPORAL Y EXCLUSIVO DE DEV (cdalameda-dev): Anonymous Auth puede
+    // mantener la plantilla del único equipo de pruebas. Antes de producción
+    // debe sustituirse por autorización por club, usuario y rol.
+    match /teams/cd-alameda {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+
+      match /players/{playerId} {
+        allow read: if request.auth != null;
+        allow create, update: if request.auth != null
+          && request.resource.data.teamId == "cd-alameda"
+          && request.resource.data.entityType == "PLAYER"
+          && request.resource.data.entityId == playerId;
+        allow delete: if false;
+      }
+
+      match /staff/{staffId} {
+        allow read: if request.auth != null;
+        allow create, update: if request.auth != null
+          && request.resource.data.teamId == "cd-alameda"
+          && request.resource.data.entityType == "STAFF"
+          && request.resource.data.entityId == staffId;
+        allow delete: if false;
+      }
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
