@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { MouseEvent, useEffect, useMemo, useState } from "react";
 
 import { FutsalCourtMarkings } from "../../../../components/court/FutsalCourtMarkings";
@@ -111,7 +112,6 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const startSecondPeriod = useMatchStore((state) => state.startSecondPeriod);
   const resumeFirstPeriod = useMatchStore((state) => state.resumeFirstPeriod);
   const startPeriodReview = useMatchStore((state) => state.startPeriodReview);
-  const startFinishedReview = useMatchStore((state) => state.startFinishedReview);
   const setReviewMinute = useMatchStore((state) => state.setReviewMinute);
   const stopPeriodReview = useMatchStore((state) => state.stopPeriodReview);
   const recordThreat = useMatchStore((state) => state.recordThreat);
@@ -569,7 +569,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       {session.matchFinished && session.reviewPeriod === undefined && (
         <section className="mx-auto mb-2 flex max-w-4xl items-center justify-between gap-3 rounded-2xl border border-slate-600 bg-slate-900 px-4 py-3">
           <div><p className="text-sm font-black text-slate-100">PARTIDO FINALIZADO</p><p className="text-[10px] font-bold text-slate-400">La captura está cerrada; la cronología sigue siendo corregible.</p></div>
-          <button type="button" onClick={() => { setInteraction(IDLE_LIVE_INTERACTION); startFinishedReview(matchId); }} className="min-h-12 rounded-xl bg-amber-400 px-4 text-xs font-black text-slate-950">REVISAR / CORREGIR</button>
+          <Link href={`/partido/${matchId}/revision`} className="grid min-h-12 place-items-center rounded-xl bg-amber-400 px-4 text-xs font-black text-slate-950">POSTPARTIDO / REVISIÓN</Link>
         </section>
       )}
 

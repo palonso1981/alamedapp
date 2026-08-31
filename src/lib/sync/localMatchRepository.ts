@@ -53,6 +53,11 @@ export function matchRemoteMetadata(session: MatchSession): MatchRemoteMetadata 
     reviewPeriod: session.reviewPeriod,
     reviewMinute: session.reviewMinute,
     matchFinished: session.matchFinished ?? false,
+    reviewStatus: session.reviewStatus,
+    reviewRevision: session.reviewRevision,
+    reviewStartedAt: session.reviewStartedAt,
+    reviewValidatedAt: session.reviewValidatedAt,
+    reviewReopenedAt: session.reviewReopenedAt,
     preparation: session.preparation,
   };
 }
@@ -192,6 +197,7 @@ function buildNextSyncState(
 
 export class LocalMatchRepository {
   private readonly listeners = new Map<string, Set<() => void>>();
+  private readonly inFlightOperationIds = new Set<string>();
   private readonly storageOverride: LocalStorageAdapter | null | undefined;
   private readonly now: () => number;
   private readonly idFactory: () => string;
@@ -208,12 +214,24 @@ export class LocalMatchRepository {
       : this.storageOverride;
   }
 
+  private withLiveInFlightState(sync: PersistedMatchSyncState): PersistedMatchSyncState {
+    return {
+      ...sync,
+      outbox: sync.outbox.map((operation) =>
+        this.inFlightOperationIds.has(operation.id)
+          ? { ...operation, status: "SYNCING" as const }
+          : operation,
+      ),
+    };
+  }
+
   load(matchId: string): MatchSession | null {
     return loadMatchRecord(matchId, this.storage())?.session ?? null;
   }
 
   getSyncState(matchId: string): PersistedMatchSyncState {
-    return loadMatchRecord(matchId, this.storage())?.sync ?? emptyMatchSyncState();
+    const sync = loadMatchRecord(matchId, this.storage())?.sync ?? emptyMatchSyncState();
+    return this.withLiveInFlightState(sync);
   }
 
   getSummary(matchId: string): MatchSyncSummary {
@@ -224,7 +242,7 @@ export class LocalMatchRepository {
     const storage = this.storage();
     const previousRecord = loadMatchRecord(session.matchId, storage);
     const now = this.now();
-    let sync = previousRecord?.sync ?? emptyMatchSyncState();
+    let sync = this.withLiveInFlightState(previousRecord?.sync ?? emptyMatchSyncState());
     if (isRemoteSyncEligibleMatch(session.matchId)) {
       sync = buildNextSyncState(
         previousRecord?.storageVersion === 2 ? previousRecord.session : null,
@@ -249,28 +267,30 @@ export class LocalMatchRepository {
     const record = loadMatchRecord(matchId, storage);
     if (!record) return null;
     const now = this.now();
-    const index = record.sync.outbox.findIndex(
+    const sync = this.withLiveInFlightState(record.sync);
+    const index = sync.outbox.findIndex(
       (operation) =>
         (operation.status === "PENDING" || operation.status === "ERROR") &&
         operation.nextAttemptAt <= now,
     );
     if (index < 0) return null;
     const operation: MatchSyncOperation = {
-      ...record.sync.outbox[index],
+      ...sync.outbox[index],
       status: "SYNCING",
-      attempts: record.sync.outbox[index].attempts + 1,
+      attempts: sync.outbox[index].attempts + 1,
       lastError: undefined,
       errorKind: undefined,
     };
-    const outbox = [...record.sync.outbox];
+    const outbox = [...sync.outbox];
     outbox[index] = operation;
     const result = saveMatchRecord(
       record.session,
-      { ...record.sync, outbox, lastError: null, lastErrorKind: null },
+      { ...sync, outbox, lastError: null, lastErrorKind: null },
       storage,
       now,
     );
     if (!result.ok) return null;
+    this.inFlightOperationIds.add(operation.id);
     this.notify(matchId);
     return operation;
   }
@@ -281,6 +301,7 @@ export class LocalMatchRepository {
     if (!record) return;
     const operation = record.sync.outbox.find((item) => item.id === operationId);
     if (!operation) return;
+    this.inFlightOperationIds.delete(operationId);
     const key = syncEntityKey(operation.entityType, operation.entityId);
     const outbox = record.sync.outbox
       .filter((item) => item.id !== operationId)
@@ -320,6 +341,7 @@ export class LocalMatchRepository {
     const storage = this.storage();
     const record = loadMatchRecord(matchId, storage);
     if (!record) return;
+    this.inFlightOperationIds.delete(operationId);
     const now = this.now();
     const outbox = record.sync.outbox.map((operation) =>
       operation.id === operationId
@@ -354,6 +376,7 @@ export class LocalMatchRepository {
     if (!record) return;
     const operation = record.sync.outbox.find((item) => item.id === operationId);
     if (!operation) return;
+    this.inFlightOperationIds.delete(operationId);
     const now = this.now();
     const conflict: MatchSyncConflict = {
       operationId,

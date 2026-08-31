@@ -41,6 +41,11 @@ interface PersistedMatchSession {
   reviewPeriod?: number;
   reviewMinute?: number;
   matchFinished: boolean;
+  reviewStatus?: MatchSession["reviewStatus"];
+  reviewRevision?: number;
+  reviewStartedAt?: number;
+  reviewValidatedAt?: number;
+  reviewReopenedAt?: number;
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];
@@ -126,7 +131,11 @@ function hasEventBase(value: Record<string, unknown>, matchId: string): boolean 
     typeof value.createdAt === "number" &&
     typeof value.updatedAt === "number" &&
     (value.deletedAt === null || typeof value.deletedAt === "number") &&
-    typeof value.pendingReview === "boolean"
+    typeof value.pendingReview === "boolean" &&
+    (value.provenance === undefined ||
+      ["LIVE", "MANUAL_REVIEW", "IMPORT", "VIDEO", "OFFICIAL_ACT"].includes(
+        String(value.provenance),
+      ))
   );
 }
 
@@ -376,6 +385,16 @@ function migratePersistedSession(value: unknown): unknown {
       ? { reviewPeriod: undefined, reviewMinute: undefined }
       : { reviewPeriod, reviewMinute }),
     matchFinished: value.matchFinished === true,
+    reviewStatus: ["NOT_REVIEWED", "IN_REVIEW", "VALIDATED"].includes(String(value.reviewStatus))
+      ? value.reviewStatus
+      : undefined,
+    reviewRevision:
+      typeof value.reviewRevision === "number" && value.reviewRevision >= 0
+        ? Math.trunc(value.reviewRevision)
+        : undefined,
+    reviewStartedAt: typeof value.reviewStartedAt === "number" ? value.reviewStartedAt : undefined,
+    reviewValidatedAt: typeof value.reviewValidatedAt === "number" ? value.reviewValidatedAt : undefined,
+    reviewReopenedAt: typeof value.reviewReopenedAt === "number" ? value.reviewReopenedAt : undefined,
     events: migrateChronology(value.events, value.matchId),
     past: Array.isArray(value.past)
       ? value.past.map((events) => migrateChronology(events, value.matchId))
@@ -390,6 +409,7 @@ function validPreparation(value: unknown): value is MatchPreparation {
   if (!isObject(value)) return false;
   return (
     typeof value.teamId === "string" &&
+    (value.seasonId === undefined || typeof value.seasonId === "string") &&
     typeof value.opponent === "string" &&
     (value.venue === "HOME" || value.venue === "AWAY") &&
     typeof value.date === "string" &&
@@ -495,6 +515,10 @@ function validPersistedSession(
         value.reviewMinute > REGULATION_MATCH_CLOCK.periodDurationMinutes)) ||
     (value.reviewPeriod === undefined && value.reviewMinute !== undefined) ||
     typeof value.matchFinished !== "boolean" ||
+    (value.reviewStatus !== undefined &&
+      !["NOT_REVIEWED", "IN_REVIEW", "VALIDATED"].includes(String(value.reviewStatus))) ||
+    (value.reviewRevision !== undefined &&
+      (typeof value.reviewRevision !== "number" || !Number.isInteger(value.reviewRevision) || value.reviewRevision < 0)) ||
     !isEventList(value.events, expectedMatchId) ||
     !Array.isArray(value.past) ||
     !value.past.every((events) => isEventList(events, expectedMatchId)) ||
@@ -572,6 +596,11 @@ export function saveMatchRecord(
       reviewPeriod: session.reviewPeriod,
       reviewMinute: session.reviewMinute,
       matchFinished: session.matchFinished ?? false,
+      reviewStatus: session.reviewStatus,
+      reviewRevision: session.reviewRevision,
+      reviewStartedAt: session.reviewStartedAt,
+      reviewValidatedAt: session.reviewValidatedAt,
+      reviewReopenedAt: session.reviewReopenedAt,
       events: session.events,
       past: session.past,
       future: session.future,

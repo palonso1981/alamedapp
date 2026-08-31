@@ -11,6 +11,7 @@ export function AppHeader({ title, actions }: { title: string; actions?: React.R
         <nav className="flex items-center gap-2 text-xs font-bold sm:text-sm">
           <Link href="/plantilla" className="min-h-10 rounded-lg px-3 py-2.5 hover:bg-slate-800">PLANTILLA</Link>
           <Link href="/partidos" className="min-h-10 rounded-lg px-3 py-2.5 hover:bg-slate-800">PARTIDOS</Link>
+          <Link href="/configuracion" aria-label="Configuración" className="grid min-h-10 min-w-10 place-items-center rounded-lg px-2 text-base hover:bg-slate-800">⚙</Link>
           {actions}
         </nav>
       </div>

@@ -1,7 +1,6 @@
 import { createLineupInitializedEvent } from "./matchEngine";
 import { canPlayGoalkeeper, playerSnapshot, staffSnapshot } from "./rosterDomain";
 import {
-  CDA_TEAM_ID,
   CompetitionType,
   MatchPreparation,
   MatchSession,
@@ -13,6 +12,8 @@ export const MAX_CALLED_PLAYERS = 13;
 export const STARTER_COUNT = 5;
 
 export interface CreateMatchInput {
+  teamId: string;
+  seasonId: string;
   opponent: string;
   venue: MatchVenue;
   date: string;
@@ -74,10 +75,13 @@ export function createDraftMatch(
   const opponent = input.opponent.trim();
   if (!opponent) throw new Error("El rival es obligatorio.");
   if (!input.date) throw new Error("La fecha es obligatoria.");
+  if (!input.teamId.trim()) throw new Error("El equipo es obligatorio.");
+  if (!input.seasonId.trim()) throw new Error("La temporada es obligatoria para partidos nuevos.");
   return {
     matchId,
     preparation: {
-      teamId: CDA_TEAM_ID,
+      teamId: input.teamId,
+      seasonId: input.seasonId,
       opponent,
       venue: input.venue,
       date: input.date,
@@ -133,6 +137,8 @@ export function updateMatchDetails(
     preparation: {
       ...preparation,
       opponent,
+      teamId: changes.teamId ?? preparation.teamId,
+      seasonId: changes.seasonId ?? preparation.seasonId,
       venue: changes.venue ?? preparation.venue,
       date: changes.date ?? preparation.date,
       time: changes.time === undefined ? preparation.time : cleaned(changes.time),

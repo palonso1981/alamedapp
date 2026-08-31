@@ -181,6 +181,8 @@ interface MatchState {
   resumeFirstPeriod: (matchId: string) => void;
   startPeriodReview: (matchId: string, period: number) => void;
   startFinishedReview: (matchId: string) => void;
+  validateReview: (matchId: string) => void;
+  reopenReview: (matchId: string) => void;
   setReviewMinute: (matchId: string, minute: number) => void;
   stopPeriodReview: (matchId: string) => void;
   recordThreat: (matchId: string, input: RecordThreatInput) => void;
@@ -395,6 +397,10 @@ function captureClock(session: MatchSession): EventPosition {
   return { period: session.period, minute: session.minute, order: 1 };
 }
 
+function captureProvenance(session: MatchSession) {
+  return session.reviewPeriod !== undefined ? "MANUAL_REVIEW" as const : "LIVE" as const;
+}
+
 function assertSportsCaptureAllowed(session: MatchSession): void {
   const clock = captureClock(session);
   const validation = replayMatch(session.players, session.events, {
@@ -490,6 +496,14 @@ export const useMatchStore = create<MatchState>((set) => ({
           reviewMinute: undefined,
           matchFinished:
             finishedClock.period === REGULATION_MATCH_CLOCK.regulationPeriods,
+          reviewStatus:
+            finishedClock.period === REGULATION_MATCH_CLOCK.regulationPeriods
+              ? "NOT_REVIEWED"
+              : session.reviewStatus,
+          reviewRevision:
+            finishedClock.period === REGULATION_MATCH_CLOCK.regulationPeriods
+              ? session.reviewRevision ?? 0
+              : session.reviewRevision,
           preparation: finishedClock.preparation
             ? {
                 ...finishedClock.preparation,
@@ -643,6 +657,12 @@ export const useMatchStore = create<MatchState>((set) => ({
         if (!session.matchFinished) {
           return { ...session, lastError: "El partido todavía no está finalizado." };
         }
+        if (session.reviewStatus === "VALIDATED") {
+          return {
+            ...session,
+            lastError: "El partido está validado. Reabre la revisión de forma deliberada.",
+          };
+        }
         const closedPeriods = session.closedPeriods?.length
           ? session.closedPeriods
           : Array.from(
@@ -655,6 +675,42 @@ export const useMatchStore = create<MatchState>((set) => ({
           closedPeriods,
           reviewPeriod: target,
           reviewMinute: session.periodMinutes[target] ?? REGULATION_MATCH_CLOCK.periodDurationMinutes,
+          reviewStatus: "IN_REVIEW",
+          reviewStartedAt: session.reviewStartedAt ?? Date.now(),
+          lastError: null,
+        };
+      }),
+    ),
+
+  validateReview: (matchId) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => {
+        if (!session.matchFinished) {
+          return { ...session, lastError: "Solo puede validarse un partido finalizado." };
+        }
+        return {
+          ...session,
+          reviewStatus: "VALIDATED",
+          reviewRevision: (session.reviewRevision ?? 0) + 1,
+          reviewValidatedAt: Date.now(),
+          reviewPeriod: undefined,
+          reviewMinute: undefined,
+          lastError: null,
+        };
+      }),
+    ),
+
+  reopenReview: (matchId) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => {
+        if (!session.matchFinished || session.reviewStatus !== "VALIDATED") {
+          return { ...session, lastError: "Solo puede reabrirse una revisión validada." };
+        }
+        return {
+          ...session,
+          reviewStatus: "IN_REVIEW",
+          reviewRevision: (session.reviewRevision ?? 0) + 1,
+          reviewReopenedAt: Date.now(),
           lastError: null,
         };
       }),
@@ -732,6 +788,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             parentEventId: input.parentEventId,
             assist: input.assist,
             defensive,
+            provenance: captureProvenance(session),
           });
           return appendEvent(session.players, session.events, event);
         }),
@@ -779,6 +836,7 @@ export const useMatchStore = create<MatchState>((set) => ({
               stateKind === "FLYING_GOALKEEPER" && !active
                 ? playerId
                 : undefined,
+            provenance: captureProvenance(session),
           });
           return appendEvent(session.players, session.events, event);
         }),
@@ -805,6 +863,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             side,
             playerId,
             origin,
+            provenance: captureProvenance(session),
           });
           return appendEvent(session.players, session.events, event);
         }),
@@ -838,6 +897,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             side,
             color,
             playerId,
+            provenance: captureProvenance(session),
           });
 
           if (!causesInferiority) {
@@ -869,6 +929,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             playerOutId: playerId,
             playerInId: INFERIORITY_SLOT_ID,
             relatedCardEventId: card.id,
+            provenance: captureProvenance(session),
           });
           return appendEvents(session.players, session.events, [
             card,
@@ -897,6 +958,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             side: "FOR",
             color,
             staffId,
+            provenance: captureProvenance(session),
           });
           return appendEvent(session.players, session.events, card);
         }),
@@ -932,6 +994,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             },
             playerOutId,
             playerInId,
+            provenance: captureProvenance(session),
           });
           return appendEvent(session.players, session.events, event);
         }),

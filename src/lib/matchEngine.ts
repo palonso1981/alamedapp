@@ -4,6 +4,7 @@ import {
   DisciplineSummary,
   DisciplineSide,
   DefensiveThreatDetail,
+  EventProvenance,
   EventPosition,
   FoulRecordedEvent,
   GameContext,
@@ -149,6 +150,7 @@ interface EventFactoryBase {
   matchId: string;
   position: EventPosition;
   now?: number;
+  provenance?: EventProvenance;
 }
 
 export interface LineupEventInput extends EventFactoryBase {
@@ -245,6 +247,7 @@ function eventBase(input: EventFactoryBase) {
     updatedAt: now,
     deletedAt: null,
     pendingReview: false,
+    provenance: input.provenance ?? "LIVE",
   } as const;
 }
 
@@ -347,7 +350,7 @@ export function createLiveThreatEvent(
 export function createLegacyThreatEvent(
   input: LegacyThreatEventInput,
 ): LegacyThreatImportedEvent {
-  const base = eventBase(input);
+  const base = eventBase({ ...input, provenance: input.provenance ?? "IMPORT" });
   return {
     ...base,
     type: "threat_recorded",

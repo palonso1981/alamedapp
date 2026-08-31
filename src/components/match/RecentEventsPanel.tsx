@@ -26,6 +26,7 @@ interface RecentEventsPanelProps {
   reviewPeriod?: number;
   onStartPeriodReview: (period: number) => void;
   onClose: () => void;
+  initialFilter?: TimelineFilter;
 }
 
 export interface DisciplineFocusRequest {
@@ -35,8 +36,8 @@ export interface DisciplineFocusRequest {
   period: number;
 }
 
-export function RecentEventsPanel({ events, timeline, players, staff, onDelete, onRestore, onPendingReview, onSave, onMoveWithinMinute, errorMessage, onDismissError, disciplineFocusRequest, activePeriod, matchFinished = false, closedPeriods, reviewPeriod, onStartPeriodReview, onClose }: RecentEventsPanelProps) {
-  const [filter, setFilter] = useState<TimelineFilter>("ACTIVE");
+export function RecentEventsPanel({ events, timeline, players, staff, onDelete, onRestore, onPendingReview, onSave, onMoveWithinMinute, errorMessage, onDismissError, disciplineFocusRequest, activePeriod, matchFinished = false, closedPeriods, reviewPeriod, onStartPeriodReview, onClose, initialFilter = "ACTIVE" }: RecentEventsPanelProps) {
+  const [filter, setFilter] = useState<TimelineFilter>(initialFilter);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ eventId: string; placement: "BEFORE" | "AFTER" } | null>(null);
@@ -48,6 +49,7 @@ export function RecentEventsPanel({ events, timeline, players, staff, onDelete, 
     setDisciplineFocus(disciplineFocusRequest);
     setFilter("ACTIVE");
   }, [disciplineFocusRequest]);
+  useEffect(() => setFilter(initialFilter), [initialFilter]);
   const filtered = disciplineFocus
     ? filterTimelineEvents(events, "ACTIVE").filter((event) =>
         disciplineFocus.kind === "FOUL"
@@ -116,7 +118,9 @@ export function RecentEventsPanel({ events, timeline, players, staff, onDelete, 
           return (
             <div key={event.id} data-event-id={event.id} className={`grid min-h-11 grid-cols-[58px_110px_minmax(0,1fr)_110px] items-center border-t px-2 py-1 text-xs ${dropTarget?.eventId === event.id ? "border-cyan-300 bg-cyan-950" : "border-slate-800"} ${deleted ? "opacity-60" : ""}`}>
               <span className="font-mono text-[10px] font-black text-cyan-300">P{event.period} {String(event.minute).padStart(2, "0")}&apos;</span>
-              <span className="truncate text-[10px] font-bold uppercase text-slate-500" aria-hidden="true">{event.type.replaceAll("_", " ")}</span>
+              <span className="truncate text-[10px] font-bold uppercase text-slate-500" aria-hidden="true">
+                {event.type.replaceAll("_", " ")}{event.provenance === "MANUAL_REVIEW" ? " · REV" : ""}
+              </span>
               <button type="button" onClick={() => setEditingId(event.id)} className="min-w-0 truncate text-left font-semibold text-slate-100">{eventDescription(event, players, entry, staff)}</button>
               <div className="flex justify-end gap-1">
                 {!deleted && <button type="button" onClick={() => onPendingReview(event.id, !event.pendingReview)} className={`min-h-9 min-w-9 rounded-lg text-base font-black ${event.pendingReview ? "bg-amber-500 text-slate-950" : "bg-slate-800 text-slate-500"}`} aria-label={event.pendingReview ? "Quitar pendiente" : "Marcar pendiente"}>?</button>}

@@ -27,6 +27,50 @@ export interface StaffMember {
 
 export const CDA_TEAM_ID = "cd-alameda" as const;
 
+export interface TeamProfile {
+  teamId: string;
+  name: string;
+  shortName: string;
+  category?: string;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface Season {
+  seasonId: string;
+  teamId: string;
+  label: string;
+  startDate?: string;
+  endDate?: string;
+  current: boolean;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SeasonPlayer {
+  teamId: string;
+  seasonId: string;
+  playerId: string;
+  number: number;
+  primaryPosition?: FutsalPosition;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SeasonStaff {
+  teamId: string;
+  seasonId: string;
+  staffId: string;
+  role: MasterStaffRole;
+  customRole?: string;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export type MasterPlayerRole = "GOALKEEPER" | "FIELD";
 
 export interface MasterPlayer {
@@ -72,12 +116,32 @@ export interface TeamRoster {
   staff: MasterStaffMember[];
 }
 
+/**
+ * Registro local completo del equipo. `TeamRoster` continúa siendo la vista
+ * resuelta que consumen Prepartido y Directo para mantener compatibilidad.
+ */
+export interface TeamWorkspace extends TeamRoster {
+  team: TeamProfile;
+  seasons: Season[];
+  seasonPlayers: SeasonPlayer[];
+  seasonStaff: SeasonStaff[];
+}
+
 export type MatchLifecycleStatus = "DRAFT" | "READY" | "LIVE" | "FINISHED";
+export type MatchReviewStatus = "NOT_REVIEWED" | "IN_REVIEW" | "VALIDATED";
+export type EventProvenance =
+  | "LIVE"
+  | "MANUAL_REVIEW"
+  | "IMPORT"
+  | "VIDEO"
+  | "OFFICIAL_ACT";
 export type MatchVenue = "HOME" | "AWAY";
 export type CompetitionType = "LEAGUE" | "CUP" | "FRIENDLY" | "OTHER";
 
 export interface MatchPreparation {
   teamId: string;
+  /** Ausente únicamente en partidos legacy sin asignación conocida. */
+  seasonId?: string;
   opponent: string;
   venue: MatchVenue;
   date: string;
@@ -124,6 +188,8 @@ interface MatchEventBase extends EventPosition {
   deletedAt: number | null;
   /** Marca operativa: el evento sigue siendo válido y computable. */
   pendingReview: boolean;
+  /** Ausente en eventos legacy cuya procedencia no puede afirmarse. */
+  provenance?: EventProvenance;
 }
 
 export interface LineupInitializedEvent extends MatchEventBase {
@@ -431,6 +497,12 @@ export interface MatchSession {
   reviewMinute?: number;
   /** Cierre operativo local; no sustituye ningún estado deportivo derivado. */
   matchFinished?: boolean;
+  /** Estado de calidad de datos, separado del ciclo deportivo. */
+  reviewStatus?: MatchReviewStatus;
+  reviewRevision?: number;
+  reviewStartedAt?: number;
+  reviewValidatedAt?: number;
+  reviewReopenedAt?: number;
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];

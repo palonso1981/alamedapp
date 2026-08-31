@@ -52,7 +52,15 @@ export function EventEditor({ event, events, entry, players, staff, onSave, onCl
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/80 p-2 sm:items-center" role="dialog" aria-modal="true" aria-label="Editor de evento">
       <div className="max-h-[92dvh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
-        <div className="mb-4 flex items-center justify-between"><h3 className="font-black">Editar evento</h3><button type="button" onClick={onClose} className="min-h-11 min-w-11 rounded-xl bg-slate-800 text-xl">×</button></div>
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h3 className="font-black">Editar evento</h3>
+            <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+              Origen · {draft.provenance === "MANUAL_REVIEW" ? "Revisión manual" : draft.provenance === "VIDEO" ? "Vídeo" : draft.provenance === "OFFICIAL_ACT" ? "Acta" : draft.provenance === "IMPORT" ? "Importación" : "Directo"}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="min-h-11 min-w-11 rounded-xl bg-slate-800 text-xl">×</button>
+        </div>
         <div className="grid grid-cols-3 gap-2">
           <NumberField label="P" value={period} min={1} max={REGULATION_MATCH_CLOCK.regulationPeriods} onChange={setPeriod} />
           <NumberField label="Min" value={minute} min={0} max={REGULATION_MATCH_CLOCK.periodDurationMinutes} onChange={setMinute} />

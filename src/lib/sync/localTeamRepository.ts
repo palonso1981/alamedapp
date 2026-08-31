@@ -1,6 +1,15 @@
 import { browserMatchStorage, LocalStorageAdapter } from "../matchPersistence";
-import { MasterPlayer, MasterStaffMember, TeamRoster } from "../../types";
-import { emptyRoster } from "../rosterDomain";
+import {
+  MasterPlayer,
+  MasterStaffMember,
+  Season,
+  SeasonPlayer,
+  SeasonStaff,
+  TeamProfile,
+  TeamRoster,
+  TeamWorkspace,
+} from "../../types";
+import { defaultTeamProfile, emptyTeamWorkspace } from "../seasonDomain";
 import {
   emptyTeamSyncState,
   summarizeTeamSync,
@@ -13,13 +22,13 @@ import {
 } from "./teamSyncTypes";
 import { MatchSyncSummary, SyncErrorKind } from "./syncTypes";
 
-const TEAM_STORAGE_VERSION = 1 as const;
+const TEAM_STORAGE_VERSION = 2 as const;
 const TEAM_STORAGE_PREFIX = "alamedapp:team:v1:";
 
 interface TeamEnvelope {
   storageVersion: typeof TEAM_STORAGE_VERSION;
   savedAt: number;
-  roster: TeamRoster;
+  roster: TeamWorkspace;
   sync: TeamSyncState;
 }
 
@@ -72,13 +81,85 @@ function validStaff(value: unknown): value is MasterStaffMember {
   );
 }
 
+function validTeam(value: unknown, teamId: string): value is TeamProfile {
+  if (typeof value !== "object" || value === null) return false;
+  const team = value as Partial<TeamProfile>;
+  return (
+    team.teamId === teamId &&
+    typeof team.name === "string" &&
+    typeof team.shortName === "string" &&
+    typeof team.active === "boolean" &&
+    typeof team.createdAt === "number" &&
+    typeof team.updatedAt === "number"
+  );
+}
+
+function validSeason(value: unknown, teamId: string): value is Season {
+  if (typeof value !== "object" || value === null) return false;
+  const season = value as Partial<Season>;
+  return (
+    typeof season.seasonId === "string" &&
+    season.teamId === teamId &&
+    typeof season.label === "string" &&
+    typeof season.current === "boolean" &&
+    typeof season.active === "boolean" &&
+    typeof season.createdAt === "number" &&
+    typeof season.updatedAt === "number"
+  );
+}
+
+function validSeasonPlayer(value: unknown, teamId: string): value is SeasonPlayer {
+  if (typeof value !== "object" || value === null) return false;
+  const membership = value as Partial<SeasonPlayer>;
+  return (
+    membership.teamId === teamId &&
+    typeof membership.seasonId === "string" &&
+    typeof membership.playerId === "string" &&
+    typeof membership.number === "number" &&
+    typeof membership.active === "boolean" &&
+    typeof membership.createdAt === "number" &&
+    typeof membership.updatedAt === "number"
+  );
+}
+
+function validSeasonStaff(value: unknown, teamId: string): value is SeasonStaff {
+  if (typeof value !== "object" || value === null) return false;
+  const membership = value as Partial<SeasonStaff>;
+  return (
+    membership.teamId === teamId &&
+    typeof membership.seasonId === "string" &&
+    typeof membership.staffId === "string" &&
+    ["HEAD_COACH", "ASSISTANT_COACH", "DELEGATE", "FITNESS_COACH", "OTHER"].includes(
+      String(membership.role),
+    ) &&
+    typeof membership.active === "boolean" &&
+    typeof membership.createdAt === "number" &&
+    typeof membership.updatedAt === "number"
+  );
+}
+
+function validPayload(
+  entityType: TeamEntityType,
+  payload: unknown,
+  teamId: string,
+): payload is TeamSyncPayload {
+  if (entityType === "TEAM") return validTeam(payload, teamId);
+  if (entityType === "PLAYER") return validPlayer(payload);
+  if (entityType === "STAFF") return validStaff(payload);
+  if (entityType === "SEASON") return validSeason(payload, teamId);
+  if (entityType === "SEASON_PLAYER") return validSeasonPlayer(payload, teamId);
+  return validSeasonStaff(payload, teamId);
+}
+
 function validOperation(value: unknown, teamId: string): value is TeamSyncOperation {
   if (typeof value !== "object" || value === null) return false;
   const operation = value as Partial<TeamSyncOperation>;
   return (
     typeof operation.id === "string" &&
     operation.teamId === teamId &&
-    (operation.entityType === "PLAYER" || operation.entityType === "STAFF") &&
+    ["TEAM", "PLAYER", "STAFF", "SEASON", "SEASON_PLAYER", "SEASON_STAFF"].includes(
+      String(operation.entityType),
+    ) &&
     typeof operation.entityId === "string" &&
     operation.kind === "UPSERT" &&
     typeof operation.baseRevision === "number" &&
@@ -86,16 +167,16 @@ function validOperation(value: unknown, teamId: string): value is TeamSyncOperat
     typeof operation.attempts === "number" &&
     ["PENDING", "SYNCING", "ERROR", "CONFLICT"].includes(String(operation.status)) &&
     typeof operation.nextAttemptAt === "number" &&
-    (operation.entityType === "PLAYER"
-      ? validPlayer(operation.payload)
-      : validStaff(operation.payload))
+    validPayload(operation.entityType as TeamEntityType, operation.payload, teamId)
   );
 }
 
 function migrateSync(value: unknown, teamId: string): TeamSyncState {
   if (typeof value !== "object" || value === null) return emptyTeamSyncState();
-  const source = value as Partial<TeamSyncState>;
-  if (source.schemaVersion !== 1) return emptyTeamSyncState();
+  const source = value as Partial<TeamSyncState> & { schemaVersion?: number };
+  if (Number(source.schemaVersion) !== 1 && Number(source.schemaVersion) !== 2) {
+    return emptyTeamSyncState();
+  }
   const valid = Array.isArray(source.outbox)
     ? source.outbox.filter((operation) => validOperation(operation, teamId)).map(
         (operation) => ({
@@ -128,7 +209,7 @@ function migrateSync(value: unknown, teamId: string): TeamSyncState {
         )
       : {};
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     outbox,
     knownRemoteRevisions: revisions,
     lastLocalMutationAt:
@@ -155,9 +236,14 @@ function readEnvelope(
   try {
     const raw = storage.getItem(storageKey(teamId));
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<TeamEnvelope>;
+    const parsed = JSON.parse(raw) as {
+      storageVersion?: number;
+      savedAt?: number;
+      roster?: Partial<TeamWorkspace>;
+      sync?: unknown;
+    };
     if (
-      parsed.storageVersion !== TEAM_STORAGE_VERSION ||
+      (parsed.storageVersion !== 1 && parsed.storageVersion !== TEAM_STORAGE_VERSION) ||
       typeof parsed.savedAt !== "number" ||
       !parsed.roster ||
       parsed.roster.teamId !== teamId ||
@@ -168,10 +254,41 @@ function readEnvelope(
     ) {
       return null;
     }
+    const workspace: TeamWorkspace = parsed.storageVersion === 1
+      ? {
+          teamId,
+          team: defaultTeamProfile(teamId, parsed.savedAt),
+          players: parsed.roster.players,
+          staff: parsed.roster.staff,
+          seasons: [],
+          seasonPlayers: [],
+          seasonStaff: [],
+        }
+      : {
+          teamId,
+          team: validTeam(parsed.roster.team, teamId)
+            ? parsed.roster.team
+            : defaultTeamProfile(teamId, parsed.savedAt),
+          players: parsed.roster.players,
+          staff: parsed.roster.staff,
+          seasons: Array.isArray(parsed.roster.seasons)
+            ? parsed.roster.seasons.filter((season) => validSeason(season, teamId))
+            : [],
+          seasonPlayers: Array.isArray(parsed.roster.seasonPlayers)
+            ? parsed.roster.seasonPlayers.filter((membership) =>
+                validSeasonPlayer(membership, teamId),
+              )
+            : [],
+          seasonStaff: Array.isArray(parsed.roster.seasonStaff)
+            ? parsed.roster.seasonStaff.filter((membership) =>
+                validSeasonStaff(membership, teamId),
+              )
+            : [],
+        };
     return {
       storageVersion: TEAM_STORAGE_VERSION,
       savedAt: parsed.savedAt,
-      roster: parsed.roster,
+      roster: workspace,
       sync: migrateSync(parsed.sync, teamId),
     };
   } catch {
@@ -235,6 +352,7 @@ export class LocalTeamRepository {
   private readonly now: () => number;
   private readonly idFactory: () => string;
   private readonly listeners = new Map<string, Set<() => void>>();
+  private readonly inFlightOperationIds = new Set<string>();
 
   constructor(options: LocalTeamRepositoryOptions = {}) {
     this.storageOverride = options.storage;
@@ -246,7 +364,18 @@ export class LocalTeamRepository {
     return this.storageOverride === undefined ? browserMatchStorage() : this.storageOverride;
   }
 
-  private write(teamId: string, roster: TeamRoster, sync: TeamSyncState): boolean {
+  private withLiveInFlightState(sync: TeamSyncState): TeamSyncState {
+    return {
+      ...sync,
+      outbox: sync.outbox.map((operation) =>
+        this.inFlightOperationIds.has(operation.id)
+          ? { ...operation, status: "SYNCING" as const }
+          : operation,
+      ),
+    };
+  }
+
+  private write(teamId: string, roster: TeamWorkspace, sync: TeamSyncState): boolean {
     const storage = this.storage();
     if (!storage) return false;
     try {
@@ -265,60 +394,118 @@ export class LocalTeamRepository {
     }
   }
 
-  load(teamId: string): TeamRoster {
-    return readEnvelope(teamId, this.storage())?.roster ?? emptyRoster(teamId);
+  load(teamId: string): TeamWorkspace {
+    return readEnvelope(teamId, this.storage())?.roster ?? emptyTeamWorkspace(teamId);
   }
 
   getSyncState(teamId: string): TeamSyncState {
-    return readEnvelope(teamId, this.storage())?.sync ?? emptyTeamSyncState();
+    const sync = readEnvelope(teamId, this.storage())?.sync ?? emptyTeamSyncState();
+    return this.withLiveInFlightState(sync);
   }
 
   getSummary(teamId: string): MatchSyncSummary {
     return summarizeTeamSync(this.getSyncState(teamId));
   }
 
-  save(roster: TeamRoster): boolean {
-    const previous = readEnvelope(roster.teamId, this.storage());
-    let sync = previous?.sync ?? emptyTeamSyncState();
+  save(roster: TeamWorkspace | TeamRoster): boolean {
+    const workspace: TeamWorkspace = "team" in roster
+      ? roster
+      : {
+          ...emptyTeamWorkspace(roster.teamId, this.now()),
+          players: roster.players,
+          staff: roster.staff,
+        };
+    const previous = readEnvelope(workspace.teamId, this.storage());
+    let sync = this.withLiveInFlightState(previous?.sync ?? emptyTeamSyncState());
     const now = this.now();
+    if (!previous || !sameValue(previous.roster.team, workspace.team)) {
+      sync = enqueue(sync, workspace.teamId, "TEAM", workspace.teamId, workspace.team, now, this.idFactory);
+    }
     const previousPlayers = new Map(
       (previous?.roster.players ?? []).map((player) => [player.playerId, player]),
     );
-    for (const player of roster.players) {
+    for (const player of workspace.players) {
       if (sameValue(previousPlayers.get(player.playerId), player)) continue;
-      sync = enqueue(sync, roster.teamId, "PLAYER", player.playerId, player, now, this.idFactory);
+      sync = enqueue(sync, workspace.teamId, "PLAYER", player.playerId, player, now, this.idFactory);
     }
     const previousStaff = new Map(
       (previous?.roster.staff ?? []).map((member) => [member.staffId, member]),
     );
-    for (const member of roster.staff) {
+    for (const member of workspace.staff) {
       if (sameValue(previousStaff.get(member.staffId), member)) continue;
-      sync = enqueue(sync, roster.teamId, "STAFF", member.staffId, member, now, this.idFactory);
+      sync = enqueue(sync, workspace.teamId, "STAFF", member.staffId, member, now, this.idFactory);
     }
-    const saved = this.write(roster.teamId, roster, sync);
-    if (saved) this.notify(roster.teamId);
+    const previousSeasons = new Map(
+      (previous?.roster.seasons ?? []).map((season) => [season.seasonId, season]),
+    );
+    for (const season of workspace.seasons) {
+      if (sameValue(previousSeasons.get(season.seasonId), season)) continue;
+      sync = enqueue(sync, workspace.teamId, "SEASON", season.seasonId, season, now, this.idFactory);
+    }
+    const previousSeasonPlayers = new Map(
+      (previous?.roster.seasonPlayers ?? []).map((membership) => [
+        `${membership.seasonId}:${membership.playerId}`,
+        membership,
+      ]),
+    );
+    for (const membership of workspace.seasonPlayers) {
+      const entityId = `${membership.seasonId}:${membership.playerId}`;
+      if (sameValue(previousSeasonPlayers.get(entityId), membership)) continue;
+      sync = enqueue(
+        sync,
+        workspace.teamId,
+        "SEASON_PLAYER",
+        entityId,
+        membership,
+        now,
+        this.idFactory,
+      );
+    }
+    const previousSeasonStaff = new Map(
+      (previous?.roster.seasonStaff ?? []).map((membership) => [
+        `${membership.seasonId}:${membership.staffId}`,
+        membership,
+      ]),
+    );
+    for (const membership of workspace.seasonStaff) {
+      const entityId = `${membership.seasonId}:${membership.staffId}`;
+      if (sameValue(previousSeasonStaff.get(entityId), membership)) continue;
+      sync = enqueue(
+        sync,
+        workspace.teamId,
+        "SEASON_STAFF",
+        entityId,
+        membership,
+        now,
+        this.idFactory,
+      );
+    }
+    const saved = this.write(workspace.teamId, workspace, sync);
+    if (saved) this.notify(workspace.teamId);
     return saved;
   }
 
   claimNextOperation(teamId: string): TeamSyncOperation | null {
     const record = readEnvelope(teamId, this.storage());
     if (!record) return null;
-    const index = record.sync.outbox.findIndex(
+    const sync = this.withLiveInFlightState(record.sync);
+    const index = sync.outbox.findIndex(
       (operation) =>
         (operation.status === "PENDING" || operation.status === "ERROR") &&
         operation.nextAttemptAt <= this.now(),
     );
     if (index < 0) return null;
     const operation: TeamSyncOperation = {
-      ...record.sync.outbox[index],
+      ...sync.outbox[index],
       status: "SYNCING",
-      attempts: record.sync.outbox[index].attempts + 1,
+      attempts: sync.outbox[index].attempts + 1,
       lastError: undefined,
       errorKind: undefined,
     };
-    const outbox = [...record.sync.outbox];
+    const outbox = [...sync.outbox];
     outbox[index] = operation;
-    if (!this.write(teamId, record.roster, { ...record.sync, outbox })) return null;
+    if (!this.write(teamId, record.roster, { ...sync, outbox })) return null;
+    this.inFlightOperationIds.add(operation.id);
     this.notify(teamId);
     return operation;
   }
@@ -328,6 +515,7 @@ export class LocalTeamRepository {
     if (!record) return;
     const operation = record.sync.outbox.find((item) => item.id === operationId);
     if (!operation) return;
+    this.inFlightOperationIds.delete(operationId);
     const key = teamEntityKey(operation.entityType, operation.entityId);
     const outbox = record.sync.outbox
       .filter((item) => item.id !== operationId)
@@ -357,6 +545,7 @@ export class LocalTeamRepository {
   ): void {
     const record = readEnvelope(teamId, this.storage());
     if (!record) return;
+    this.inFlightOperationIds.delete(operationId);
     const now = this.now();
     const outbox = record.sync.outbox.map((operation) =>
       operation.id === operationId
@@ -390,6 +579,7 @@ export class LocalTeamRepository {
     if (!record) return;
     const operation = record.sync.outbox.find((item) => item.id === operationId);
     if (!operation) return;
+    this.inFlightOperationIds.delete(operationId);
     const conflict: TeamSyncConflict = {
       operationId,
       entityKey: teamEntityKey(operation.entityType, operation.entityId),

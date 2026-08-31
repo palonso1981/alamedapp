@@ -5,6 +5,8 @@ const CATALOG_KEY = "alamedapp:matches:index:v1";
 
 export interface MatchCatalogEntry {
   matchId: string;
+  teamId?: string;
+  seasonId?: string;
   opponent: string;
   venue: MatchVenue;
   date: string;
@@ -18,6 +20,8 @@ function validEntry(value: unknown): value is MatchCatalogEntry {
   const entry = value as Partial<MatchCatalogEntry>;
   return (
     typeof entry.matchId === "string" &&
+    (entry.teamId === undefined || typeof entry.teamId === "string") &&
+    (entry.seasonId === undefined || typeof entry.seasonId === "string") &&
     typeof entry.opponent === "string" &&
     (entry.venue === "HOME" || entry.venue === "AWAY") &&
     typeof entry.date === "string" &&
@@ -48,6 +52,8 @@ export function updateMatchCatalog(
   if (!storage || !preparation) return;
   const entry: MatchCatalogEntry = {
     matchId: session.matchId,
+    teamId: preparation.teamId,
+    seasonId: preparation.seasonId,
     opponent: preparation.opponent,
     venue: preparation.venue,
     date: preparation.date,

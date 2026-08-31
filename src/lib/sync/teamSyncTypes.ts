@@ -1,13 +1,32 @@
-import { MasterPlayer, MasterStaffMember } from "../../types";
+import {
+  MasterPlayer,
+  MasterStaffMember,
+  Season,
+  SeasonPlayer,
+  SeasonStaff,
+  TeamProfile,
+} from "../../types";
 import {
   MatchSyncSummary,
   SyncErrorKind,
   SyncOperationStatus,
 } from "./syncTypes";
 
-export const TEAM_SYNC_SCHEMA_VERSION = 1 as const;
-export type TeamEntityType = "PLAYER" | "STAFF";
-export type TeamSyncPayload = MasterPlayer | MasterStaffMember;
+export const TEAM_SYNC_SCHEMA_VERSION = 2 as const;
+export type TeamEntityType =
+  | "TEAM"
+  | "PLAYER"
+  | "STAFF"
+  | "SEASON"
+  | "SEASON_PLAYER"
+  | "SEASON_STAFF";
+export type TeamSyncPayload =
+  | TeamProfile
+  | MasterPlayer
+  | MasterStaffMember
+  | Season
+  | SeasonPlayer
+  | SeasonStaff;
 
 export interface TeamSyncOperation {
   id: string;
