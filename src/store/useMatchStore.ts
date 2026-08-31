@@ -80,6 +80,8 @@ export const DEMO_EXTRA_PLAYER: Player = {
 };
 
 export const CLEAN_GOAL_DEMO_MATCH_ID = "prueba-porteria";
+export const secondPeriodLineupEventId = (matchId: string) =>
+  `${matchId}:lineup:p2`;
 const DEMO_MATCH_IDS = new Set([
   "prueba",
   "prueba-8",
@@ -171,7 +173,11 @@ interface MatchState {
   setClock: (matchId: string, period: number, minute: number) => void;
   changePeriod: (matchId: string, period: number) => void;
   finishCurrentPeriod: (matchId: string) => void;
-  startSecondPeriod: (matchId: string) => void;
+  startSecondPeriod: (
+    matchId: string,
+    onCourtPlayerIds: string[],
+    goalkeeperPlayerId: string,
+  ) => void;
   resumeFirstPeriod: (matchId: string) => void;
   startPeriodReview: (matchId: string, period: number) => void;
   startFinishedReview: (matchId: string) => void;
@@ -499,7 +505,7 @@ export const useMatchStore = create<MatchState>((set) => ({
       }),
     ),
 
-  startSecondPeriod: (matchId) =>
+  startSecondPeriod: (matchId, onCourtPlayerIds, goalkeeperPlayerId) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) => {
         if (!session.closedPeriods?.includes(1) || session.matchFinished) {
@@ -508,10 +514,64 @@ export const useMatchStore = create<MatchState>((set) => ({
             lastError: "Finaliza P1 antes de iniciar la segunda parte.",
           };
         }
+        const existing = session.events.find(
+          (event) =>
+            event.deletedAt === null &&
+            event.type === "lineup_initialized" &&
+            event.period === 2,
+        );
+        if (existing) {
+          if (session.period === 2) return { ...session, lastError: null };
+          return withClock(
+            { ...session, reviewPeriod: undefined, reviewMinute: undefined, lastError: null },
+            2,
+            session.periodMinutes[2] ?? 0,
+          );
+        }
+
+        const initialized = command(session, () => {
+          const uniquePlayerIds = Array.from(new Set(onCourtPlayerIds));
+          const p1Replay = replayMatch(session.players, session.events, {
+            throughClock: {
+              period: 1,
+              minute: REGULATION_MATCH_CLOCK.periodDurationMinutes,
+            },
+          });
+          const squadPlayerIds = Array.from(
+            new Set([
+              ...p1Replay.onCourtPlayerIds,
+              ...p1Replay.benchPlayerIds,
+            ]),
+          ).filter((playerId) => playerId !== INFERIORITY_SLOT_ID);
+          if (
+            uniquePlayerIds.length !== 5 ||
+            uniquePlayerIds.some((playerId) => !squadPlayerIds.includes(playerId))
+          ) {
+            throw new Error("El inicio de P2 requiere cinco jugadores convocados distintos.");
+          }
+          if (!goalkeeperPlayerId || !uniquePlayerIds.includes(goalkeeperPlayerId)) {
+            throw new Error("Elige quién ejercerá de portero funcional al iniciar P2.");
+          }
+          const lineup = createLineupInitializedEvent({
+            id: secondPeriodLineupEventId(matchId),
+            matchId,
+            position: { period: 2, minute: 0, order: 1 },
+            squadPlayerIds,
+            onCourtPlayerIds: uniquePlayerIds,
+            goalkeeperPlayerId,
+          });
+          return appendEvent(session.players, session.events, lineup);
+        });
+        if (initialized.lastError) return initialized;
         return withClock(
-          { ...session, reviewPeriod: undefined, reviewMinute: undefined, lastError: null },
+          {
+            ...initialized,
+            reviewPeriod: undefined,
+            reviewMinute: undefined,
+            lastError: null,
+          },
           2,
-          session.periodMinutes[2] ?? 0,
+          0,
         );
       }),
     ),

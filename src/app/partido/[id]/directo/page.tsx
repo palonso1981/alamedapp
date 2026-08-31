@@ -17,6 +17,7 @@ import {
 import { MatchRailControl } from "../../../../components/match/MatchRailControl";
 import { MatchScoreboard } from "../../../../components/match/MatchScoreboard";
 import { PeriodReviewBanner } from "../../../../components/match/PeriodReviewBanner";
+import { SecondPeriodLineupDialog } from "../../../../components/match/SecondPeriodLineupDialog";
 import { SyncStatusBadge } from "../../../../components/match/SyncStatusBadge";
 import {
   DisciplineFocusRequest,
@@ -31,7 +32,11 @@ import {
   LiveInteractionState,
   reduceLiveInteraction,
 } from "../../../../lib/liveInteraction";
-import { replayMatch, sortEvents } from "../../../../lib/matchEngine";
+import {
+  proposeSecondPeriodLineup,
+  replayMatch,
+  sortEvents,
+} from "../../../../lib/matchEngine";
 import { assistCandidates } from "../../../../lib/matchReview";
 import {
   useMatchStore,
@@ -143,6 +148,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const [selectingFlyingGoalkeeper, setSelectingFlyingGoalkeeper] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [genericFoulConfirm, setGenericFoulConfirm] = useState<"FOR" | "AGAINST" | null>(null);
+  const [secondPeriodSetupOpen, setSecondPeriodSetupOpen] = useState(false);
 
   useEffect(() => {
     const savedSide = window.localStorage.getItem(CLOCK_SIDE_STORAGE_KEY);
@@ -162,6 +168,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     setFeedback(null);
     setSelectedStaffId(null);
     setSelectingFlyingGoalkeeper(false);
+    setSecondPeriodSetupOpen(false);
   }, [ensureMatch, matchId]);
 
   useEffect(() => {
@@ -207,8 +214,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     () => (session ? replayMatch(session.players, session.events) : null),
     [session],
   );
+  const secondPeriodProposal = useMemo(
+    () =>
+      session
+        ? proposeSecondPeriodLineup(session.players, session.events)
+        : null,
+    [session],
+  );
 
-  if (!session || !replay || !activeReplay || !chronologyReplay) {
+  if (!session || !replay || !activeReplay || !chronologyReplay || !secondPeriodProposal) {
     return (
       <main className="grid min-h-screen place-items-center bg-gray-950 text-white">
         Preparando el partido…
@@ -423,8 +437,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         }}
         onStartSecondPeriod={() => {
           setInteraction(IDLE_LIVE_INTERACTION);
-          startSecondPeriod(matchId);
-          setFeedback("▶ Segunda parte");
+          setSecondPeriodSetupOpen(true);
         }}
         onResumeFirstPeriod={() => {
           setInteraction(IDLE_LIVE_INTERACTION);
@@ -453,6 +466,25 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         >
           {feedback}
         </div>
+      )}
+      {secondPeriodSetupOpen && (
+        <SecondPeriodLineupDialog
+          players={session.players}
+          proposedPlayerIds={secondPeriodProposal.playerIds}
+          proposedGoalkeeperId={secondPeriodProposal.goalkeeperPlayerId}
+          dismissedPlayerIds={activeReplay.dismissedPlayerIds}
+          onCancel={() => setSecondPeriodSetupOpen(false)}
+          onConfirm={(playerIds, goalkeeperPlayerId) => {
+            startSecondPeriod(matchId, playerIds, goalkeeperPlayerId);
+            const updated = useMatchStore.getState().matches[matchId];
+            if (updated?.period === 2) {
+              setSecondPeriodSetupOpen(false);
+              setFeedback("▶ Segunda parte");
+            } else if (updated?.lastError) {
+              setFeedback(updated.lastError);
+            }
+          }}
+        />
       )}
       <header className="mx-auto mb-2 flex max-w-7xl flex-wrap items-center justify-between gap-2 border-b border-gray-700 pb-2">
         <div>

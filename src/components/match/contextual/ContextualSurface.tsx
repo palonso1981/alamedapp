@@ -12,6 +12,7 @@ interface ContextualSurfaceProps {
   onCancel: () => void;
   compact?: boolean;
   viewportOnMobile?: boolean;
+  wide?: boolean;
 }
 
 type ContextualStyle = CSSProperties & {
@@ -34,6 +35,7 @@ export function ContextualSurface({
   onCancel,
   compact = false,
   viewportOnMobile = false,
+  wide = false,
 }: ContextualSurfaceProps) {
   const placement = contextualPlacement(anchor);
   const center = placement.horizontal === "CENTER";
@@ -59,7 +61,7 @@ export function ContextualSurface({
     "--context-mobile-bottom": anchor.y < 0.5 ? "5.5rem" : "auto",
     "--context-mobile-left": anchor.x >= 0.5 ? "0.5rem" : "auto",
     "--context-mobile-right": anchor.x < 0.5 ? "0.5rem" : "auto",
-    "--context-width": compact ? "13rem" : "25rem",
+    "--context-width": compact ? "13rem" : wide ? "29rem" : "25rem",
   };
 
   const stopPropagation = (event: MouseEvent<HTMLElement>) => {

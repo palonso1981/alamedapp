@@ -90,7 +90,7 @@ export function eventDescription(
         : "Rival";
     return `${card} ${target}`;
   }
-  return "Alineación inicial";
+  return `Alineación inicial P${event.period}`;
 }
 
 export function contextLabel(context: GameContext): string {

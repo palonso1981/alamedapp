@@ -180,8 +180,8 @@ export interface NormalizedCoordinates {
   y: number;
 }
 
-export const GOAL_TARGET_GEOMETRY_VERSION = 2 as const;
-export type GoalTargetGeometryVersion = 1 | typeof GOAL_TARGET_GEOMETRY_VERSION;
+export const GOAL_TARGET_GEOMETRY_VERSION = 3 as const;
+export type GoalTargetGeometryVersion = 1 | 2 | typeof GOAL_TARGET_GEOMETRY_VERSION;
 
 /** Coordenada canónica normalizada sobre el lienzo frontal de portería. */
 export interface GoalTargetCoordinates extends NormalizedCoordinates {

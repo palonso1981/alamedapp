@@ -14,16 +14,29 @@ const LEGACY_GOAL_FRAME = {
   bottom: 0.82,
 } as const;
 
-/** Marco V2: reserva exterior amplio y cómodo en los cuatro lados. */
-export const GOAL_FRAME = {
+/** Marco V2 congelado para que las capturas existentes no cambien de sentido. */
+const V2_GOAL_FRAME = {
   left: 0.22,
   right: 0.78,
   top: 0.23,
   bottom: 0.78,
 } as const;
 
+/**
+ * Marco V3 alineado con el SVG visible. La tolerancia de seis milésimas cubre
+ * el borde interior de postes/larguero sin absorber un toque claramente fuera.
+ */
+const GOAL_EDGE_TOUCH_TOLERANCE = 0.006;
+export const GOAL_FRAME = {
+  left: 0.22 - GOAL_EDGE_TOUCH_TOLERANCE,
+  right: 0.78 + GOAL_EDGE_TOUCH_TOLERANCE,
+  top: 15 / 64 - GOAL_EDGE_TOUCH_TOLERANCE,
+  bottom: 50 / 64 + GOAL_EDGE_TOUCH_TOLERANCE,
+} as const;
+
 function frameFor(version: GoalTargetGeometryVersion) {
-  return version === 1 ? LEGACY_GOAL_FRAME : GOAL_FRAME;
+  if (version === 1) return LEGACY_GOAL_FRAME;
+  return version === 2 ? V2_GOAL_FRAME : GOAL_FRAME;
 }
 
 export function normalizeGoalTargetPoint(
@@ -146,6 +159,7 @@ export const KEEPER_BODY_SCREEN_SIDE: Readonly<
 export function validGoalTarget(point: GoalTargetCoordinates): boolean {
   return (
     (point.geometryVersion === 1 ||
+      point.geometryVersion === 2 ||
       point.geometryVersion === GOAL_TARGET_GEOMETRY_VERSION) &&
     Number.isFinite(point.x) &&
     Number.isFinite(point.y) &&

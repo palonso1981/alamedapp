@@ -176,7 +176,10 @@ pista. Los eventos legacy sin esa identidad quedan `PENDING` y activan el
 cortafuegos/pending review donde corresponda; nunca se inventa una persona.
 
 El destino usa coordenadas `{x, y}` entre 0 y 1 sobre un lienzo frontal
-canónico, con `geometryVersion: 2`; no persiste píxeles ni zonas agregadas. El
+canónico, con `geometryVersion: 3`; no persiste píxeles ni zonas agregadas. V3
+alinea el marco lógico con la cara visible de postes y larguero y añade una
+tolerancia táctil mínima en el borde. V1 y V2 conservan sus límites congelados
+para que ninguna captura histórica cambie de significado. El
 resultado deportivo sigue siendo un campo del evento y el detalle espacial se
 valida contra la geometría de su versión. `WOODWORK` queda reservado como
 detalle futuro del destino (palo/travesaño), no como cuarta consecuencia al
@@ -362,7 +365,12 @@ El rail concentra periodo, cuenta atrás, superioridad, P-J y estado numérico,
 pero separa físicamente las acciones de cierre. `FINALIZAR PARTE` requiere una
 confirmación corta, completa el reloj hasta 20 para liquidar los minutos de los
 jugadores activos y deja P1 cerrada. No cambia automáticamente a P2. Solo
-después aparece `INICIAR 2ª PARTE`, que abre P2 en 0 transcurridos/20 restantes.
+después aparece `INICIAR 2ª PARTE`, que propone el quinteto con el que terminó
+P1 y exige confirmar cinco personas y un portero funcional. La confirmación
+crea una única `lineup_initialized` en `P2 0'`: los cambios de descanso no son
+sustituciones, el replay cierra los tramos de P1 e inicia los de P2, y un ID
+determinista evita duplicados ante doble toque, recarga o retry. Solo entonces
+P2 queda abierta en 0 transcurridos/20 restantes.
 En P2, `FINALIZAR PARTIDO` aplica la misma liquidación. Un periodo cerrado no
 admite nuevas capturas deportivas accidentales; su cronología sigue editable
 desde Historial.

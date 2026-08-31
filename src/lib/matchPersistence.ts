@@ -5,6 +5,7 @@ import {
   synchronizeThreatSequencePhases,
 } from "./matchEngine";
 import {
+  GOAL_TARGET_GEOMETRY_VERSION,
   MATCH_EVENT_SCHEMA_VERSION,
   MatchEvent,
   MatchPreparation,
@@ -154,7 +155,8 @@ function isDefensiveDetail(value: unknown): boolean {
   const common =
     isObject(value.goalTarget) &&
     (value.goalTarget.geometryVersion === 1 ||
-      value.goalTarget.geometryVersion === 2) &&
+      value.goalTarget.geometryVersion === 2 ||
+      value.goalTarget.geometryVersion === GOAL_TARGET_GEOMETRY_VERSION) &&
     isOrigin(value.goalTarget) &&
     isGoalkeeperReference(value.goalkeeper) &&
     (value.saveOutcome === undefined ||

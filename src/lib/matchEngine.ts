@@ -843,17 +843,13 @@ export function replayMatch(
       if (
         event.goalkeeperPlayerId &&
         (!event.onCourtPlayerIds.includes(event.goalkeeperPlayerId) ||
-          !players.some(
-            (player) =>
-              player.id === event.goalkeeperPlayerId &&
-              (player.goalkeeperCapable || goalkeeperRole(player, false)),
-          ))
+          !playerIds.has(event.goalkeeperPlayerId))
       ) {
         issue(
           issues,
           event,
           "INVALID_GOALKEEPER",
-          "El portero inicial explícito debe ser un portero convocado y en pista.",
+          "El portero funcional explícito debe ser un jugador convocado y en pista.",
         );
       }
 
@@ -1011,6 +1007,7 @@ export function replayMatch(
           onCourtPlayerIds,
           flyingGoalkeeperActive,
           flyingGoalkeeperPlayerId,
+          explicitGoalkeeperPlayerId,
         );
         if (
           event.side !== "AGAINST" ||
@@ -1283,6 +1280,54 @@ export function replayMatch(
     lineupValidation,
     dismissedPlayerIds: Array.from(dismissedPlayerIds),
     issues,
+  };
+}
+
+export interface SecondPeriodLineupProposal {
+  playerIds: string[];
+  goalkeeperPlayerId?: string;
+}
+
+/**
+ * Propone P2 desde el último estado efectivo de P1. Si P2 ya fue inicializada,
+ * devuelve esa única alineación para que recarga y retry sean idempotentes.
+ */
+export function proposeSecondPeriodLineup(
+  players: Player[],
+  events: MatchEvent[],
+): SecondPeriodLineupProposal {
+  const initialized = sortEvents(events)
+    .filter(
+      (event) =>
+        event.deletedAt === null &&
+        event.type === "lineup_initialized" &&
+        event.period === 2,
+    )
+    .at(-1);
+  if (initialized?.type === "lineup_initialized") {
+    return {
+      playerIds: [...initialized.onCourtPlayerIds],
+      goalkeeperPlayerId: initialized.goalkeeperPlayerId,
+    };
+  }
+  const replay = replayMatch(players, events, {
+    currentClock: {
+      period: 1,
+      minute: REGULATION_MATCH_CLOCK.periodDurationMinutes,
+    },
+    throughClock: {
+      period: 1,
+      minute: REGULATION_MATCH_CLOCK.periodDurationMinutes,
+    },
+  });
+  return {
+    playerIds: replay.onCourtPlayerIds.filter(
+      (playerId) => playerId !== INFERIORITY_SLOT_ID,
+    ),
+    goalkeeperPlayerId:
+      replay.lineupValidation.goalkeeper.status === "PLAYER"
+        ? replay.lineupValidation.goalkeeper.playerId
+        : undefined,
   };
 }
 

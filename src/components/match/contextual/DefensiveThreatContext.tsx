@@ -40,6 +40,7 @@ export function DefensiveThreatContext({
       label="Portería defensiva"
       onCancel={onCancel}
       viewportOnMobile
+      wide
     >
       {threat.step === "GOAL_TARGET" && (
         <div>

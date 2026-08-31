@@ -20,6 +20,7 @@ import {
   goalkeeperAtPosition,
   moveEventWithinMinute,
   normalizeMatchClock,
+  proposeSecondPeriodLineup,
   reorderEvent,
   replayMatch,
   restoreEvent,
@@ -39,7 +40,7 @@ import {
 import { contextualPlacement } from "./contextualPlacement";
 import { courtHeightForWidth, FUTSAL_COURT_ASPECT_RATIO, normalizeCourtPoint } from "./courtGeometry";
 import { CANONICAL_COURT_ORIENTATION, courtOrientationForPeriod } from "./courtGeometry";
-import { classifyGoalTarget, deriveKeeperBodyZone, deriveKeeperBodyZoneFromPart, GOAL_FRAME, isOutcomeCompatibleWithGoalTarget, KEEPER_BODY_SCREEN_SIDE, normalizeGoalTargetPoint } from "./goalTarget";
+import { classifyGoalTarget, deriveKeeperBodyZone, deriveKeeperBodyZoneFromPart, GOAL_FRAME, isInsideGoalFrame, isOutcomeCompatibleWithGoalTarget, KEEPER_BODY_SCREEN_SIDE, normalizeGoalTargetPoint } from "./goalTarget";
 import { assistCandidates, filterTimelineEvents } from "./matchReview";
 import { deriveGoalZoneV1, derivePitchZoneV1, PITCH_ZONE_MODEL_VERSION } from "./spatialZones";
 import {
@@ -48,10 +49,12 @@ import {
   DEMO_STAFF,
   CLEAN_GOAL_DEMO_MATCH_ID,
   createSession,
+  secondPeriodLineupEventId,
   upgradeDemoSession,
   useMatchStore,
 } from "../store/useMatchStore";
 import {
+  GOAL_TARGET_GEOMETRY_VERSION,
   INFERIORITY_SLOT_ID,
   MatchEvent,
   MatchSession,
@@ -2952,14 +2955,18 @@ test("P-J requiere identidad explícita en pista y replay la conserva", () => {
   assert.equal(replay.lineupValidation.actualPlayersOnCourt, 5);
 });
 
-test("geometría V2 conserva coordenadas reales y solo fuerza FUERA fuera del marco", () => {
+test("geometría V3 conserva coordenadas reales y mantiene V2 congelada", () => {
   const center = normalizeGoalTargetPoint(250, 250, {
     left: 0,
     top: 0,
     width: 500,
     height: 500,
   });
-  assert.deepEqual(center, { geometryVersion: 2, x: 0.5, y: 0.5 });
+  assert.deepEqual(center, {
+    geometryVersion: GOAL_TARGET_GEOMETRY_VERSION,
+    x: 0.5,
+    y: 0.5,
+  });
   assert.equal(classifyGoalTarget(center), "PARADA");
   assert.equal(isOutcomeCompatibleWithGoalTarget(center, "PARADA"), true);
   assert.equal(isOutcomeCompatibleWithGoalTarget(center, "GOL"), true);
@@ -2968,6 +2975,61 @@ test("geometría V2 conserva coordenadas reales y solo fuerza FUERA fuera del ma
   const outside = { geometryVersion: 2 as const, x: 0.1, y: 0.5 };
   assert.equal(classifyGoalTarget(outside), "FUERA");
   assert.equal(isOutcomeCompatibleWithGoalTarget(outside, "GOL"), false);
+  assert.equal(isInsideGoalFrame({ geometryVersion: 2, x: 0.219, y: 0.5 }), false);
+  assert.equal(isInsideGoalFrame({ geometryVersion: 3, x: 0.219, y: 0.5 }), true);
+});
+
+test("los bordes visuales V3 distinguen interior y exterior junto a postes y larguero", () => {
+  const epsilon = 0.0001;
+  const point = (x: number, y: number) => ({
+    geometryVersion: GOAL_TARGET_GEOMETRY_VERSION,
+    x,
+    y,
+  });
+  const insideLeft = point(GOAL_FRAME.left + epsilon, 0.5);
+  const outsideLeft = point(GOAL_FRAME.left - epsilon, 0.5);
+  const insideRight = point(GOAL_FRAME.right - epsilon, 0.5);
+  const outsideRight = point(GOAL_FRAME.right + epsilon, 0.5);
+  const insideCrossbar = point(0.5, GOAL_FRAME.top + epsilon);
+  const outsideCrossbar = point(0.5, GOAL_FRAME.top - epsilon);
+
+  assert.equal(isInsideGoalFrame(insideLeft), true);
+  assert.equal(classifyGoalTarget(outsideLeft), "FUERA");
+  assert.equal(isInsideGoalFrame(insideRight), true);
+  assert.equal(classifyGoalTarget(outsideRight), "FUERA");
+  assert.equal(isInsideGoalFrame(insideCrossbar), true);
+  assert.equal(classifyGoalTarget(outsideCrossbar), "FUERA");
+  assert.equal(
+    isInsideGoalFrame(
+      point(GOAL_FRAME.left + epsilon, GOAL_FRAME.top + epsilon),
+    ),
+    true,
+  );
+  assert.equal(
+    classifyGoalTarget(
+      point(GOAL_FRAME.left - epsilon, GOAL_FRAME.top - epsilon),
+    ),
+    "FUERA",
+  );
+  assert.equal(isInsideGoalFrame(point(0.5, 0.5)), true);
+});
+
+test("resize del GoalTargetPicker no altera coordenadas ni clasificación V3", () => {
+  const small = normalizeGoalTargetPoint(218, 125, {
+    left: 100,
+    top: 50,
+    width: 500,
+    height: 320,
+  });
+  const large = normalizeGoalTargetPoint(336, 200, {
+    left: 100,
+    top: 50,
+    width: 1000,
+    height: 640,
+  });
+  assert.deepEqual(small, large);
+  assert.equal(isInsideGoalFrame(small), true);
+  assert.equal(classifyGoalTarget(small) === "FUERA", false);
 });
 
 test("prueba-porteria es un fixture limpio, aislado y reiniciable", () => {
@@ -3017,16 +3079,197 @@ test("finalizar partes completa minutos, conserva eventos y exige inicio explíc
   assert.equal(current.events.length, before.length);
   assert.match(current.lastError ?? "", /P1 está cerrado/);
 
-  actions.startSecondPeriod(matchId);
+  actions.startSecondPeriod(matchId, ["p1", "p2", "p3", "p4", "p5"], "p5");
   current = useMatchStore.getState().matches[matchId];
   assert.equal(current.period, 2);
   assert.equal(current.minute, 0);
-  assert.deepEqual(current.events, before);
+  assert.equal(current.events.length, before.length + 1);
+  const p2Lineup = current.events.find(
+    (event) => event.type === "lineup_initialized" && event.period === 2,
+  );
+  assert.equal(p2Lineup?.id, secondPeriodLineupEventId(matchId));
+  assert.deepEqual(
+    p2Lineup?.type === "lineup_initialized" ? p2Lineup.onCourtPlayerIds : [],
+    ["p1", "p2", "p3", "p4", "p5"],
+  );
   actions.finishCurrentPeriod(matchId);
   current = useMatchStore.getState().matches[matchId];
   assert.equal(current.minute, 20);
   assert.equal(current.matchFinished, true);
   assert.deepEqual(current.closedPeriods, [1, 2]);
+});
+
+test("P2 propone y acepta sin cambios el quinteto que terminó P1", () => {
+  const matchId = "p2-lineup-proposal";
+  useMatchStore.setState({ matches: { [matchId]: createSession(matchId) } });
+  const actions = useMatchStore.getState();
+  actions.setClock(matchId, 1, 8);
+  actions.swapPlayer(matchId, "p1", "p6");
+  actions.finishCurrentPeriod(matchId);
+  let current = useMatchStore.getState().matches[matchId];
+  const proposal = proposeSecondPeriodLineup(current.players, current.events);
+  assert.deepEqual(proposal, {
+    playerIds: ["p6", "p2", "p3", "p4", "p5"],
+    goalkeeperPlayerId: "p5",
+  });
+
+  actions.startSecondPeriod(
+    matchId,
+    proposal.playerIds,
+    proposal.goalkeeperPlayerId!,
+  );
+  current = useMatchStore.getState().matches[matchId];
+  const initializations = current.events.filter(
+    (event) => event.type === "lineup_initialized" && event.period === 2,
+  );
+  assert.equal(initializations.length, 1);
+  assert.equal(
+    current.events.filter((event) => event.type === "substitution").length,
+    1,
+  );
+  const replay = replayMatch(current.players, current.events, {
+    currentClock: { period: 2, minute: 0 },
+  });
+  assert.deepEqual(replay.onCourtPlayerIds, proposal.playerIds);
+  assert.deepEqual(replay.lineupValidation.goalkeeper, {
+    status: "PLAYER",
+    playerId: "p5",
+    resolution: "REPLAY",
+  });
+  assert.equal(replay.playerMinutes.p1.totalMinutes, 8);
+  assert.equal(replay.playerMinutes.p6.totalMinutes, 12);
+  assert.equal(replay.playerMinutes.p6.currentStintMinutes, 0);
+});
+
+test("P2 cambia jugadores y portero sin sustituciones, persiste y solo se inicializa una vez", () => {
+  const matchId = "p2-lineup-changed";
+  useMatchStore.setState({ matches: { [matchId]: createSession(matchId) } });
+  const actions = useMatchStore.getState();
+  actions.finishCurrentPeriod(matchId);
+  actions.startSecondPeriod(matchId, ["p1", "p4", "p5", "p6"], "p5");
+  let current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.period, 1);
+  assert.match(current.lastError ?? "", /cinco jugadores/);
+  const p2Players = ["p1", "p4", "p5", "p6", "p7"];
+  actions.startSecondPeriod(matchId, p2Players, "p6");
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.period, 2);
+  assert.equal(current.minute, 0);
+  assert.equal(current.periodMinutes[2], 0);
+  assert.equal(
+    current.events.filter((event) => event.type === "substitution").length,
+    0,
+  );
+  assert.equal(
+    current.events.filter(
+      (event) =>
+        event.type === "lineup_initialized" &&
+        event.period === 2 &&
+        event.minute === 0,
+    ).length,
+    1,
+  );
+
+  let replay = replayMatch(current.players, current.events, {
+    currentClock: { period: 2, minute: 0 },
+  });
+  assert.deepEqual(replay.onCourtPlayerIds, p2Players);
+  assert.deepEqual(replay.lineupValidation.goalkeeper, {
+    status: "PLAYER",
+    playerId: "p6",
+    resolution: "REPLAY",
+  });
+  assert.equal(replay.playerMinutes.p2.totalMinutes, 20);
+  assert.equal(replay.playerMinutes.p3.totalMinutes, 20);
+  assert.equal(replay.playerMinutes.p2.onCourt, false);
+  assert.equal(replay.playerMinutes.p6.totalMinutes, 0);
+  assert.equal(replay.playerMinutes.p6.currentStintMinutes, 0);
+
+  const eventCount = current.events.length;
+  actions.startSecondPeriod(
+    matchId,
+    ["p2", "p3", "p4", "p5", "p8"],
+    "p5",
+  );
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.events.length, eventCount);
+  replay = replayMatch(current.players, current.events, {
+    currentClock: { period: 2, minute: 0 },
+  });
+  assert.deepEqual(replay.onCourtPlayerIds, p2Players);
+  assert.equal(
+    proposeSecondPeriodLineup(current.players, current.events).goalkeeperPlayerId,
+    "p6",
+  );
+
+  const storage = new MemoryStorage();
+  assert.equal(saveMatchSession(current, storage, 30).ok, true);
+  const loaded = loadMatchSession(matchId, storage);
+  assert.ok(loaded);
+  const reloadedReplay = replayMatch(loaded.players, loaded.events, {
+    currentClock: { period: 2, minute: 0 },
+  });
+  assert.deepEqual(reloadedReplay.onCourtPlayerIds, p2Players);
+  assert.equal(reloadedReplay.lineupValidation.goalkeeper.status, "PLAYER");
+  assert.equal(
+    reloadedReplay.lineupValidation.goalkeeper.status === "PLAYER"
+      ? reloadedReplay.lineupValidation.goalkeeper.playerId
+      : undefined,
+    "p6",
+  );
+
+  actions.setClock(matchId, 2, 3);
+  actions.swapPlayer(matchId, "p7", "p2");
+  current = useMatchStore.getState().matches[matchId];
+  const p2Substitutions = current.events.filter(
+    (event) => event.type === "substitution" && event.period === 2,
+  );
+  assert.equal(p2Substitutions.length, 1);
+  assert.equal(p2Substitutions[0].minute, 3);
+  replay = replayMatch(current.players, current.events, {
+    currentClock: { period: 2, minute: 3 },
+  });
+  assert.equal(replay.playerMinutes.p7.totalMinutes, 3);
+  assert.equal(replay.playerMinutes.p2.totalMinutes, 20);
+  assert.equal(replay.playerMinutes.p2.currentStintMinutes, 0);
+});
+
+test("amenaza RIV posterior usa el portero funcional elegido para P2", () => {
+  const matchId = "p2-functional-goalkeeper-threat";
+  useMatchStore.setState({ matches: { [matchId]: createSession(matchId) } });
+  const actions = useMatchStore.getState();
+  actions.finishCurrentPeriod(matchId);
+  actions.startSecondPeriod(
+    matchId,
+    ["p1", "p3", "p4", "p5", "p6"],
+    "p6",
+  );
+  actions.swapPlayer(matchId, "p3", "p9");
+  actions.recordThreat(matchId, {
+    id: "p2-rival-goal",
+    side: "AGAINST",
+    origin: { x: 0.6, y: 0.4 },
+    outcome: "GOL",
+    phase: "POSITIONAL",
+    defensiveCapture: {
+      goalTarget: {
+        geometryVersion: GOAL_TARGET_GEOMETRY_VERSION,
+        x: 0.225,
+        y: 0.35,
+      },
+    },
+  });
+  const current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.lastError, null);
+  const threat = current.events.find((event) => event.id === "p2-rival-goal");
+  assert.equal(
+    threat?.type === "threat_recorded" &&
+      threat.defensive?.goalkeeper.status === "PLAYER"
+      ? threat.defensive.goalkeeper.playerId
+      : undefined,
+    "p6",
+  );
+  assert.deepEqual(replayMatch(current.players, current.events).issues, []);
 });
 
 test("partido finalizado permanece FINISHED y admite corrección deliberada por periodo", () => {
@@ -3051,7 +3294,7 @@ test("partido finalizado permanece FINISHED y admite corrección deliberada por 
   useMatchStore.setState({ matches: { [matchId]: prepared } });
   const actions = useMatchStore.getState();
   actions.finishCurrentPeriod(matchId);
-  actions.startSecondPeriod(matchId);
+  actions.startSecondPeriod(matchId, ["p1", "p2", "p3", "p4", "p5"], "p5");
   actions.finishCurrentPeriod(matchId);
   let current = useMatchStore.getState().matches[matchId];
   assert.equal(current.matchFinished, true);
@@ -3207,7 +3450,7 @@ test("P2 permanece activa mientras revisión P1 captura, edita y recalcula repla
   const actions = useMatchStore.getState();
   actions.setClock(matchId, 1, 18);
   actions.finishCurrentPeriod(matchId);
-  actions.startSecondPeriod(matchId);
+  actions.startSecondPeriod(matchId, ["p1", "p2", "p3", "p4", "p5"], "p5");
   actions.incrementMinute(matchId);
   actions.incrementMinute(matchId);
   actions.incrementMinute(matchId);
@@ -3247,8 +3490,10 @@ test("P2 permanece activa mientras revisión P1 captura, edita y recalcula repla
     currentClock: { period: 2, minute: 3 },
   });
   assert.equal(replay.score.against, 1);
-  assert.equal(replay.playerMinutes.p1.totalMinutes, 12);
-  assert.equal(replay.playerMinutes.p6.totalMinutes, 11);
+  // P2 conserva su alineación explícita aunque una revisión posterior cambie
+  // cómo terminó P1: p1 suma 12' de P1 + 3' de P2; p6 solo 8' de P1.
+  assert.equal(replay.playerMinutes.p1.totalMinutes, 15);
+  assert.equal(replay.playerMinutes.p6.totalMinutes, 8);
 
   actions.editEvent(matchId, "omitted-p1-goal", {
     minute: 11,
@@ -3289,7 +3534,7 @@ test("contexto de revisión P1 se persiste sin alterar el reloj activo P2", () =
   const actions = useMatchStore.getState();
   actions.setClock(matchId, 1, 17);
   actions.finishCurrentPeriod(matchId);
-  actions.startSecondPeriod(matchId);
+  actions.startSecondPeriod(matchId, ["p1", "p2", "p3", "p4", "p5"], "p5");
   actions.incrementMinute(matchId);
   actions.startPeriodReview(matchId, 1);
   actions.setReviewMinute(matchId, 9);

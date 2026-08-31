@@ -53,10 +53,10 @@ export function GoalTargetPicker({ value, onSelect, compact = false }: GoalTarge
       <button
         type="button"
         onPointerUp={select}
-        className={`relative block w-full touch-manipulation overflow-hidden rounded-2xl border border-sky-300/30 bg-slate-950 shadow-inner ${compact ? "aspect-[1.7/1] min-h-44" : "aspect-[1.7/1] min-h-64 sm:min-h-80"}`}
+        className={`relative block w-full touch-manipulation overflow-hidden rounded-2xl border border-sky-300/30 bg-slate-950 shadow-inner ${compact ? "aspect-[25/16] min-h-44" : "aspect-[25/16]"}`}
         aria-label="Portería CDA: toca destino del disparo rival"
       >
-        <svg viewBox="0 0 100 64" className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+        <svg viewBox="0 0 100 64" preserveAspectRatio="none" className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
           <defs>
             <linearGradient id="goal-surface" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0" stopColor="#081525" />
