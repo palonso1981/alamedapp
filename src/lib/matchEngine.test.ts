@@ -42,6 +42,7 @@ import { courtHeightForWidth, FUTSAL_COURT_ASPECT_RATIO, normalizeCourtPoint } f
 import { CANONICAL_COURT_ORIENTATION, courtOrientationForPeriod } from "./courtGeometry";
 import { classifyGoalTarget, deriveKeeperBodyZone, deriveKeeperBodyZoneFromPart, GOAL_FRAME, isInsideGoalFrame, isOutcomeCompatibleWithGoalTarget, KEEPER_BODY_SCREEN_SIDE, normalizeGoalTargetPoint } from "./goalTarget";
 import { assistCandidates, filterTimelineEvents } from "./matchReview";
+import { effectiveReviewStatus, reviewEventCounts, targetMinutesComparisons } from "./postMatchReview";
 import { deriveGoalZoneV1, derivePitchZoneV1, PITCH_ZONE_MODEL_VERSION } from "./spatialZones";
 import {
   DEMO_EXTRA_PLAYER,
@@ -3292,6 +3293,7 @@ test("partido finalizado permanece FINISHED y admite corrección deliberada por 
     },
   };
   useMatchStore.setState({ matches: { [matchId]: prepared } });
+  assert.equal("seasonId" in prepared.preparation ? prepared.preparation.seasonId : undefined, undefined);
   const actions = useMatchStore.getState();
   actions.finishCurrentPeriod(matchId);
   actions.startSecondPeriod(matchId, ["p1", "p2", "p3", "p4", "p5"], "p5");
@@ -3299,11 +3301,13 @@ test("partido finalizado permanece FINISHED y admite corrección deliberada por 
   let current = useMatchStore.getState().matches[matchId];
   assert.equal(current.matchFinished, true);
   assert.equal(current.preparation?.status, "FINISHED");
+  assert.equal(current.reviewStatus, "NOT_REVIEWED");
   const before = current.events.length;
   actions.recordFoul(matchId, "FOR", null);
   assert.equal(useMatchStore.getState().matches[matchId].events.length, before);
 
   actions.startFinishedReview(matchId);
+  assert.equal(useMatchStore.getState().matches[matchId].reviewStatus, "IN_REVIEW");
   actions.setReviewMinute(matchId, 7);
   actions.recordFoul(matchId, "FOR", null);
   current = useMatchStore.getState().matches[matchId];
@@ -3311,6 +3315,7 @@ test("partido finalizado permanece FINISHED y admite corrección deliberada por 
   assert.ok(generic);
   assert.equal(generic?.period, 2);
   assert.equal(generic?.minute, 7);
+  assert.equal(generic?.provenance, "MANUAL_REVIEW");
   assert.equal(current.matchFinished, true);
   assert.equal(current.preparation?.status, "FINISHED");
   actions.editEvent(matchId, generic!.id, { minute: 8, foul: { playerId: "p1" } });
@@ -3331,6 +3336,7 @@ test("partido finalizado permanece FINISHED y admite corrección deliberada por 
   assert.equal(current.reviewPeriod, undefined);
   assert.equal(current.matchFinished, true);
   assert.equal(current.preparation?.status, "FINISHED");
+  assert.equal(current.preparation?.seasonId, undefined);
 });
 
 test("revisión FINISHED repara metadata legacy sin periodos cerrados", () => {
@@ -3353,6 +3359,96 @@ test("revisión FINISHED repara metadata legacy sin periodos cerrados", () => {
   assert.equal(current.reviewPeriod, 2);
   assert.ok(current.events.some((event) => event.type === "foul_recorded" && event.period === 2 && event.minute === 6));
   assert.equal(current.matchFinished, true);
+});
+
+test("validar y reabrir revisión no reactiva el reloj y conserva procedencia LIVE", () => {
+  const matchId = "review-status";
+  const liveThreat = createLiveThreatEvent({
+    id: "live-before-review",
+    matchId,
+    position: { period: 1, minute: 4, order: 1 },
+    side: "FOR",
+    playerId: "p1",
+    origin: { x: 0.4, y: 0.5 },
+    outcome: "FUERA",
+    phase: "POSITIONAL",
+  });
+  const session: MatchSession = {
+    ...createSession(matchId),
+    period: 2,
+    minute: 20,
+    periodMinutes: { 1: 20, 2: 20 },
+    closedPeriods: [1, 2],
+    matchFinished: true,
+    reviewStatus: "NOT_REVIEWED",
+    events: appendEvent(players, initialLineup(matchId), liveThreat),
+  };
+  useMatchStore.setState({ matches: { [matchId]: session } });
+  const actions = useMatchStore.getState();
+  actions.startFinishedReview(matchId);
+  actions.editEvent(matchId, liveThreat.id, { minute: 5, pendingReview: true });
+  let current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.events.find((event) => event.id === liveThreat.id)?.provenance, "LIVE");
+  actions.validateReview(matchId);
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(effectiveReviewStatus(current), "VALIDATED");
+  assert.equal(current.reviewPeriod, undefined);
+  assert.equal(current.matchFinished, true);
+  assert.equal(current.period, 2);
+  assert.equal(reviewEventCounts(current.events).pending, 1);
+  const validatedAt = current.reviewValidatedAt;
+  actions.startFinishedReview(matchId);
+  assert.match(useMatchStore.getState().matches[matchId].lastError ?? "", /Reabre la revisión/i);
+  actions.reopenReview(matchId);
+  current = useMatchStore.getState().matches[matchId];
+  assert.equal(current.reviewStatus, "IN_REVIEW");
+  assert.equal(current.matchFinished, true);
+  assert.equal(current.reviewValidatedAt, validatedAt);
+  assert.ok((current.reviewRevision ?? 0) >= 2);
+});
+
+test("targetMinutes vacío no genera bloque y con objetivos compara plan contra replay", () => {
+  const empty = createSession("review-target-empty");
+  assert.deepEqual(targetMinutesComparisons(empty), []);
+  const planned: MatchSession = {
+    ...createSession("review-targets"),
+    events: appendEvent(
+      players,
+      createSession("review-targets").events,
+      createLineupInitializedEvent({
+        id: "review-targets-p2",
+        matchId: "review-targets",
+        position: { period: 2, minute: 0, order: 1 },
+        squadPlayerIds: players.map((player) => player.id),
+        onCourtPlayerIds: players.slice(0, 5).map((player) => player.id),
+        goalkeeperPlayerId: "p5",
+      }),
+    ),
+    preparation: {
+      teamId: "cd-alameda",
+      seasonId: "season-test",
+      opponent: "Rival",
+      venue: "HOME",
+      date: "2026-09-10",
+      status: "FINISHED",
+      calledPlayerIds: players.map((player) => player.id),
+      starterPlayerIds: players.slice(0, 5).map((player) => player.id),
+      selectedStaffIds: [],
+      targetMinutes: { p1: 20 },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    period: 2,
+    minute: 20,
+    periodMinutes: { 1: 20, 2: 20 },
+    closedPeriods: [1, 2],
+    matchFinished: true,
+  };
+  const comparison = targetMinutesComparisons(planned)[0];
+  assert.equal(comparison.playerId, "p1");
+  assert.equal(comparison.target, 20);
+  assert.equal(comparison.actual, 40);
+  assert.equal(comparison.difference, 20);
 });
 
 test("faltas genéricas son válidas, numeradas, editables, reordenables y persistentes", () => {

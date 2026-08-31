@@ -197,6 +197,32 @@ test("migración V1 es explícita, idempotente y genera baseline remoto", () => 
   assert.equal(repository.getSyncState(session.matchId).outbox.length, 2);
 });
 
+test("partido legacy sin seasonId se conserva sin inventar temporada", () => {
+  const storage = new MemoryStorage();
+  const repository = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const base = createSession("legacy-without-season");
+  repository.save({
+    ...base,
+    preparation: {
+      teamId: "cd-alameda",
+      opponent: "Rival histórico",
+      venue: "HOME",
+      date: "2025-05-10",
+      status: "FINISHED",
+      calledPlayerIds: base.players.map((player) => player.id),
+      starterPlayerIds: base.players.slice(0, 5).map((player) => player.id),
+      selectedStaffIds: [],
+      targetMinutes: {},
+      createdAt: 1,
+      updatedAt: 2,
+    },
+  });
+  const loaded = repository.load(base.matchId)!;
+  assert.equal(loaded.preparation?.teamId, "cd-alameda");
+  assert.equal(loaded.preparation?.seasonId, undefined);
+  assert.equal(loaded.preparation?.opponent, "Rival histórico");
+});
+
 test("los partidos demo permanecen exclusivamente locales", () => {
   const storage = new MemoryStorage();
   const repository = new LocalMatchRepository({ storage, idFactory: idFactory() });
@@ -251,6 +277,53 @@ test("una notificación síncrona durante sync reutiliza la ejecución activa", 
   assert.equal(local.getSummary(session.matchId).pending, 0);
   assert.equal(local.getSummary(session.matchId).syncing, 0);
   assert.equal(remote.applyCalls, 2);
+});
+
+test("una edición durante una operación SYNCING hereda la nueva revisión sin conflicto propio", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const inner = new InMemoryRemoteMatchRepository();
+  let holdNext = false;
+  let release: (() => void) | undefined;
+  let reached: (() => void) | undefined;
+  const gate = () => new Promise<void>((resolve) => { release = resolve; });
+  const claimed = new Promise<void>((resolve) => { reached = resolve; });
+  const remote = {
+    async apply(operation: Parameters<InMemoryRemoteMatchRepository["apply"]>[0]) {
+      if (holdNext) {
+        holdNext = false;
+        reached?.();
+        await gate();
+      }
+      return inner.apply(operation);
+    },
+  };
+  const coordinator = new MatchSyncCoordinator(local, remote, { isOnline: () => true });
+  const base = createSession("edit-while-syncing");
+  local.save(base);
+  await coordinator.syncMatch(base.matchId);
+
+  holdNext = true;
+  local.save({ ...base, reviewStatus: "IN_REVIEW", reviewRevision: 1 });
+  const running = coordinator.syncMatch(base.matchId);
+  await claimed;
+  local.save({
+    ...base,
+    reviewStatus: "VALIDATED",
+    reviewRevision: 2,
+    reviewValidatedAt: 300,
+  });
+  release?.();
+  await running;
+  await coordinator.syncMatch(base.matchId);
+
+  assert.equal(local.getSummary(base.matchId).conflicts, 0);
+  assert.equal(local.getSummary(base.matchId).pending, 0);
+  assert.equal(inner.documents.get(`${base.matchId}:match`)?.revision, 3);
+  assert.equal(
+    (inner.documents.get(`${base.matchId}:match`)?.payload as { reviewStatus?: string }).reviewStatus,
+    "VALIDATED",
+  );
 });
 
 test("partido limpio en una sesión admite capturas consecutivas sin conflictos", async () => {
@@ -435,6 +508,63 @@ test("offline, cierre y reapertura conservan datos y sincronizan al reconectar",
   await reopenedCoordinator.syncMatch(session.matchId);
   assert.equal(reopenedLocal.getSummary(session.matchId).pending, 0);
   assert.equal(remote.documents.size, 3);
+});
+
+test("revisión y procedencia sobreviven offline, reapertura y sync", async () => {
+  const storage = new MemoryStorage();
+  let online = false;
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const base = createSession("review-offline-sync");
+  const reviewedThreat = createLiveThreatEvent({
+    id: "reviewed-threat",
+    matchId: base.matchId,
+    position: { period: 2, minute: 12, order: 1 },
+    side: "FOR",
+    playerId: "p1",
+    origin: { x: 0.4, y: 0.4 },
+    outcome: "FUERA",
+    phase: "POSITIONAL",
+    provenance: "MANUAL_REVIEW",
+  });
+  const session = {
+    ...base,
+    period: 2 as const,
+    minute: 20,
+    periodMinutes: { 1: 20, 2: 20 },
+    closedPeriods: [1, 2],
+    matchFinished: true,
+    reviewStatus: "VALIDATED" as const,
+    reviewRevision: 2,
+    reviewStartedAt: 100,
+    reviewValidatedAt: 200,
+    reviewReopenedAt: 150,
+    events: [...base.events, reviewedThreat],
+  };
+  local.save(session);
+  await new MatchSyncCoordinator(local, remote, { isOnline: () => online }).syncMatch(session.matchId);
+
+  const reopened = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const loaded = reopened.load(session.matchId)!;
+  assert.equal(loaded.reviewStatus, "VALIDATED");
+  assert.equal(loaded.reviewRevision, 2);
+  assert.equal(loaded.reviewValidatedAt, 200);
+  assert.equal(loaded.events.find((event) => event.id === reviewedThreat.id)?.provenance, "MANUAL_REVIEW");
+  assert.ok(reopened.getSummary(session.matchId).pending > 0);
+
+  online = true;
+  await new MatchSyncCoordinator(reopened, remote, { isOnline: () => online }).syncMatch(session.matchId);
+  const remoteMetadata = remote.documents.get(`${session.matchId}:match`)?.payload as {
+    reviewStatus?: string;
+    reviewRevision?: number;
+    reviewValidatedAt?: number;
+  };
+  const remoteEvent = remote.documents.get(`${session.matchId}:event:${reviewedThreat.id}`)?.payload as typeof reviewedThreat;
+  assert.equal(remoteMetadata.reviewStatus, "VALIDATED");
+  assert.equal(remoteMetadata.reviewRevision, 2);
+  assert.equal(remoteMetadata.reviewValidatedAt, 200);
+  assert.equal(remoteEvent.provenance, "MANUAL_REVIEW");
+  assert.equal(reopened.getSummary(session.matchId).pending, 0);
 });
 
 test("crear y editar dos veces offline sincroniza solo la versión final", async () => {
