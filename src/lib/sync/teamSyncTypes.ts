@@ -1,4 +1,5 @@
 import {
+  ClubProfile,
   MasterPlayer,
   MasterStaffMember,
   Season,
@@ -12,8 +13,10 @@ import {
   SyncOperationStatus,
 } from "./syncTypes";
 
-export const TEAM_SYNC_SCHEMA_VERSION = 2 as const;
+export const TEAM_SYNC_SCHEMA_VERSION = 3 as const;
+export type TeamSyncNamespace = "CLUBS" | "LEGACY_TEAMS";
 export type TeamEntityType =
+  | "CLUB"
   | "TEAM"
   | "TEAM_UNIT"
   | "PLAYER"
@@ -22,6 +25,7 @@ export type TeamEntityType =
   | "SEASON_PLAYER"
   | "SEASON_STAFF";
 export type TeamSyncPayload =
+  | ClubProfile
   | TeamProfile
   | MasterPlayer
   | MasterStaffMember
@@ -34,6 +38,8 @@ export interface TeamSyncOperation {
   teamId: string;
   entityType: TeamEntityType;
   entityId: string;
+  /** Operaciones antiguas se migran a LEGACY_TEAMS; las nuevas usan CLUBS. */
+  namespace: TeamSyncNamespace;
   kind: "UPSERT";
   payload: TeamSyncPayload;
   baseRevision: number;
@@ -65,8 +71,12 @@ export interface TeamSyncState {
   conflicts: TeamSyncConflict[];
 }
 
-export function teamEntityKey(type: TeamEntityType, id: string): string {
-  return `${type.toLowerCase()}:${id}`;
+export function teamEntityKey(
+  type: TeamEntityType,
+  id: string,
+  namespace: TeamSyncNamespace = "CLUBS",
+): string {
+  return `${namespace.toLowerCase()}:${type.toLowerCase()}:${id}`;
 }
 
 export function emptyTeamSyncState(): TeamSyncState {

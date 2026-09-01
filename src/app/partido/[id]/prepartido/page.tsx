@@ -11,17 +11,19 @@ import { PlayerAvatar } from "../../../../components/player/PlayerAvatar";
 import { StaffAvatar } from "../../../../components/player/StaffAvatar";
 import { plannedMinutes, validatePreparation, validateStartingLineup } from "../../../../lib/preMatch";
 import { canPlayGoalkeeper, playerSnapshot, staffSnapshot } from "../../../../lib/rosterDomain";
-import { rosterWithExtraPlayers, seasonById } from "../../../../lib/seasonDomain";
+import { clubExtraPlayerCandidates, rosterWithExtraPlayers, seasonById } from "../../../../lib/seasonDomain";
 import { usePreMatchStore } from "../../../../store/usePreMatchStore";
 import { useTeamStore } from "../../../../store/useTeamStore";
-import { CDA_TEAM_ID, CompetitionType } from "../../../../types";
+import { CDA_CLUB_ID, CompetitionType } from "../../../../types";
 
 export default function PreMatchPage() {
   const params = useParams<{ id: string }>(); const matchId = params.id; const router = useRouter();
   const session = usePreMatchStore((state) => state.matches[matchId]); const error = usePreMatchStore((state) => state.errors[matchId]);
   const load = usePreMatchStore((state) => state.load); const updateDetails = usePreMatchStore((state) => state.updateDetails); const toggleCalled = usePreMatchStore((state) => state.toggleCalled); const toggleStarter = usePreMatchStore((state) => state.toggleStarter); const selectGoalkeeper = usePreMatchStore((state) => state.selectGoalkeeper); const toggleStaff = usePreMatchStore((state) => state.toggleStaff); const setTarget = usePreMatchStore((state) => state.setTarget); const markReady = usePreMatchStore((state) => state.markReady); const start = usePreMatchStore((state) => state.start);
   const addExtraPlayer = usePreMatchStore((state) => state.addExtraPlayer);
-  const workspace = useTeamStore((state) => state.teams[CDA_TEAM_ID]); const ensureTeam = useTeamStore((state) => state.ensureTeam);
+  const preparation = session?.preparation;
+  const matchClubId = preparation?.clubId ?? CDA_CLUB_ID;
+  const workspace = useTeamStore((state) => state.teams[matchClubId]); const ensureRegistry = useTeamStore((state) => state.ensureRegistry); const ensureTeam = useTeamStore((state) => state.ensureTeam);
   const createPlayer = useTeamStore((state) => state.createPlayer);
   const addPlayerToSeason = useTeamStore((state) => state.addPlayerToSeason);
   const [lineupRequired, setLineupRequired] = useState(false);
@@ -29,8 +31,9 @@ export default function PreMatchPage() {
   const [extraOpen, setExtraOpen] = useState(false);
   const [extraSearch, setExtraSearch] = useState("");
   const [extraPermanent, setExtraPermanent] = useState(false);
-  useEffect(() => { ensureTeam(CDA_TEAM_ID); load(matchId); }, [ensureTeam, load, matchId]);
-  const preparation = session?.preparation;
+  const [showArchivedExtra, setShowArchivedExtra] = useState(false);
+  useEffect(() => { ensureRegistry(); load(matchId); }, [ensureRegistry, load, matchId]);
+  useEffect(() => ensureTeam(matchClubId), [ensureTeam, matchClubId]);
   const roster = useMemo(
     () => workspace ? rosterWithExtraPlayers(workspace, preparation?.seasonId, preparation?.extraPlayerIds) : undefined,
     [preparation?.extraPlayerIds, preparation?.seasonId, workspace],
@@ -42,9 +45,10 @@ export default function PreMatchPage() {
   const activePlayers = useMemo(() => (roster?.players ?? []).filter((player) => player.active).sort((a, b) => a.number - b.number), [roster]);
   const activeStaff = useMemo(() => (roster?.staff ?? []).filter((member) => member.active), [roster]);
   const extraCandidates = useMemo(() => {
-    const query = extraSearch.trim().toLocaleLowerCase("es");
-    return (workspace?.players ?? []).filter((player) => !player.deletedAt && !player.archivedAt && !roster?.players.find((candidate) => candidate.playerId === player.playerId)?.active && !preparation?.calledPlayerIds.includes(player.playerId) && (!query || `${player.fullName} ${player.displayName} ${player.number}`.toLocaleLowerCase("es").includes(query))).slice(0, 8);
-  }, [extraSearch, preparation?.calledPlayerIds, roster?.players, workspace?.players]);
+    if (!workspace) return [];
+    const excluded = [...(preparation?.calledPlayerIds ?? []), ...(roster?.players.filter((player) => player.active).map((player) => player.playerId) ?? [])];
+    return clubExtraPlayerCandidates(workspace, excluded, extraSearch, showArchivedExtra).slice(0, 8);
+  }, [extraSearch, preparation?.calledPlayerIds, roster?.players, showArchivedExtra, workspace]);
   const playerAffiliations = useMemo(() => {
     if (!workspace) return new Map<string, string>();
     const teamNames = new Map(availableTeams(workspace, true).map((team) => [team.teamId, team.name]));
@@ -85,7 +89,7 @@ export default function PreMatchPage() {
     if (!workspace || !preparation) return;
     const form = event.currentTarget;
     const data = new FormData(form);
-    const playerId = createPlayer(CDA_TEAM_ID, {
+    const playerId = createPlayer(matchClubId, {
       fullName: String(data.get("fullName") ?? ""),
       displayName: String(data.get("displayName") ?? ""),
       number: Number(data.get("number")),
@@ -94,8 +98,8 @@ export default function PreMatchPage() {
       canPlayGoalkeeper: String(data.get("goalkeeper")) === "true",
     }, null);
     if (!playerId) return;
-    if (extraPermanent && preparation.seasonId) addPlayerToSeason(CDA_TEAM_ID, preparation.seasonId, playerId, Number(data.get("number")));
-    const latestWorkspace = useTeamStore.getState().teams[CDA_TEAM_ID];
+    if (extraPermanent && preparation.seasonId) addPlayerToSeason(matchClubId, preparation.seasonId, playerId, Number(data.get("number")));
+    const latestWorkspace = useTeamStore.getState().teams[matchClubId];
     const latestRoster = rosterWithExtraPlayers(latestWorkspace, preparation.seasonId, extraPermanent ? [] : [playerId]);
     if (extraPermanent) toggleCalled(matchId, latestRoster, playerId);
     else addExtraPlayer(matchId, latestRoster, playerId);
@@ -117,8 +121,8 @@ export default function PreMatchPage() {
       <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">{activePlayers.map((player) => { const selected = preparation.calledPlayerIds.includes(player.playerId); const extra = preparation.extraPlayerIds?.includes(player.playerId); return <button key={player.playerId} type="button" onClick={() => toggleCalled(matchId, roster, player.playerId)} className={`grid min-h-24 place-items-center rounded-xl border p-2 ${selected ? "border-cyan-300 bg-cyan-950" : "border-slate-700 bg-slate-900"}`}><PlayerAvatar player={playerSnapshot(player)} compact /><span className="mt-1 truncate text-xs font-black">{player.displayName}</span><span className="text-[10px] text-slate-400">#{player.number}{player.role === "GOALKEEPER" ? " · ◉" : ""}{extra ? " · EXTRA" : ""}</span></button>; })}</div>
       <button type="button" onClick={() => setExtraOpen((value) => !value)} className="mt-3 min-h-12 w-full rounded-xl border border-dashed border-cyan-700 bg-cyan-950/30 text-sm font-black text-cyan-200">+ AÑADIR JUGADOR EXTRA</button>
       {extraOpen && <div className="mt-3 rounded-2xl border border-cyan-900 bg-slate-950 p-4">
-        <label className="text-xs font-black text-slate-300">BUSCAR JUGADOR DEL CLUB<input value={extraSearch} onChange={(event) => setExtraSearch(event.target.value)} placeholder="Nombre o dorsal" className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /><span className="mt-1 block text-[11px] font-normal text-slate-500">Busca primero para conservar el mismo playerId entre equipos y temporadas.</span></label>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">{extraCandidates.map((player) => <button key={player.playerId} type="button" onClick={() => chooseExistingExtra(player.playerId)} className="flex min-h-14 items-center gap-3 rounded-xl bg-slate-800 p-2 text-left"><PlayerAvatar player={playerSnapshot(player)} compact /><span><span className="block font-black">{player.displayName} · #{player.number}</span><span className="text-xs text-slate-500">{playerAffiliations.get(player.playerId)}</span></span></button>)}</div>
+        <label className="text-xs font-black text-slate-300">BUSCAR JUGADOR DEL CLUB<input value={extraSearch} onChange={(event) => setExtraSearch(event.target.value)} placeholder="Nombre o dorsal" className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /><span className="mt-1 block text-[11px] font-normal text-slate-500">Busca primero para conservar el mismo playerId entre equipos y temporadas.</span></label><label className="mt-2 flex min-h-11 items-center gap-2 text-xs font-bold text-slate-400"><input type="checkbox" checked={showArchivedExtra} onChange={(event) => setShowArchivedExtra(event.target.checked)} className="h-5 w-5" />Mostrar jugadores archivados del club</label>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">{extraCandidates.map((player) => <button key={player.playerId} type="button" disabled={Boolean(player.archivedAt)} onClick={() => chooseExistingExtra(player.playerId)} className="flex min-h-14 items-center gap-3 rounded-xl bg-slate-800 p-2 text-left disabled:opacity-50"><PlayerAvatar player={playerSnapshot(player)} compact /><span><span className="block font-black">{player.displayName} · #{player.number}</span><span className="text-xs text-slate-500">{player.archivedAt ? "ARCHIVADO · reactiva en Jugadores del Club" : playerAffiliations.get(player.playerId)}</span></span></button>)}</div>
         <details className="mt-3 rounded-xl bg-slate-900 p-3"><summary className="min-h-11 cursor-pointer text-sm font-black text-amber-300">NO APARECE · CREAR JUGADOR</summary>
           <form onSubmit={createExtra} className="mt-3 grid gap-2 sm:grid-cols-2">
             <input name="fullName" required placeholder="Nombre completo" className="min-h-12 rounded-xl bg-slate-800 px-3" />

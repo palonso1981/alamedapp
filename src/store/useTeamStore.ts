@@ -1,6 +1,13 @@
 import { create } from "zustand";
 
 import {
+  changeClubLifecycle as changeClubLifecycleDomain,
+  chooseCurrentClub,
+  createClubWorkspace,
+  updateClub as updateClubDomain,
+} from "../lib/clubDomain";
+import { loadClubRegistry, saveClubRegistry } from "../lib/clubRegistry";
+import {
   changeAdminLifecycle,
   createTeamProfile,
   updateRealTeam,
@@ -25,6 +32,8 @@ import {
 } from "../lib/seasonDomain";
 import { browserTeamRepository } from "../lib/sync/localTeamRepository";
 import {
+  CDA_CLUB_ID,
+  ClubProfile,
   MasterPlayer,
   MasterStaffMember,
   TeamProfile,
@@ -34,6 +43,14 @@ import {
 interface TeamState {
   teams: Record<string, TeamWorkspace>;
   errors: Record<string, string | null>;
+  clubIds: string[];
+  currentClubId: string;
+  registryReady: boolean;
+  ensureRegistry: () => void;
+  createClub: (input: { name: string; shortName?: string }) => string | null;
+  setCurrentClub: (clubId: string) => void;
+  updateClub: (clubId: string, changes: Partial<Pick<ClubProfile, "name" | "shortName">>) => void;
+  changeClubLifecycle: (clubId: string, action: "ARCHIVE" | "REACTIVATE" | "DELETE") => void;
   ensureTeam: (teamId: string) => void;
   updateTeam: (teamId: string, changes: Partial<Pick<TeamProfile, "name" | "shortName" | "category" | "active">>) => void;
   createRealTeam: (scopeId: string, input: { name: string; shortName?: string }) => string | null;
@@ -48,14 +65,14 @@ interface TeamState {
     teamId: string,
     playerId: string,
     changes: Partial<MasterPlayerInput> & { active?: boolean },
-    seasonId?: string,
+    seasonId?: string | null,
   ) => void;
-  createStaff: (teamId: string, input: MasterStaffInput, seasonId?: string) => string | null;
+  createStaff: (teamId: string, input: MasterStaffInput, seasonId?: string | null) => string | null;
   updateStaff: (
     teamId: string,
     staffId: string,
     changes: Partial<MasterStaffInput> & { active?: boolean },
-    seasonId?: string,
+    seasonId?: string | null,
   ) => void;
   clearError: (teamId: string) => void;
 }
@@ -67,6 +84,78 @@ function saveRoster(roster: TeamWorkspace): boolean {
 export const useTeamStore = create<TeamState>((set, get) => ({
   teams: {},
   errors: {},
+  clubIds: [CDA_CLUB_ID],
+  currentClubId: CDA_CLUB_ID,
+  registryReady: false,
+  ensureRegistry: () =>
+    set((state) => {
+      if (state.registryReady) return state;
+      const registry = loadClubRegistry();
+      const teams = { ...state.teams };
+      for (const clubId of registry.clubIds) teams[clubId] ??= browserTeamRepository.load(clubId);
+      const currentClubId = chooseCurrentClub(registry, Object.values(teams).map((workspace) => workspace.club));
+      const nextRegistry = { ...registry, currentClubId };
+      saveClubRegistry(nextRegistry);
+      return { teams, clubIds: nextRegistry.clubIds, currentClubId, registryReady: true };
+    }),
+  createClub: (input) => {
+    try {
+      const workspace = createClubWorkspace(input);
+      if (!saveRoster(workspace)) throw new Error("No se pudo guardar el club.");
+      const registry = loadClubRegistry();
+      const nextRegistry = {
+        ...registry,
+        clubIds: Array.from(new Set([...registry.clubIds, workspace.clubId])),
+        currentClubId: workspace.clubId,
+      };
+      if (!saveClubRegistry(nextRegistry)) throw new Error("No se pudo guardar el selector de club.");
+      set((state) => ({
+        teams: { ...state.teams, [workspace.clubId]: workspace },
+        clubIds: nextRegistry.clubIds,
+        currentClubId: workspace.clubId,
+        registryReady: true,
+        errors: { ...state.errors, [workspace.clubId]: null },
+      }));
+      return workspace.clubId;
+    } catch (error) {
+      set((state) => ({ errors: { ...state.errors, [state.currentClubId]: error instanceof Error ? error.message : "No se pudo crear el club." } }));
+      return null;
+    }
+  },
+  setCurrentClub: (clubId) => {
+    const workspace = get().teams[clubId] ?? browserTeamRepository.load(clubId);
+    if (!workspace.club.active || workspace.club.archivedAt || workspace.club.deletedAt) return;
+    const registry = loadClubRegistry();
+    const nextRegistry = { ...registry, clubIds: Array.from(new Set([...registry.clubIds, clubId])), currentClubId: clubId };
+    if (!saveClubRegistry(nextRegistry)) return;
+    set((state) => ({ teams: { ...state.teams, [clubId]: workspace }, clubIds: nextRegistry.clubIds, currentClubId: clubId, registryReady: true }));
+  },
+  updateClub: (clubId, changes) =>
+    set((state) => {
+      const workspace = state.teams[clubId] ?? browserTeamRepository.load(clubId);
+      try {
+        const next = updateClubDomain(workspace, changes);
+        if (!saveRoster(next)) throw new Error("No se pudo guardar el club.");
+        return { teams: { ...state.teams, [clubId]: next }, errors: { ...state.errors, [clubId]: null } };
+      } catch (error) {
+        return { errors: { ...state.errors, [clubId]: error instanceof Error ? error.message : "No se pudo editar el club." } };
+      }
+    }),
+  changeClubLifecycle: (clubId, action) => {
+    const workspace = get().teams[clubId] ?? browserTeamRepository.load(clubId);
+    try {
+      const next = changeClubLifecycleDomain(workspace, action);
+      if (!saveRoster(next)) throw new Error("No se pudo guardar el club.");
+      const registry = loadClubRegistry();
+      const all = registry.clubIds.map((id) => id === clubId ? next : get().teams[id] ?? browserTeamRepository.load(id));
+      const currentClubId = chooseCurrentClub(registry, all.map((item) => item.club));
+      const nextRegistry = { ...registry, currentClubId };
+      saveClubRegistry(nextRegistry);
+      set((state) => ({ teams: { ...state.teams, [clubId]: next }, currentClubId, clubIds: nextRegistry.clubIds, errors: { ...state.errors, [clubId]: null } }));
+    } catch (error) {
+      set((state) => ({ errors: { ...state.errors, [clubId]: error instanceof Error ? error.message : "No se pudo cambiar el club." } }));
+    }
+  },
   ensureTeam: (teamId) =>
     set((state) =>
       state.teams[teamId]
@@ -168,6 +257,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         // El dorsal es una propiedad de la membership; no debe ser único en todo el club.
         roster.players.map((item) => ({ ...item, active: false })),
         input,
+        { clubId: roster.clubId },
       );
       let next: TeamWorkspace = { ...roster, players: [...roster.players, player] };
       if (seasonId) {
@@ -214,7 +304,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     set((state) => {
       const roster = state.teams[teamId] ?? browserTeamRepository.load(teamId);
       try {
-        const seasonId = requestedSeasonId ?? currentSeason(roster)?.seasonId;
+        const seasonId = requestedSeasonId === null ? undefined : requestedSeasonId ?? currentSeason(roster)?.seasonId;
         const masterChanges = seasonId
           ? { ...changes, number: undefined, primaryPosition: undefined, active: undefined }
           : changes;
@@ -246,8 +336,8 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   createStaff: (teamId, input, requestedSeasonId) => {
     try {
       const roster = get().teams[teamId] ?? browserTeamRepository.load(teamId);
-      const member = createMasterStaff(input);
-      const seasonId = requestedSeasonId ?? currentSeason(roster)?.seasonId;
+      const member = createMasterStaff(input, { clubId: roster.clubId });
+      const seasonId = requestedSeasonId === null ? undefined : requestedSeasonId ?? currentSeason(roster)?.seasonId;
       let next: TeamWorkspace = { ...roster, staff: [...roster.staff, member] };
       if (seasonId) {
         next = upsertSeasonStaff(next, seasonId, member.staffId, {
@@ -276,7 +366,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     set((state) => {
       const roster = state.teams[teamId] ?? browserTeamRepository.load(teamId);
       try {
-        const seasonId = requestedSeasonId ?? currentSeason(roster)?.seasonId;
+        const seasonId = requestedSeasonId === null ? undefined : requestedSeasonId ?? currentSeason(roster)?.seasonId;
         const masterChanges = seasonId
           ? { ...changes, role: undefined, customRole: undefined, active: undefined }
           : changes;

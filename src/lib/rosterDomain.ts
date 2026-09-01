@@ -94,7 +94,7 @@ export function assertUniqueActiveNumber(
 export function createMasterPlayer(
   players: readonly MasterPlayer[],
   input: MasterPlayerInput,
-  options: { id?: string; now?: number } = {},
+  options: { id?: string; now?: number; clubId?: string } = {},
 ): MasterPlayer {
   const number = validNumber(input.number);
   assertUniqueActiveNumber(players, number);
@@ -102,7 +102,7 @@ export function createMasterPlayer(
   const goalkeeperCapable = input.canPlayGoalkeeper ?? input.role === "GOALKEEPER";
   return {
     playerId: options.id ?? globalThis.crypto.randomUUID(),
-    clubId: CDA_CLUB_ID,
+    clubId: options.clubId ?? CDA_CLUB_ID,
     fullName: cleanRequired(input.fullName, "El nombre"),
     displayName: cleanRequired(input.displayName, "El nombre corto"),
     number,
@@ -170,12 +170,12 @@ export function updateMasterPlayer(
 
 export function createMasterStaff(
   input: MasterStaffInput,
-  options: { id?: string; now?: number } = {},
+  options: { id?: string; now?: number; clubId?: string } = {},
 ): MasterStaffMember {
   const now = options.now ?? Date.now();
   return {
     staffId: options.id ?? globalThis.crypto.randomUUID(),
-    clubId: CDA_CLUB_ID,
+    clubId: options.clubId ?? CDA_CLUB_ID,
     fullName: cleanRequired(input.fullName, "El nombre"),
     displayName: cleanRequired(input.displayName, "El nombre corto"),
     role: input.role,

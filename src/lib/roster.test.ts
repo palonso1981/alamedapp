@@ -17,12 +17,16 @@ import {
 } from "./preMatch";
 import {
   calculateDeletionImpact,
+  assignLegacyMatchSeason,
   availableTeams,
   changeAdminLifecycle,
   changeMatchLifecycle,
   createTeamProfile,
+  isSeasonVisible,
 } from "./adminDomain";
-import { visibleMatchCatalog } from "./matchCatalog";
+import { matchCatalogClubId, visibleMatchCatalog } from "./matchCatalog";
+import { changeClubLifecycle, createClubWorkspace, defaultClubRegistry } from "./clubDomain";
+import { loadClubRegistry, saveClubRegistry } from "./clubRegistry";
 import {
   createMasterPlayer,
   createMasterStaff,
@@ -31,6 +35,8 @@ import {
 } from "./rosterDomain";
 import {
   createSeason,
+  assertSeasonScope,
+  clubExtraPlayerCandidates,
   currentSeason,
   emptyTeamWorkspace,
   rosterForSeason,
@@ -62,7 +68,7 @@ class TeamRemote implements RevisionedRemoteRepository<TeamSyncOperation> {
   online = true;
   async apply(operation: TeamSyncOperation): Promise<RemoteApplyResult> {
     if (!this.online) throw Object.assign(new Error("offline"), { code: "unavailable" });
-    const key = teamEntityKey(operation.entityType, operation.entityId);
+    const key = teamEntityKey(operation.entityType, operation.entityId, operation.namespace);
     const current = this.documents.get(key);
     if (current?.operationId === operation.id) return { status: "ALREADY_APPLIED", revision: current.revision };
     const revision = current?.revision ?? 0;
@@ -534,7 +540,7 @@ test("tombstone de plantilla persiste, reabre y sincroniza sin resucitar", async
   const remote = new TeamRemote();
   await new SyncCoordinator(reopened, remote, { isOnline: () => true }).syncMatch("cd-alameda");
   assert.equal(reopened.getSummary("cd-alameda").pending, 0);
-  const payload = remote.documents.get("player:p-2")?.payload as MasterPlayer;
+  const payload = remote.documents.get(teamEntityKey("PLAYER", "p-2"))?.payload as MasterPlayer;
   assert.equal(payload.deletedAt, 20);
   assert.equal(payload.active, false);
 });
@@ -615,10 +621,134 @@ test("equipo deportivo y tombstone usan outbox estable e idempotente", async () 
   const queued = local.getSyncState("cd-alameda").outbox.filter((item) => item.entityType === "TEAM_UNIT");
   assert.equal(queued.length, 1);
   assert.equal(queued[0].entityId, "senior-sync");
+  assert.equal(queued[0].namespace, "CLUBS");
   const operationId = queued[0].id;
   const remote = new TeamRemote();
   await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch("cd-alameda");
-  assert.equal((remote.documents.get("team_unit:senior-sync")?.payload as { deletedAt?: number }).deletedAt, 3);
-  assert.equal(remote.documents.get("team_unit:senior-sync")?.operationId, operationId);
+  assert.equal((remote.documents.get(teamEntityKey("TEAM_UNIT", "senior-sync"))?.payload as { deletedAt?: number }).deletedAt, 3);
+  assert.equal(remote.documents.get(teamEntityKey("TEAM_UNIT", "senior-sync"))?.operationId, operationId);
   assert.equal(local.getSummary("cd-alameda").pending, 0);
+});
+
+test("registro multiclub recuerda currentClub y conserva IDs estables", () => {
+  const storage = new MemoryStorage();
+  const registry = defaultClubRegistry();
+  const testsClub = createClubWorkspace({ name: "Club Pruebas", shortName: "TEST" }, { clubId: "club-tests", now: 10 });
+  const next = { ...registry, clubIds: [...registry.clubIds, testsClub.clubId], currentClubId: testsClub.clubId };
+  assert.equal(saveClubRegistry(next, storage), true);
+  assert.deepEqual(loadClubRegistry(storage), next);
+  assert.equal(createClubWorkspace({ name: "Otro" }, { clubId: "stable-id", now: 20 }).club.clubId, "stable-id");
+  const local = new LocalTeamRepository({ storage, idFactory: () => "club-create-op" });
+  local.save(testsClub);
+  const clubOperation = local.getSyncState("club-tests").outbox.find((operation) => operation.entityType === "CLUB");
+  assert.deepEqual([clubOperation?.id, clubOperation?.namespace, clubOperation?.entityId], ["club-create-op", "CLUBS", "club-tests"]);
+  const archived = changeClubLifecycle(testsClub, "ARCHIVE", 30);
+  assert.equal(archived.club.archivedAt, 30);
+  assert.equal(changeClubLifecycle(archived, "REACTIVATE", 31).club.active, true);
+});
+
+test("identidades maestras quedan aisladas por club y se reutilizan entre equipos y temporadas", () => {
+  let alameda = createTeamProfile(workspaceFixture(), { name: "Senior A" }, { teamId: "senior-a", now: 10 });
+  alameda = createTeamProfile(alameda, { name: "Juvenil A" }, { teamId: "juvenil-a", now: 11 });
+  alameda = createSeason(alameda, { teamId: "senior-a", label: "2026-27" }, { seasonId: "senior-26", now: 12 });
+  alameda = createSeason(alameda, { teamId: "juvenil-a", label: "2026-27" }, { seasonId: "juvenil-26", now: 13 });
+  alameda = upsertSeasonPlayer(alameda, "senior-26", "p-2", { number: 12, active: true }, 14);
+  alameda = upsertSeasonPlayer(alameda, "juvenil-26", "p-2", { number: 7, active: true }, 15);
+  assert.equal(alameda.players.filter((player) => player.playerId === "p-2").length, 1);
+  assert.equal(alameda.seasonPlayers.filter((membership) => membership.playerId === "p-2").length, 2);
+  const masterBefore = alameda.players.find((player) => player.playerId === "p-2");
+  alameda = changeAdminLifecycle(alameda, "TEAM", "juvenil-a", "ARCHIVE", 16);
+  alameda = changeAdminLifecycle(alameda, "SEASON", "juvenil-26", "ARCHIVE", 17);
+  assert.deepEqual(alameda.players.find((player) => player.playerId === "p-2"), masterBefore);
+
+  let testsClub = createClubWorkspace({ name: "Club Pruebas" }, { clubId: "club-tests", now: 20 });
+  testsClub = { ...testsClub, players: [createMasterPlayer([], { fullName: "Persona Tests", displayName: "Tests", number: 4, role: "FIELD" }, { id: "tests-p-1", clubId: "club-tests", now: 21 })] };
+  assert.deepEqual(clubExtraPlayerCandidates(testsClub).map((player) => player.playerId), ["tests-p-1"]);
+  assert.equal(clubExtraPlayerCandidates(alameda).some((player) => player.playerId === "tests-p-1"), false);
+  assert.throws(() => assertSeasonScope(alameda, "senior-a", "juvenil-26"), /temporada no pertenece/i);
+});
+
+test("temporadas archivadas y tombstones no reaparecen en operativa normal", () => {
+  let workspace = createTeamProfile(workspaceFixture(), { name: "Senior" }, { teamId: "senior-filter-v2", now: 1 });
+  workspace = createSeason(workspace, { teamId: "senior-filter-v2", label: "A" }, { seasonId: "season-a-filter", now: 2 });
+  workspace = createSeason(workspace, { teamId: "senior-filter-v2", label: "B" }, { seasonId: "season-b-filter", now: 3 });
+  workspace = changeAdminLifecycle(workspace, "SEASON", "season-a-filter", "ARCHIVE", 4);
+  workspace = changeAdminLifecycle(workspace, "SEASON", "season-b-filter", "DELETE", 5);
+  assert.deepEqual(workspace.seasons.filter((season) => isSeasonVisible(season)).map((season) => season.seasonId), []);
+  assert.deepEqual(workspace.seasons.filter((season) => isSeasonVisible(season, true)).map((season) => season.seasonId), ["season-a-filter"]);
+  const storage = new MemoryStorage();
+  new LocalTeamRepository({ storage }).save(workspace);
+  const reloaded = new LocalTeamRepository({ storage }).load("cd-alameda");
+  assert.equal(reloaded.seasons.find((season) => season.seasonId === "season-b-filter")?.deletedAt, 5);
+  assert.equal(reloaded.seasons.filter((season) => isSeasonVisible(season, true)).some((season) => season.seasonId === "season-b-filter"), false);
+});
+
+test("migración V3→V4 y sync V2→V3 conserva outbox conflictos revisiones e IDs", () => {
+  const storage = new MemoryStorage();
+  const workspace = workspaceFixture();
+  const player = workspace.players.find((item) => item.playerId === "p-2")!;
+  const member = workspace.staff[0];
+  storage.setItem("alamedapp:team:v1:cd-alameda", JSON.stringify({
+    storageVersion: 3,
+    savedAt: 90,
+    roster: workspace,
+    sync: {
+      schemaVersion: 2,
+      outbox: [
+        { id: "legacy-player-op", teamId: "cd-alameda", entityType: "PLAYER", entityId: player.playerId, kind: "UPSERT", payload: player, baseRevision: 4, clientUpdatedAt: 80, attempts: 2, status: "PENDING", nextAttemptAt: 0 },
+        { id: "legacy-staff-conflict", teamId: "cd-alameda", entityType: "STAFF", entityId: member.staffId, kind: "UPSERT", payload: member, baseRevision: 2, clientUpdatedAt: 81, attempts: 1, status: "CONFLICT", nextAttemptAt: 0, errorKind: "CONFLICT" },
+      ],
+      knownRemoteRevisions: { "player:p-2": 4, "staff:staff-1": 2 },
+      lastLocalMutationAt: 81,
+      lastSyncedAt: 70,
+      lastError: "Conflicto",
+      lastErrorKind: "CONFLICT",
+      conflicts: [{ operationId: "legacy-staff-conflict", entityKey: "staff:staff-1", detectedAt: 82, localPayload: member, remoteRevision: 3, remotePayload: { remote: true } }],
+    },
+  }));
+  const repository = new LocalTeamRepository({ storage });
+  const sync = repository.getSyncState("cd-alameda");
+  assert.equal(sync.schemaVersion, 3);
+  assert.deepEqual(sync.outbox.map((operation) => [operation.id, operation.namespace, operation.baseRevision, operation.status]), [
+    ["legacy-player-op", "LEGACY_TEAMS", 4, "PENDING"],
+    ["legacy-staff-conflict", "LEGACY_TEAMS", 2, "CONFLICT"],
+  ]);
+  assert.equal(sync.knownRemoteRevisions[teamEntityKey("PLAYER", "p-2", "LEGACY_TEAMS")], 4);
+  assert.equal(sync.conflicts[0].entityKey, teamEntityKey("STAFF", "staff-1", "LEGACY_TEAMS"));
+  assert.deepEqual(new LocalTeamRepository({ storage }).getSyncState("cd-alameda"), sync);
+});
+
+test("outbox legacy pendiente sobrevive offline reload y reconecta sin mezclarse con CLUBS", async () => {
+  const storage = new MemoryStorage();
+  const workspace = workspaceFixture();
+  const player = workspace.players.find((item) => item.playerId === "p-2")!;
+  storage.setItem("alamedapp:team:v1:cd-alameda", JSON.stringify({ storageVersion: 3, savedAt: 10, roster: workspace, sync: { schemaVersion: 2, outbox: [{ id: "pending-before-upgrade", teamId: "cd-alameda", entityType: "PLAYER", entityId: player.playerId, kind: "UPSERT", payload: player, baseRevision: 0, clientUpdatedAt: 9, attempts: 0, status: "PENDING", nextAttemptAt: 0 }], knownRemoteRevisions: {}, lastLocalMutationAt: 9, lastSyncedAt: null, lastError: null, lastErrorKind: null, conflicts: [] } }));
+  const offlineReload = new LocalTeamRepository({ storage });
+  assert.equal(offlineReload.getSyncState("cd-alameda").outbox[0].id, "pending-before-upgrade");
+  assert.equal(offlineReload.getSyncState("cd-alameda").outbox[0].namespace, "LEGACY_TEAMS");
+  const remote = new TeamRemote();
+  await new SyncCoordinator(new LocalTeamRepository({ storage }), remote, { isOnline: () => true }).syncMatch("cd-alameda");
+  assert.equal(new LocalTeamRepository({ storage }).getSummary("cd-alameda").pending, 0);
+  assert.equal(remote.documents.get(teamEntityKey("PLAYER", player.playerId, "LEGACY_TEAMS"))?.operationId, "pending-before-upgrade");
+});
+
+test("asignar temporada legacy conserva identidad eventos revisión y procedencia", () => {
+  let workspace = createTeamProfile(workspaceFixture(), { name: "Senior" }, { teamId: "senior-legacy", now: 1 });
+  workspace = createSeason(workspace, { teamId: "senior-legacy", label: "2026-27" }, { seasonId: "season-legacy-target", now: 2 });
+  const session = { ...createDraftMatch("legacy-assign", { teamId: "cd-alameda", seasonId: "temporary", opponent: "Rival", venue: "HOME", date: "2026-09-01" }, 3), reviewStatus: "IN_REVIEW" as const };
+  const legacy = { ...session, preparation: { ...session.preparation!, seasonId: undefined }, events: [{ id: "legacy-event", provenance: "VIDEO" } as never] };
+  const assigned = assignLegacyMatchSeason(legacy, workspace, "season-legacy-target", 4);
+  assert.equal(assigned.matchId, legacy.matchId);
+  assert.equal(assigned.preparation?.clubId, "cd-alameda");
+  assert.equal(assigned.preparation?.teamId, "senior-legacy");
+  assert.equal(assigned.preparation?.seasonId, "season-legacy-target");
+  assert.equal(assigned.reviewStatus, "IN_REVIEW");
+  assert.equal(assigned.events, legacy.events);
+  assert.equal((assigned.events[0] as { provenance?: string }).provenance, "VIDEO");
+});
+
+test("partidos nuevos guardan club equipo temporada y legacy conserva cd-alameda sin inventar temporada", () => {
+  const created = createDraftMatch("multiclub-match", { clubId: "club-tests", teamId: "tests-senior", seasonId: "tests-26", opponent: "Rival", venue: "HOME", date: "2026-09-02" }, 1);
+  assert.deepEqual({ clubId: created.preparation?.clubId, teamId: created.preparation?.teamId, seasonId: created.preparation?.seasonId }, { clubId: "club-tests", teamId: "tests-senior", seasonId: "tests-26" });
+  assert.equal(matchCatalogClubId({ matchId: "legacy", opponent: "Rival", venue: "HOME", date: "2025-01-01", status: "FINISHED", updatedAt: 1 }), "cd-alameda");
 });

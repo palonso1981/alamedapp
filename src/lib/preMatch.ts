@@ -1,6 +1,7 @@
 import { createLineupInitializedEvent } from "./matchEngine";
 import { canPlayGoalkeeper, playerSnapshot, staffSnapshot } from "./rosterDomain";
 import {
+  CDA_CLUB_ID,
   CompetitionType,
   MatchPreparation,
   MatchSession,
@@ -12,6 +13,7 @@ export const MAX_CALLED_PLAYERS = 13;
 export const STARTER_COUNT = 5;
 
 export interface CreateMatchInput {
+  clubId?: string;
   teamId: string;
   seasonId: string;
   opponent: string;
@@ -80,6 +82,7 @@ export function createDraftMatch(
   return {
     matchId,
     preparation: {
+      clubId: input.clubId?.trim() || CDA_CLUB_ID,
       teamId: input.teamId,
       seasonId: input.seasonId,
       opponent,
@@ -138,6 +141,7 @@ export function updateMatchDetails(
     preparation: {
       ...preparation,
       opponent,
+      clubId: changes.clubId ?? preparation.clubId ?? CDA_CLUB_ID,
       teamId: changes.teamId ?? preparation.teamId,
       seasonId: changes.seasonId ?? preparation.seasonId,
       venue: changes.venue ?? preparation.venue,

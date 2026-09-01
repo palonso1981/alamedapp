@@ -17,7 +17,7 @@ import {
 import { seasonById } from "../../../../lib/seasonDomain";
 import { useMatchStore } from "../../../../store/useMatchStore";
 import { useTeamStore } from "../../../../store/useTeamStore";
-import { CDA_TEAM_ID } from "../../../../types";
+import { CDA_CLUB_ID } from "../../../../types";
 
 export default function MatchReviewPage() {
   const { id: matchId } = useParams<{ id: string }>();
@@ -34,13 +34,16 @@ export default function MatchReviewPage() {
   const softDeleteEvent = useMatchStore((state) => state.softDeleteEvent);
   const restoreEvent = useMatchStore((state) => state.restoreEvent);
   const clearError = useMatchStore((state) => state.clearError);
-  const workspace = useTeamStore((state) => state.teams[CDA_TEAM_ID]);
+  const matchClubId = session?.preparation?.clubId ?? CDA_CLUB_ID;
+  const workspace = useTeamStore((state) => state.teams[matchClubId]);
+  const ensureRegistry = useTeamStore((state) => state.ensureRegistry);
   const ensureTeam = useTeamStore((state) => state.ensureTeam);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pendingOnly, setPendingOnly] = useState(false);
   const [confirmValidation, setConfirmValidation] = useState(false);
 
-  useEffect(() => { ensureMatch(matchId); ensureTeam(CDA_TEAM_ID); }, [ensureMatch, ensureTeam, matchId]);
+  useEffect(() => { ensureRegistry(); ensureMatch(matchId); }, [ensureMatch, ensureRegistry, matchId]);
+  useEffect(() => ensureTeam(matchClubId), [ensureTeam, matchClubId]);
   const replay = useMemo(
     () => session
       ? replayMatch(session.players, session.events, { currentClock: { period: 2, minute: 20 } })

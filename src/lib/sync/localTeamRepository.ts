@@ -1,5 +1,6 @@
 import { browserMatchStorage, LocalStorageAdapter } from "../matchPersistence";
 import {
+  ClubProfile,
   MasterPlayer,
   MasterStaffMember,
   Season,
@@ -19,10 +20,11 @@ import {
   TeamSyncOperation,
   TeamSyncPayload,
   TeamSyncState,
+  TeamSyncNamespace,
 } from "./teamSyncTypes";
 import { MatchSyncSummary, SyncErrorKind } from "./syncTypes";
 
-const TEAM_STORAGE_VERSION = 3 as const;
+const TEAM_STORAGE_VERSION = 4 as const;
 const TEAM_STORAGE_PREFIX = "alamedapp:team:v1:";
 
 interface TeamEnvelope {
@@ -94,6 +96,20 @@ function validTeam(value: unknown, teamId?: string): value is TeamProfile {
   );
 }
 
+function validClub(value: unknown, clubId?: string): value is ClubProfile {
+  if (typeof value !== "object" || value === null) return false;
+  const club = value as Partial<ClubProfile>;
+  return (
+    (!clubId || club.clubId === clubId) &&
+    typeof club.clubId === "string" &&
+    typeof club.name === "string" &&
+    typeof club.active === "boolean" &&
+    typeof club.createdAt === "number" &&
+    typeof club.updatedAt === "number" &&
+    typeof club.revision === "number"
+  );
+}
+
 function validSeason(value: unknown, teamId?: string): value is Season {
   if (typeof value !== "object" || value === null) return false;
   const season = value as Partial<Season>;
@@ -143,6 +159,7 @@ function validPayload(
   payload: unknown,
   teamId: string,
 ): payload is TeamSyncPayload {
+  if (entityType === "CLUB") return validClub(payload, teamId);
   if (entityType === "TEAM") return validTeam(payload, teamId);
   if (entityType === "TEAM_UNIT") return validTeam(payload);
   if (entityType === "PLAYER") return validPlayer(payload);
@@ -152,15 +169,20 @@ function validPayload(
   return validSeasonStaff(payload);
 }
 
-function validOperation(value: unknown, teamId: string): value is TeamSyncOperation {
+type MigratableTeamSyncOperation = Omit<TeamSyncOperation, "namespace"> & {
+  namespace?: TeamSyncNamespace;
+};
+
+function validOperation(value: unknown, teamId: string): value is MigratableTeamSyncOperation {
   if (typeof value !== "object" || value === null) return false;
   const operation = value as Partial<TeamSyncOperation>;
   return (
     typeof operation.id === "string" &&
     operation.teamId === teamId &&
-    ["TEAM", "TEAM_UNIT", "PLAYER", "STAFF", "SEASON", "SEASON_PLAYER", "SEASON_STAFF"].includes(
+    ["CLUB", "TEAM", "TEAM_UNIT", "PLAYER", "STAFF", "SEASON", "SEASON_PLAYER", "SEASON_STAFF"].includes(
       String(operation.entityType),
     ) &&
+    (operation.namespace === undefined || operation.namespace === "CLUBS" || operation.namespace === "LEGACY_TEAMS") &&
     typeof operation.entityId === "string" &&
     operation.kind === "UPSERT" &&
     typeof operation.baseRevision === "number" &&
@@ -180,8 +202,9 @@ function migrateSync(value: unknown, teamId: string): TeamSyncState {
   }
   const valid = Array.isArray(source.outbox)
     ? source.outbox.filter((operation) => validOperation(operation, teamId)).map(
-        (operation) => ({
+        (operation): TeamSyncOperation => ({
           ...operation,
+          namespace: operation.namespace ?? "LEGACY_TEAMS",
           status: operation.status === "SYNCING" ? "PENDING" as const : operation.status,
         }),
       )
@@ -189,7 +212,7 @@ function migrateSync(value: unknown, teamId: string): TeamSyncState {
   const latestConflict = new Map<string, number>();
   valid.forEach((operation, index) => {
     if (operation.status !== "CONFLICT") return;
-    const key = teamEntityKey(operation.entityType, operation.entityId);
+    const key = teamEntityKey(operation.entityType, operation.entityId, operation.namespace);
     const prior = latestConflict.get(key);
     if (prior === undefined || valid[prior].clientUpdatedAt <= operation.clientUpdatedAt) {
       latestConflict.set(key, index);
@@ -198,7 +221,7 @@ function migrateSync(value: unknown, teamId: string): TeamSyncState {
   const outbox = valid.filter(
     (operation, index) =>
       operation.status !== "CONFLICT" ||
-      latestConflict.get(teamEntityKey(operation.entityType, operation.entityId)) === index,
+      latestConflict.get(teamEntityKey(operation.entityType, operation.entityId, operation.namespace)) === index,
   );
   const retained = new Set(outbox.map((operation) => operation.id));
   const revisions =
@@ -206,11 +229,16 @@ function migrateSync(value: unknown, teamId: string): TeamSyncState {
       ? Object.fromEntries(
           Object.entries(source.knownRemoteRevisions).filter(
             ([, revision]) => typeof revision === "number" && revision >= 0,
-          ),
+          ).map(([key, revision]) => [
+            Number(source.schemaVersion) >= 3 || key.startsWith("clubs:") || key.startsWith("legacy_teams:")
+              ? key
+              : `legacy_teams:${key}`,
+            revision,
+          ]),
         )
       : {};
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     outbox,
     knownRemoteRevisions: revisions,
     lastLocalMutationAt:
@@ -219,12 +247,13 @@ function migrateSync(value: unknown, teamId: string): TeamSyncState {
     lastError: typeof source.lastError === "string" ? source.lastError : null,
     lastErrorKind: source.lastErrorKind ?? null,
     conflicts: Array.isArray(source.conflicts)
-      ? source.conflicts.filter(
-          (conflict) =>
-            typeof conflict === "object" &&
-            conflict !== null &&
-            retained.has((conflict as TeamSyncConflict).operationId),
-        ) as TeamSyncConflict[]
+      ? source.conflicts.flatMap((conflict) => {
+          if (typeof conflict !== "object" || conflict === null) return [];
+          const typed = conflict as TeamSyncConflict;
+          if (!retained.has(typed.operationId)) return [];
+          const operation = outbox.find((item) => item.id === typed.operationId);
+          return operation ? [{ ...typed, entityKey: teamEntityKey(operation.entityType, operation.entityId, operation.namespace) }] : [];
+        })
       : [],
   };
 }
@@ -244,7 +273,7 @@ function readEnvelope(
       sync?: unknown;
     };
     if (
-      (![1, 2, TEAM_STORAGE_VERSION].includes(Number(parsed.storageVersion))) ||
+      (![1, 2, 3, TEAM_STORAGE_VERSION].includes(Number(parsed.storageVersion))) ||
       typeof parsed.savedAt !== "number" ||
       !parsed.roster ||
       parsed.roster.teamId !== teamId ||
@@ -287,16 +316,22 @@ function readEnvelope(
             : [],
         };
     const defaults = emptyTeamWorkspace(teamId, parsed.savedAt);
+    const workspaceClubId = typeof parsed.roster.clubId === "string" ? parsed.roster.clubId : teamId;
     const workspace: TeamWorkspace = {
       ...defaults,
       ...legacyBase,
-      clubId: typeof parsed.roster.clubId === "string" ? parsed.roster.clubId : teamId,
+      clubId: workspaceClubId,
       club: parsed.roster.club && typeof parsed.roster.club === "object"
-        ? { ...defaults.club, ...parsed.roster.club }
+        ? { ...defaults.club, ...parsed.roster.club, clubId: workspaceClubId }
         : defaults.club,
       teams: Array.isArray(parsed.roster.teams)
-        ? parsed.roster.teams.filter((team) => validTeam(team))
+        ? parsed.roster.teams.filter((team) => validTeam(team)).map((team) => ({ ...team, clubId: team.clubId ?? workspaceClubId }))
         : [],
+      players: legacyBase.players.map((player) => ({ ...player, clubId: player.clubId ?? workspaceClubId })),
+      staff: legacyBase.staff.map((member) => ({ ...member, clubId: member.clubId ?? workspaceClubId })),
+      seasons: legacyBase.seasons.map((season) => ({ ...season, clubId: season.clubId ?? workspaceClubId })),
+      seasonPlayers: legacyBase.seasonPlayers.map((membership) => ({ ...membership, clubId: membership.clubId ?? workspaceClubId })),
+      seasonStaff: legacyBase.seasonStaff.map((membership) => ({ ...membership, clubId: membership.clubId ?? workspaceClubId })),
     };
     return {
       storageVersion: TEAM_STORAGE_VERSION,
@@ -317,11 +352,12 @@ function enqueue(
   payload: TeamSyncPayload,
   now: number,
   idFactory: () => string,
+  namespace: TeamSyncNamespace = "CLUBS",
 ): TeamSyncState {
-  const key = teamEntityKey(entityType, entityId);
+  const key = teamEntityKey(entityType, entityId, namespace);
   const index = state.outbox.findIndex(
     (operation) =>
-      teamEntityKey(operation.entityType, operation.entityId) === key &&
+      teamEntityKey(operation.entityType, operation.entityId, operation.namespace) === key &&
       ["PENDING", "ERROR", "CONFLICT"].includes(operation.status),
   );
   const previous = index >= 0 ? state.outbox[index] : undefined;
@@ -331,6 +367,7 @@ function enqueue(
     teamId,
     entityType,
     entityId,
+    namespace,
     kind: "UPSERT",
     payload,
     baseRevision: previous?.baseRevision ?? state.knownRemoteRevisions[key] ?? 0,
@@ -431,8 +468,12 @@ export class LocalTeamRepository {
     const previous = readEnvelope(workspace.teamId, this.storage());
     let sync = this.withLiveInFlightState(previous?.sync ?? emptyTeamSyncState());
     const now = this.now();
-    if (!previous || !sameValue(previous.roster.team, workspace.team)) {
-      sync = enqueue(sync, workspace.teamId, "TEAM", workspace.teamId, workspace.team, now, this.idFactory);
+    const canonicalClubKey = teamEntityKey("CLUB", workspace.clubId, "CLUBS");
+    const hasCanonicalClubOperation = sync.outbox.some((operation) =>
+      operation.entityType === "CLUB" && operation.entityId === workspace.clubId && operation.namespace === "CLUBS",
+    );
+    if (!previous || !sameValue(previous.roster.club, workspace.club) || (sync.knownRemoteRevisions[canonicalClubKey] === undefined && !hasCanonicalClubOperation)) {
+      sync = enqueue(sync, workspace.clubId, "CLUB", workspace.clubId, workspace.club, now, this.idFactory);
     }
     const previousTeams = new Map(
       (previous?.roster.teams ?? []).map((team) => [team.teamId, team]),
@@ -536,11 +577,11 @@ export class LocalTeamRepository {
     const operation = record.sync.outbox.find((item) => item.id === operationId);
     if (!operation) return;
     this.inFlightOperationIds.delete(operationId);
-    const key = teamEntityKey(operation.entityType, operation.entityId);
+    const key = teamEntityKey(operation.entityType, operation.entityId, operation.namespace);
     const outbox = record.sync.outbox
       .filter((item) => item.id !== operationId)
       .map((item) =>
-        teamEntityKey(item.entityType, item.entityId) === key &&
+        teamEntityKey(item.entityType, item.entityId, item.namespace) === key &&
         item.baseRevision === operation.baseRevision
           ? { ...item, baseRevision: remoteRevision }
           : item,
@@ -602,7 +643,7 @@ export class LocalTeamRepository {
     this.inFlightOperationIds.delete(operationId);
     const conflict: TeamSyncConflict = {
       operationId,
-      entityKey: teamEntityKey(operation.entityType, operation.entityId),
+      entityKey: teamEntityKey(operation.entityType, operation.entityId, operation.namespace),
       detectedAt: this.now(),
       localPayload: operation.payload,
       remoteRevision,

@@ -408,6 +408,7 @@ function migratePersistedSession(value: unknown): unknown {
 function validPreparation(value: unknown): value is MatchPreparation {
   if (!isObject(value)) return false;
   return (
+    (value.clubId === undefined || typeof value.clubId === "string") &&
     typeof value.teamId === "string" &&
     (value.seasonId === undefined || typeof value.seasonId === "string") &&
     typeof value.opponent === "string" &&

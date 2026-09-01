@@ -8,11 +8,12 @@ import {
   TeamWorkspace,
 } from "../types";
 
-export type AdminEntityType = "TEAM" | "SEASON" | "PLAYER" | "STAFF" | "MATCH";
+export type AdminEntityType = "CLUB" | "TEAM" | "SEASON" | "PLAYER" | "STAFF" | "MATCH";
 
 export interface DeletionImpact {
   entityType: AdminEntityType;
   entityId: string;
+  teams: number;
   seasons: number;
   players: number;
   staff: number;
@@ -23,6 +24,7 @@ export interface DeletionImpact {
 
 export interface MatchImpactSource {
   matchId: string;
+  clubId?: string;
   teamId?: string;
   seasonId?: string;
   playerIds?: string[];
@@ -62,6 +64,7 @@ export function createTeamProfile(
     active: true,
     createdAt: now,
     updatedAt: now,
+    revision: 0,
   };
   return { ...workspace, teams: [...workspace.teams, team] };
 }
@@ -81,6 +84,7 @@ export function updateRealTeam(
       name: changes.name === undefined ? team.name : required(changes.name, "El nombre del equipo"),
       shortName: changes.shortName === undefined ? team.shortName : optional(changes.shortName) ?? team.shortName,
       updatedAt: now,
+      revision: (team.revision ?? 0) + 1,
     } : team),
   };
 }
@@ -98,7 +102,7 @@ function lifecycle<T extends { active: boolean; archivedAt?: number; deletedAt?:
 
 export function changeAdminLifecycle(
   workspace: TeamWorkspace,
-  entityType: Exclude<AdminEntityType, "MATCH">,
+  entityType: Exclude<AdminEntityType, "CLUB" | "MATCH">,
   entityId: string,
   action: "ARCHIVE" | "REACTIVATE" | "DELETE",
   now = Date.now(),
@@ -125,7 +129,7 @@ export function changeAdminLifecycle(
 }
 
 export function availableTeams(workspace: TeamWorkspace, includeArchived = false): TeamProfile[] {
-  const real = workspace.teams.filter((team) => !team.deletedAt && (includeArchived || !team.archivedAt));
+  const real = workspace.teams.filter((team) => !team.deletedAt && (includeArchived || (team.active && !team.archivedAt)));
   const hasLegacy = workspace.seasons.some((season) => season.teamId === workspace.teamId) ||
     (workspace.teams.length === 0 && (workspace.players.length > 0 || workspace.staff.length > 0));
   return hasLegacy && !real.some((team) => team.teamId === workspace.teamId)
@@ -150,29 +154,39 @@ export function calculateDeletionImpact(
   const relevantMatches = matches.filter((match) => {
     if (match.deletedAt) return false;
     if (entityType === "MATCH") return match.matchId === entityId;
+    if (entityType === "CLUB") return (match.clubId ?? CDA_CLUB_ID) === entityId;
     if (entityType === "TEAM") return match.teamId === entityId;
     if (entityType === "SEASON") return match.seasonId === entityId;
     if (entityType === "PLAYER") return match.playerIds?.includes(entityId);
     return match.staffIds?.includes(entityId);
   });
-  const seasons = entityType === "TEAM"
+  const seasons = entityType === "CLUB"
+    ? workspace.seasons.filter((season) => !season.deletedAt).length
+    : entityType === "TEAM"
     ? workspace.seasons.filter((season) => season.teamId === entityId && !season.deletedAt).length
     : entityType === "SEASON" ? 1 : 0;
   const seasonIds = new Set(
-    entityType === "TEAM"
+    entityType === "CLUB"
+      ? workspace.seasons.map((season) => season.seasonId)
+      : entityType === "TEAM"
       ? workspace.seasons.filter((season) => season.teamId === entityId).map((season) => season.seasonId)
       : entityType === "SEASON" ? [entityId] : [],
   );
-  const players = entityType === "PLAYER" ? 1 : workspace.seasonPlayers.filter(
+  const players = entityType === "CLUB"
+    ? workspace.players.filter((player) => !player.deletedAt).length
+    : entityType === "PLAYER" ? 1 : workspace.seasonPlayers.filter(
     (membership) => seasonIds.has(membership.seasonId) && !membership.deletedAt,
   ).length;
-  const staff = entityType === "STAFF" ? 1 : workspace.seasonStaff.filter(
+  const staff = entityType === "CLUB"
+    ? workspace.staff.filter((member) => !member.deletedAt).length
+    : entityType === "STAFF" ? 1 : workspace.seasonStaff.filter(
     (membership) => seasonIds.has(membership.seasonId) && !membership.deletedAt,
   ).length;
   const events = relevantMatches.reduce((sum, match) => sum + (match.eventCount ?? 0), 0);
   return {
     entityType,
     entityId,
+    teams: entityType === "CLUB" ? workspace.teams.filter((team) => !team.deletedAt).length : entityType === "TEAM" ? 1 : 0,
     seasons,
     players,
     staff,
@@ -184,6 +198,7 @@ export function calculateDeletionImpact(
 
 export function impactSummary(impact: DeletionImpact): string {
   const parts = [
+    impact.teams ? `${impact.teams} equipo${impact.teams === 1 ? "" : "s"}` : "",
     impact.seasons ? `${impact.seasons} temporada${impact.seasons === 1 ? "" : "s"}` : "",
     impact.players ? `${impact.players} jugador${impact.players === 1 ? "" : "es"}` : "",
     impact.staff ? `${impact.staff} miembro${impact.staff === 1 ? "" : "s"} de staff` : "",
@@ -194,7 +209,7 @@ export function impactSummary(impact: DeletionImpact): string {
 }
 
 export function isSeasonVisible(season: Season, includeArchived = false): boolean {
-  return !season.deletedAt && (includeArchived || !season.archivedAt);
+  return !season.deletedAt && (includeArchived || (season.active && !season.archivedAt));
 }
 
 export function changeMatchLifecycle(
@@ -210,4 +225,31 @@ export function changeMatchLifecycle(
       ? { ...session.preparation, archivedAt: undefined, updatedAt: now }
       : { ...session.preparation, archivedAt: undefined, deletedAt: now, updatedAt: now };
   return { ...session, preparation };
+}
+
+export function assignLegacyMatchSeason(
+  session: MatchSession,
+  workspace: TeamWorkspace,
+  seasonId: string,
+  now = Date.now(),
+): MatchSession {
+  if (!session.preparation) throw new Error("El partido no tiene preparación asociada.");
+  if (session.preparation.seasonId) throw new Error("El partido ya tiene temporada asignada.");
+  const matchClubId = session.preparation.clubId ?? CDA_CLUB_ID;
+  if (matchClubId !== workspace.clubId) throw new Error("El partido pertenece a otro club.");
+  const season = workspace.seasons.find((item) => item.seasonId === seasonId && item.active && !item.archivedAt && !item.deletedAt);
+  if (!season) throw new Error("La temporada no está disponible.");
+  if (session.preparation.teamId !== workspace.teamId && session.preparation.teamId !== season.teamId) {
+    throw new Error("La temporada pertenece a otro equipo.");
+  }
+  return {
+    ...session,
+    preparation: {
+      ...session.preparation,
+      clubId: matchClubId,
+      teamId: season.teamId,
+      seasonId: season.seasonId,
+      updatedAt: now,
+    },
+  };
 }

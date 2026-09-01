@@ -1,5 +1,7 @@
 # Administración segura V1
 
+> Evolución posterior: [Multiclub Lite V1](./multiclub-lite-v1.md). Este documento conserva las decisiones del bloque Admin V1; el modelo canónico nuevo separa varios clubes.
+
 ## Jerarquía
 
 AlamedAPP distingue desde esta versión:

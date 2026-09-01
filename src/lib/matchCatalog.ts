@@ -1,10 +1,11 @@
 import { browserMatchStorage, LocalStorageAdapter } from "./matchPersistence";
-import { MatchLifecycleStatus, MatchSession, MatchVenue } from "../types";
+import { CDA_CLUB_ID, MatchLifecycleStatus, MatchSession, MatchVenue } from "../types";
 
 const CATALOG_KEY = "alamedapp:matches:index:v1";
 
 export interface MatchCatalogEntry {
   matchId: string;
+  clubId?: string;
   teamId?: string;
   seasonId?: string;
   opponent: string;
@@ -25,6 +26,7 @@ function validEntry(value: unknown): value is MatchCatalogEntry {
   const entry = value as Partial<MatchCatalogEntry>;
   return (
     typeof entry.matchId === "string" &&
+    (entry.clubId === undefined || typeof entry.clubId === "string") &&
     (entry.teamId === undefined || typeof entry.teamId === "string") &&
     (entry.seasonId === undefined || typeof entry.seasonId === "string") &&
     typeof entry.opponent === "string" &&
@@ -56,6 +58,10 @@ export function visibleMatchCatalog(
   return entries.filter((entry) => !entry.deletedAt && (includeArchived || !entry.archivedAt));
 }
 
+export function matchCatalogClubId(entry: MatchCatalogEntry): string {
+  return entry.clubId ?? CDA_CLUB_ID;
+}
+
 export function updateMatchCatalog(
   session: MatchSession,
   storage: LocalStorageAdapter | null = browserMatchStorage(),
@@ -64,6 +70,7 @@ export function updateMatchCatalog(
   if (!storage || !preparation) return;
   const entry: MatchCatalogEntry = {
     matchId: session.matchId,
+    clubId: preparation.clubId ?? CDA_CLUB_ID,
     teamId: preparation.teamId,
     seasonId: preparation.seasonId,
     opponent: preparation.opponent,

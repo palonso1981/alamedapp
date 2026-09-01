@@ -29,12 +29,14 @@ export interface StaffMember {
 export const CDA_CLUB_ID = "cd-alameda" as const;
 export const CDA_TEAM_ID = CDA_CLUB_ID;
 
-export interface ClubProfile {
+export interface ClubProfile extends LifecycleMetadata {
   clubId: string;
   name: string;
-  shortName: string;
+  shortName?: string;
+  active: boolean;
   createdAt: number;
   updatedAt: number;
+  revision: number;
 }
 
 export interface LifecycleMetadata {
@@ -53,10 +55,13 @@ export interface TeamProfile extends LifecycleMetadata {
   active: boolean;
   createdAt: number;
   updatedAt: number;
+  revision?: number;
 }
 
 export interface Season extends LifecycleMetadata {
   seasonId: string;
+  /** Ausente únicamente en temporadas legacy anteriores a Multiclub Lite. */
+  clubId?: string;
   teamId: string;
   label: string;
   startDate?: string;
@@ -65,9 +70,11 @@ export interface Season extends LifecycleMetadata {
   active: boolean;
   createdAt: number;
   updatedAt: number;
+  revision?: number;
 }
 
 export interface SeasonPlayer extends LifecycleMetadata {
+  clubId?: string;
   teamId: string;
   seasonId: string;
   playerId: string;
@@ -79,6 +86,7 @@ export interface SeasonPlayer extends LifecycleMetadata {
 }
 
 export interface SeasonStaff extends LifecycleMetadata {
+  clubId?: string;
   teamId: string;
   seasonId: string;
   staffId: string;
@@ -165,6 +173,8 @@ export type MatchVenue = "HOME" | "AWAY";
 export type CompetitionType = "LEAGUE" | "CUP" | "FRIENDLY" | "OTHER";
 
 export interface MatchPreparation {
+  /** En partidos legacy de AlamedAPP se deriva como cd-alameda. */
+  clubId?: string;
   teamId: string;
   /** Ausente únicamente en partidos legacy sin asignación conocida. */
   seasonId?: string;

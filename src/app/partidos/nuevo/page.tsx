@@ -6,24 +6,25 @@ import { useRouter } from "next/navigation";
 import { AppHeader } from "../../../components/app/AppHeader";
 import { usePreMatchStore } from "../../../store/usePreMatchStore";
 import { useTeamStore } from "../../../store/useTeamStore";
-import { currentSeason } from "../../../lib/seasonDomain";
+import { assertSeasonScope, currentSeason } from "../../../lib/seasonDomain";
 import { availableTeams } from "../../../lib/adminDomain";
-import { CDA_TEAM_ID, CompetitionType } from "../../../types";
+import { CompetitionType } from "../../../types";
 
 function slug(value: string): string { return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 28) || "rival"; }
 
 export default function NewMatchPage() {
   const router = useRouter(); const createMatch = usePreMatchStore((state) => state.createMatch); const [error, setError] = useState<string | null>(null);
-  const workspace = useTeamStore((state) => state.teams[CDA_TEAM_ID]); const ensureTeam = useTeamStore((state) => state.ensureTeam);
+  const currentClubId = useTeamStore((state) => state.currentClubId); const workspace = useTeamStore((state) => state.teams[state.currentClubId]); const ensureRegistry = useTeamStore((state) => state.ensureRegistry); const ensureTeam = useTeamStore((state) => state.ensureTeam);
   const [competitionType, setCompetitionType] = useState<CompetitionType>("LEAGUE");
   const [seasonId, setSeasonId] = useState("");
   const [teamId, setTeamId] = useState("");
-  useEffect(() => ensureTeam(CDA_TEAM_ID), [ensureTeam]);
+  useEffect(() => ensureRegistry(), [ensureRegistry]);
+  useEffect(() => { ensureTeam(currentClubId); setTeamId(""); setSeasonId(""); }, [currentClubId, ensureTeam]);
   useEffect(() => { if (!workspace || teamId) return; const initialTeamId = availableTeams(workspace)[0]?.teamId ?? ""; setTeamId(initialTeamId); setSeasonId(currentSeason(workspace, initialTeamId)?.seasonId ?? ""); }, [teamId, workspace]);
   const teams = workspace ? availableTeams(workspace) : [];
   const seasons = workspace?.seasons.filter((season) => season.teamId === teamId && season.active && !season.archivedAt && !season.deletedAt) ?? [];
-  function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); const opponent = String(data.get("opponent") ?? ""); const date = String(data.get("date") ?? ""); const matchId = `partido-${date}-${slug(opponent)}-${crypto.randomUUID().slice(0, 8)}`; const rawMatchday = String(data.get("matchday") ?? ""); const ok = createMatch(matchId, { teamId, seasonId, opponent, date, venue: String(data.get("venue")) === "AWAY" ? "AWAY" : "HOME", time: String(data.get("time") ?? ""), competitionType, competitionOtherDetail: String(data.get("competitionOtherDetail") ?? ""), competition: String(data.get("competition") ?? ""), category: String(data.get("category") ?? ""), matchday: rawMatchday ? Number(rawMatchday) : undefined }); if (ok) router.push(`/partido/${matchId}/prepartido`); else setError(usePreMatchStore.getState().errors[matchId] ?? "No se pudo crear."); }
-  return <div className="min-h-screen bg-slate-900 text-white"><AppHeader title="Nuevo partido" /><main className="mx-auto max-w-2xl p-4 sm:p-8"><form onSubmit={submit} className="space-y-5 rounded-3xl border border-slate-700 bg-slate-800 p-5 sm:p-7">
+  function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); const opponent = String(data.get("opponent") ?? ""); const date = String(data.get("date") ?? ""); const matchId = `partido-${date}-${slug(opponent)}-${crypto.randomUUID().slice(0, 8)}`; const rawMatchday = String(data.get("matchday") ?? ""); try { if (!workspace) throw new Error("El club todavía no está cargado."); assertSeasonScope(workspace, teamId, seasonId); } catch (scopeError) { setError(scopeError instanceof Error ? scopeError.message : "Equipo y temporada deben pertenecer al club actual."); return; } const ok = createMatch(matchId, { clubId: currentClubId, teamId, seasonId, opponent, date, venue: String(data.get("venue")) === "AWAY" ? "AWAY" : "HOME", time: String(data.get("time") ?? ""), competitionType, competitionOtherDetail: String(data.get("competitionOtherDetail") ?? ""), competition: String(data.get("competition") ?? ""), category: String(data.get("category") ?? ""), matchday: rawMatchday ? Number(rawMatchday) : undefined }); if (ok) router.push(`/partido/${matchId}/prepartido`); else setError(usePreMatchStore.getState().errors[matchId] ?? "No se pudo crear."); }
+  return <div className="min-h-screen bg-slate-900 text-white"><AppHeader title={`Nuevo partido · ${workspace?.club.name ?? "Club"}`} /><main className="mx-auto max-w-2xl p-4 sm:p-8"><form onSubmit={submit} className="space-y-5 rounded-3xl border border-slate-700 bg-slate-800 p-5 sm:p-7">
     <label className="block text-sm font-bold text-slate-300">Equipo<select required value={teamId} onChange={(event) => { const next = event.target.value; setTeamId(next); setSeasonId(currentSeason(workspace!, next)?.seasonId ?? ""); }} className="mt-1 min-h-12 w-full rounded-xl border border-slate-600 bg-slate-950 px-3"><option value="">Selecciona equipo</option>{teams.map((team) => <option key={team.teamId} value={team.teamId}>{team.name}</option>)}</select><span className="mt-1 block text-[11px] font-normal text-slate-500">Equipo deportivo del club que disputará el partido.</span></label>
     <label className="block text-sm font-bold text-slate-300">Temporada<select required value={seasonId} onChange={(event) => setSeasonId(event.target.value)} className="mt-1 min-h-12 w-full rounded-xl border border-slate-600 bg-slate-950 px-3"><option value="">Selecciona temporada</option>{seasons.map((season) => <option key={season.seasonId} value={season.seasonId}>{season.label}{season.current ? " · ACTUAL" : ""}</option>)}</select><span className="mt-1 block text-[11px] font-normal text-slate-500">Periodo deportivo al que pertenecerán plantilla y partido.</span></label>
     {workspace && workspace.seasons.length === 0 && <p className="rounded-xl bg-amber-950 p-3 text-sm text-amber-200">Configura primero una temporada en <Link href="/configuracion" className="font-black underline">Configuración</Link>.</p>}
