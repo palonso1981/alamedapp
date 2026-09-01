@@ -93,6 +93,89 @@ service cloud.firestore {
       }
     }
 
+    // MULTICLUB LITE · EXCLUSIVO DE cdalameda-dev.
+    // Anonymous Auth es temporal; producción exigirá autorización por club/usuario/rol.
+    match /clubs/{clubId} {
+      allow get: if request.auth != null;
+      allow create, update: if request.auth != null
+        && request.resource.data.clubId == clubId
+        && request.resource.data.entityType == "CLUB"
+        && request.resource.data.entityId == clubId
+        && request.resource.data.payload.clubId == clubId;
+      allow list, delete: if false;
+
+      match /players/{playerId} {
+        allow get: if request.auth != null;
+        allow create, update: if request.auth != null
+          && request.resource.data.clubId == clubId
+          && request.resource.data.entityType == "PLAYER"
+          && request.resource.data.entityId == playerId
+          && request.resource.data.payload.clubId == clubId
+          && request.resource.data.payload.playerId == playerId;
+        allow list, delete: if false;
+      }
+
+      match /staff/{staffId} {
+        allow get: if request.auth != null;
+        allow create, update: if request.auth != null
+          && request.resource.data.clubId == clubId
+          && request.resource.data.entityType == "STAFF"
+          && request.resource.data.entityId == staffId
+          && request.resource.data.payload.clubId == clubId
+          && request.resource.data.payload.staffId == staffId;
+        allow list, delete: if false;
+      }
+
+      match /teams/{teamId} {
+        allow get: if request.auth != null;
+        allow create, update: if request.auth != null
+          && request.resource.data.clubId == clubId
+          && request.resource.data.entityType == "TEAM_UNIT"
+          && request.resource.data.entityId == teamId
+          && request.resource.data.payload.clubId == clubId
+          && request.resource.data.payload.teamId == teamId;
+        allow list, delete: if false;
+
+        match /seasons/{seasonId} {
+          allow get: if request.auth != null;
+          allow create, update: if request.auth != null
+            && request.resource.data.clubId == clubId
+            && request.resource.data.entityType == "SEASON"
+            && request.resource.data.entityId == seasonId
+            && request.resource.data.payload.clubId == clubId
+            && request.resource.data.payload.teamId == teamId
+            && request.resource.data.payload.seasonId == seasonId;
+          allow list, delete: if false;
+
+          match /players/{playerId} {
+            allow get: if request.auth != null;
+            allow create, update: if request.auth != null
+              && request.resource.data.clubId == clubId
+              && request.resource.data.entityType == "SEASON_PLAYER"
+              && request.resource.data.entityId == playerId
+              && request.resource.data.payload.clubId == clubId
+              && request.resource.data.payload.teamId == teamId
+              && request.resource.data.payload.seasonId == seasonId
+              && request.resource.data.payload.playerId == playerId;
+            allow list, delete: if false;
+          }
+
+          match /staff/{staffId} {
+            allow get: if request.auth != null;
+            allow create, update: if request.auth != null
+              && request.resource.data.clubId == clubId
+              && request.resource.data.entityType == "SEASON_STAFF"
+              && request.resource.data.entityId == staffId
+              && request.resource.data.payload.clubId == clubId
+              && request.resource.data.payload.teamId == teamId
+              && request.resource.data.payload.seasonId == seasonId
+              && request.resource.data.payload.staffId == staffId;
+            allow list, delete: if false;
+          }
+        }
+      }
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
