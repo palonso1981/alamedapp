@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import {
   CreateMatchInput,
+  addExtraPlayerToMatch,
   createDraftMatch,
   markMatchReady,
   selectStartingGoalkeeper,
@@ -22,6 +23,7 @@ interface PreMatchState {
   createMatch: (matchId: string, input: CreateMatchInput) => boolean;
   updateDetails: (matchId: string, changes: Partial<CreateMatchInput>) => void;
   toggleCalled: (matchId: string, roster: TeamRoster, playerId: string) => void;
+  addExtraPlayer: (matchId: string, roster: TeamRoster, playerId: string) => void;
   toggleStarter: (matchId: string, roster: TeamRoster, playerId: string) => void;
   selectGoalkeeper: (matchId: string, roster: TeamRoster, playerId: string) => void;
   toggleStaff: (matchId: string, roster: TeamRoster, staffId: string) => void;
@@ -101,6 +103,7 @@ export const usePreMatchStore = create<PreMatchState>((set, get) => {
     },
     updateDetails: (matchId, changes) => change(matchId, (session) => updateMatchDetails(session, changes)),
     toggleCalled: (matchId, roster, playerId) => change(matchId, (session) => toggleCalledPlayer(session, roster, playerId)),
+    addExtraPlayer: (matchId, roster, playerId) => change(matchId, (session) => addExtraPlayerToMatch(session, roster, playerId)),
     toggleStarter: (matchId, roster, playerId) => change(matchId, (session) => toggleStarter(session, roster, playerId)),
     selectGoalkeeper: (matchId, roster, playerId) => change(matchId, (session) => selectStartingGoalkeeper(session, roster, playerId)),
     toggleStaff: (matchId, roster, staffId) => change(matchId, (session) => toggleMatchStaff(session, roster, staffId)),

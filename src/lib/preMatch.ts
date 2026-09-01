@@ -101,6 +101,7 @@ export function createDraftMatch(
       calledPlayerIds: [],
       starterPlayerIds: [],
       selectedStaffIds: [],
+      extraPlayerIds: [],
       targetMinutes: {},
       createdAt: now,
       updatedAt: now,
@@ -188,6 +189,7 @@ export function toggleCalledPlayer(
     ...preparation,
     status: "DRAFT",
     calledPlayerIds,
+    extraPlayerIds: (preparation.extraPlayerIds ?? []).filter((id) => calledPlayerIds.includes(id)),
     starterPlayerIds: preparation.starterPlayerIds.filter((id) => calledPlayerIds.includes(id)),
     startingGoalkeeperId:
       preparation.startingGoalkeeperId && calledPlayerIds.includes(preparation.startingGoalkeeperId)
@@ -196,6 +198,29 @@ export function toggleCalledPlayer(
     targetMinutes: Object.fromEntries(
       Object.entries(preparation.targetMinutes).filter(([id]) => calledPlayerIds.includes(id)),
     ),
+    updatedAt: now,
+  };
+  return withRosterSnapshots(session, roster, next);
+}
+
+export function addExtraPlayerToMatch(
+  session: MatchSession,
+  roster: TeamRoster,
+  playerId: string,
+  now = Date.now(),
+): MatchSession {
+  const preparation = assertEditable(session);
+  const player = roster.players.find((candidate) => candidate.playerId === playerId);
+  if (!player) throw new Error("El jugador no existe en el club.");
+  if (preparation.calledPlayerIds.includes(playerId)) return session;
+  if (preparation.calledPlayerIds.length >= MAX_CALLED_PLAYERS) {
+    throw new Error(`La convocatoria admite hasta ${MAX_CALLED_PLAYERS} jugadores.`);
+  }
+  const next: MatchPreparation = {
+    ...preparation,
+    status: "DRAFT",
+    extraPlayerIds: Array.from(new Set([...(preparation.extraPlayerIds ?? []), playerId])),
+    calledPlayerIds: [...preparation.calledPlayerIds, playerId],
     updatedAt: now,
   };
   return withRosterSnapshots(session, roster, next);

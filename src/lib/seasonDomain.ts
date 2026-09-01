@@ -1,4 +1,6 @@
 import {
+  CDA_CLUB_ID,
+  ClubProfile,
   MasterPlayer,
   MasterStaffMember,
   Season,
@@ -10,6 +12,7 @@ import {
 } from "../types";
 
 export interface CreateSeasonInput {
+  teamId?: string;
   label: string;
   startDate?: string;
   endDate?: string;
@@ -60,9 +63,20 @@ function validNumber(number: number): number {
 export function defaultTeamProfile(teamId: string, now = Date.now()): TeamProfile {
   return {
     teamId,
-    name: teamId === "cd-alameda" ? "CD Alameda" : teamId,
-    shortName: teamId === "cd-alameda" ? "CDA" : teamId.slice(0, 8).toUpperCase(),
+    clubId: CDA_CLUB_ID,
+    name: teamId === CDA_CLUB_ID ? "Equipo legacy" : teamId,
+    shortName: teamId === CDA_CLUB_ID ? "LEGACY" : teamId.slice(0, 8).toUpperCase(),
     active: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function defaultClubProfile(now = Date.now()): ClubProfile {
+  return {
+    clubId: CDA_CLUB_ID,
+    name: "Club Deportivo Alameda",
+    shortName: "CD Alameda",
     createdAt: now,
     updatedAt: now,
   };
@@ -71,6 +85,9 @@ export function defaultTeamProfile(teamId: string, now = Date.now()): TeamProfil
 export function emptyTeamWorkspace(teamId: string, now = Date.now()): TeamWorkspace {
   return {
     teamId,
+    clubId: teamId,
+    club: defaultClubProfile(now),
+    teams: [],
     team: defaultTeamProfile(teamId, now),
     players: [],
     staff: [],
@@ -80,8 +97,10 @@ export function emptyTeamWorkspace(teamId: string, now = Date.now()): TeamWorksp
   };
 }
 
-export function currentSeason(workspace: TeamWorkspace): Season | undefined {
-  return workspace.seasons.find((season) => season.current && season.active);
+export function currentSeason(workspace: TeamWorkspace, teamId?: string): Season | undefined {
+  return workspace.seasons.find(
+    (season) => season.current && season.active && !season.archivedAt && !season.deletedAt && (!teamId || season.teamId === teamId),
+  );
 }
 
 export function seasonById(
@@ -133,10 +152,11 @@ export function createSeason(
   if (startDate && endDate && startDate > endDate) {
     throw new Error("La fecha de fin no puede ser anterior al inicio.");
   }
-  const firstSeason = workspace.seasons.length === 0;
+  const teamId = input.teamId ?? workspace.teamId;
+  const firstSeason = !workspace.seasons.some((item) => item.teamId === teamId && !item.deletedAt);
   const season: Season = {
     seasonId,
-    teamId: workspace.teamId,
+    teamId,
     label,
     startDate,
     endDate,
@@ -154,13 +174,13 @@ export function createSeason(
     }
     copiedPlayers = workspace.seasonPlayers
       .filter((membership) => membership.seasonId === input.copyFromSeasonId)
-      .map((membership) => ({ ...membership, seasonId, createdAt: now, updatedAt: now }));
+      .map((membership) => ({ ...membership, teamId, seasonId, createdAt: now, updatedAt: now }));
     copiedStaff = workspace.seasonStaff
       .filter((membership) => membership.seasonId === input.copyFromSeasonId)
-      .map((membership) => ({ ...membership, seasonId, createdAt: now, updatedAt: now }));
+      .map((membership) => ({ ...membership, teamId, seasonId, createdAt: now, updatedAt: now }));
   } else if (input.copyLegacyRoster) {
     copiedPlayers = workspace.players.map((player) => ({
-      teamId: workspace.teamId,
+      teamId,
       seasonId,
       playerId: player.playerId,
       number: player.number,
@@ -170,7 +190,7 @@ export function createSeason(
       updatedAt: now,
     }));
     copiedStaff = workspace.staff.map((member) => ({
-      teamId: workspace.teamId,
+      teamId,
       seasonId,
       staffId: member.staffId,
       role: member.role,
@@ -200,8 +220,8 @@ export function setCurrentSeason(
     ...workspace,
     seasons: workspace.seasons.map((season) => ({
       ...season,
-      current: season.seasonId === seasonId,
-      updatedAt: season.current === (season.seasonId === seasonId) ? season.updatedAt : now,
+      current: season.teamId === target.teamId ? season.seasonId === seasonId : season.current,
+      updatedAt: season.teamId !== target.teamId || season.current === (season.seasonId === seasonId) ? season.updatedAt : now,
     })),
   };
 }
@@ -222,7 +242,7 @@ export function upsertSeasonPlayer(
     (item) => item.seasonId === seasonId && item.playerId === playerId,
   );
   const next: SeasonPlayer = {
-    teamId: workspace.teamId,
+    teamId: workspace.seasons.find((season) => season.seasonId === seasonId)?.teamId ?? workspace.teamId,
     seasonId,
     playerId,
     number: changes.number === undefined
@@ -272,7 +292,7 @@ export function upsertSeasonStaff(
     (item) => item.seasonId === seasonId && item.staffId === staffId,
   );
   const next: SeasonStaff = {
-    teamId: workspace.teamId,
+    teamId: workspace.seasons.find((season) => season.seasonId === seasonId)?.teamId ?? workspace.teamId,
     seasonId,
     staffId,
     role: changes.role ?? current?.role ?? member.role,
@@ -316,28 +336,44 @@ export function rosterForSeason(
       .map((item) => [item.staffId, item]),
   );
   return {
-    teamId: workspace.teamId,
-    players: workspace.players.map((player): MasterPlayer => {
+    teamId: workspace.seasons.find((season) => season.seasonId === seasonId)?.teamId ?? workspace.teamId,
+    players: workspace.players.filter((player) => !player.deletedAt).map((player): MasterPlayer => {
       const membership = playerMemberships.get(player.playerId);
       return membership
         ? {
             ...player,
             number: membership.number,
             primaryPosition: membership.primaryPosition,
-            active: membership.active,
+            active: membership.active && !membership.archivedAt && !membership.deletedAt && !player.archivedAt,
           }
         : { ...player, active: false };
     }),
-    staff: workspace.staff.map((member): MasterStaffMember => {
+    staff: workspace.staff.filter((member) => !member.deletedAt).map((member): MasterStaffMember => {
       const membership = staffMemberships.get(member.staffId);
       return membership
         ? {
             ...member,
             role: membership.role,
             customRole: membership.customRole,
-            active: membership.active,
+            active: membership.active && !membership.archivedAt && !membership.deletedAt && !member.archivedAt,
           }
         : { ...member, active: false };
     }),
+  };
+}
+
+/** Añade identidades del club a una convocatoria puntual sin crear membership. */
+export function rosterWithExtraPlayers(
+  workspace: TeamWorkspace,
+  seasonId: string | undefined,
+  extraPlayerIds: readonly string[] = [],
+): TeamRoster {
+  const roster = rosterForSeason(workspace, seasonId);
+  const extras = new Set(extraPlayerIds);
+  return {
+    ...roster,
+    players: roster.players.map((player) => extras.has(player.playerId)
+      ? { ...player, active: !player.deletedAt && !player.archivedAt }
+      : player),
   };
 }

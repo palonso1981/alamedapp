@@ -422,6 +422,7 @@ function validPreparation(value: unknown): value is MatchPreparation {
     isStringArray(value.calledPlayerIds) &&
     isStringArray(value.starterPlayerIds) &&
     isStringArray(value.selectedStaffIds) &&
+    (value.extraPlayerIds === undefined || isStringArray(value.extraPlayerIds)) &&
     (value.startingGoalkeeperId === undefined ||
       typeof value.startingGoalkeeperId === "string") &&
     isObject(value.targetMinutes) &&
@@ -435,7 +436,9 @@ function validPreparation(value: unknown): value is MatchPreparation {
     ) &&
     typeof value.createdAt === "number" &&
     typeof value.updatedAt === "number" &&
-    (value.startedAt === undefined || typeof value.startedAt === "number")
+    (value.startedAt === undefined || typeof value.startedAt === "number") &&
+    (value.archivedAt === undefined || typeof value.archivedAt === "number") &&
+    (value.deletedAt === undefined || typeof value.deletedAt === "number")
   );
 }
 

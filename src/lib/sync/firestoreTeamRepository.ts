@@ -17,6 +17,8 @@ export class FirestoreDevTeamRepository
     const payload = operation.payload;
     const reference = operation.entityType === "TEAM"
       ? doc(db, "teams", operation.teamId)
+      : operation.entityType === "TEAM_UNIT"
+        ? doc(db, "teams", operation.teamId, "teams", operation.entityId)
       : operation.entityType === "PLAYER" || operation.entityType === "STAFF"
         ? doc(
             db,

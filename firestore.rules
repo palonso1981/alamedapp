@@ -50,6 +50,17 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // DEV exclusivo: equipos deportivos del único club permitido.
+      // Producción deberá sustituir Anonymous Auth por permisos de club/usuario/rol.
+      match /teams/{teamId} {
+        allow create, update: if request.auth != null
+          && request.resource.data.teamId == "cd-alameda"
+          && request.resource.data.entityType == "TEAM_UNIT"
+          && request.resource.data.entityId == teamId
+          && request.resource.data.payload.clubId == "cd-alameda";
+        allow delete: if false;
+      }
+
       match /seasons/{seasonId} {
         allow read: if request.auth != null;
         allow create, update: if request.auth != null

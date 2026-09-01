@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  addExtraPlayerToMatch,
   createDraftMatch,
   markMatchReady,
   plannedMinutes,
@@ -15,6 +16,14 @@ import {
   validateStartingLineup,
 } from "./preMatch";
 import {
+  calculateDeletionImpact,
+  availableTeams,
+  changeAdminLifecycle,
+  changeMatchLifecycle,
+  createTeamProfile,
+} from "./adminDomain";
+import { visibleMatchCatalog } from "./matchCatalog";
+import {
   createMasterPlayer,
   createMasterStaff,
   playerSnapshot,
@@ -25,6 +34,7 @@ import {
   currentSeason,
   emptyTeamWorkspace,
   rosterForSeason,
+  rosterWithExtraPlayers,
   setCurrentSeason,
   upsertSeasonPlayer,
   upsertSeasonStaff,
@@ -465,4 +475,150 @@ test("snapshot de partido no cambia al editar o inactivar la ficha maestra", () 
   assert.equal(snapshot.name, "Original");
   assert.equal(snapshot.number, 6);
   assert.equal(changed.displayName, "Nuevo");
+});
+
+test("club mantiene una identidad playerId entre equipos y temporadas", () => {
+  let workspace = workspaceFixture();
+  workspace = createTeamProfile(workspace, { name: "Senior A", shortName: "SEN A" }, { teamId: "senior-a", now: 2 });
+  workspace = createTeamProfile(workspace, { name: "Juvenil A", shortName: "JUV A" }, { teamId: "juvenil-a", now: 3 });
+  workspace = createSeason(workspace, { teamId: "senior-a", label: "2026-27" }, { seasonId: "senior-26", now: 4 });
+  workspace = createSeason(workspace, { teamId: "juvenil-a", label: "2026-27" }, { seasonId: "juvenil-26", now: 5 });
+  workspace = upsertSeasonPlayer(workspace, "senior-26", "p-2", { number: 8, active: true }, 6);
+  workspace = upsertSeasonPlayer(workspace, "juvenil-26", "p-2", { number: 12, active: true }, 7);
+
+  assert.equal(workspace.players.filter((player) => player.playerId === "p-2").length, 1);
+  assert.equal(rosterForSeason(workspace, "senior-26").players.find((player) => player.playerId === "p-2")?.number, 8);
+  assert.equal(rosterForSeason(workspace, "juvenil-26").players.find((player) => player.playerId === "p-2")?.number, 12);
+});
+
+test("jugador extra conserva playerId snapshot y no crea membership salvo decisión explícita", () => {
+  let workspace = createSeason(workspaceFixture(), { teamId: "cd-alameda", label: "2026-27", copyLegacyRoster: true }, { seasonId: "season-extra", now: 10 });
+  const extra = createMasterPlayer(workspace.players.map((player) => ({ ...player, active: false })), { fullName: "Refuerzo Juvenil", displayName: "Refuerzo", number: 21, role: "FIELD" }, { id: "club-extra", now: 11 });
+  workspace = { ...workspace, players: [...workspace.players, extra] };
+  let session = createDraftMatch("extra-match", { teamId: "cd-alameda", seasonId: "season-extra", opponent: "Rival", venue: "HOME", date: "2026-09-05" }, 12);
+  const extraRoster = rosterWithExtraPlayers(workspace, "season-extra", [extra.playerId]);
+  session = addExtraPlayerToMatch(session, extraRoster, extra.playerId, 13);
+  assert.deepEqual(session.preparation?.extraPlayerIds, [extra.playerId]);
+  assert.deepEqual(session.preparation?.calledPlayerIds, [extra.playerId]);
+  assert.equal(session.players[0].id, extra.playerId);
+  assert.equal(workspace.seasonPlayers.some((membership) => membership.playerId === extra.playerId), false);
+
+  workspace = upsertSeasonPlayer(workspace, "season-extra", extra.playerId, { number: 21, active: true }, 14);
+  assert.equal(workspace.seasonPlayers.filter((membership) => membership.playerId === extra.playerId).length, 1);
+  assert.equal(workspace.players.filter((player) => player.playerId === extra.playerId).length, 1);
+});
+
+test("archivo es reversible y eliminación usa tombstone sin romper dependencias", () => {
+  let workspace = createTeamProfile(workspaceFixture(), { name: "Senior A" }, { teamId: "senior-a", now: 2 });
+  workspace = createSeason(workspace, { teamId: "senior-a", label: "2026-27" }, { seasonId: "season-admin", now: 3 });
+  workspace = upsertSeasonPlayer(workspace, "season-admin", "p-2", { number: 2, active: true }, 4);
+  const impact = calculateDeletionImpact(workspace, "TEAM", "senior-a", [{ matchId: "m-1", teamId: "senior-a", seasonId: "season-admin", eventCount: 73 }]);
+  assert.deepEqual({ seasons: impact.seasons, players: impact.players, matches: impact.matches, events: impact.events }, { seasons: 1, players: 1, matches: 1, events: 73 });
+  workspace = changeAdminLifecycle(workspace, "TEAM", "senior-a", "ARCHIVE", 5);
+  assert.equal(workspace.teams[0].archivedAt, 5);
+  workspace = changeAdminLifecycle(workspace, "TEAM", "senior-a", "REACTIVATE", 6);
+  assert.equal(workspace.teams[0].archivedAt, undefined);
+  workspace = changeAdminLifecycle(workspace, "TEAM", "senior-a", "DELETE", 7);
+  assert.equal(workspace.teams[0].deletedAt, 7);
+  assert.equal(workspace.seasons[0].seasonId, "season-admin");
+  assert.equal(workspace.seasonPlayers[0].playerId, "p-2");
+});
+
+test("tombstone de plantilla persiste, reabre y sincroniza sin resucitar", async () => {
+  const storage = new MemoryStorage(); let id = 0;
+  const local = new LocalTeamRepository({ storage, idFactory: () => `admin-op-${++id}` });
+  const workspace = changeAdminLifecycle(workspaceFixture(), "PLAYER", "p-2", "DELETE", 20);
+  local.save(workspace);
+  const reopened = new LocalTeamRepository({ storage, idFactory: () => `reopen-admin-${++id}` });
+  assert.equal(reopened.load("cd-alameda").players.find((player) => player.playerId === "p-2")?.deletedAt, 20);
+  const remote = new TeamRemote();
+  await new SyncCoordinator(reopened, remote, { isOnline: () => true }).syncMatch("cd-alameda");
+  assert.equal(reopened.getSummary("cd-alameda").pending, 0);
+  const payload = remote.documents.get("player:p-2")?.payload as MasterPlayer;
+  assert.equal(payload.deletedAt, 20);
+  assert.equal(payload.active, false);
+});
+
+test("partido archivado/reactivado conserva eventos y delete solo añade tombstone", () => {
+  let session = createDraftMatch("admin-match", { ...MATCH_SCOPE, opponent: "Rival", venue: "HOME", date: "2026-09-06" }, 1);
+  session = changeMatchLifecycle(session, "ARCHIVE", 2);
+  assert.equal(session.preparation?.archivedAt, 2);
+  session = changeMatchLifecycle(session, "REACTIVATE", 3);
+  assert.equal(session.preparation?.archivedAt, undefined);
+  session = changeMatchLifecycle(session, "DELETE", 4);
+  assert.equal(session.preparation?.deletedAt, 4);
+  assert.deepEqual(session.events, []);
+});
+
+test("equipos temporadas jugadores staff y partidos archivados quedan ocultos y son reactivables", () => {
+  let workspace = createTeamProfile(workspaceFixture(), { name: "Senior A" }, { teamId: "senior-filter", now: 2 });
+  workspace = createSeason(workspace, { teamId: "senior-filter", label: "2026-27" }, { seasonId: "season-filter", now: 3 });
+  for (const [type, id] of [["TEAM", "senior-filter"], ["SEASON", "season-filter"], ["PLAYER", "p-2"], ["STAFF", "staff-1"]] as const) {
+    workspace = changeAdminLifecycle(workspace, type, id, "ARCHIVE", 4);
+  }
+  assert.equal(availableTeams(workspace).some((team) => team.teamId === "senior-filter"), false);
+  assert.equal(availableTeams(workspace, true).some((team) => team.teamId === "senior-filter"), true);
+  assert.equal(rosterForSeason(workspace, "season-filter").players.find((player) => player.playerId === "p-2")?.active, false);
+  for (const [type, id] of [["TEAM", "senior-filter"], ["SEASON", "season-filter"], ["PLAYER", "p-2"], ["STAFF", "staff-1"]] as const) {
+    workspace = changeAdminLifecycle(workspace, type, id, "REACTIVATE", 5);
+  }
+  assert.equal(availableTeams(workspace).some((team) => team.teamId === "senior-filter"), true);
+  assert.equal(rosterForSeason(workspace, "season-filter").players.find((player) => player.playerId === "p-2")?.active, false, "reactivar identidad no inventa una membership que nunca estuvo activa");
+
+  const catalog = [
+    { matchId: "normal", opponent: "A", venue: "HOME" as const, date: "2026-01-01", status: "DRAFT" as const, updatedAt: 1 },
+    { matchId: "archived", opponent: "B", venue: "HOME" as const, date: "2026-01-02", status: "DRAFT" as const, updatedAt: 2, archivedAt: 3 },
+    { matchId: "deleted", opponent: "C", venue: "HOME" as const, date: "2026-01-03", status: "DRAFT" as const, updatedAt: 3, deletedAt: 4 },
+  ];
+  assert.deepEqual(visibleMatchCatalog(catalog).map((match) => match.matchId), ["normal"]);
+  assert.deepEqual(visibleMatchCatalog(catalog, true).map((match) => match.matchId), ["normal", "archived"]);
+});
+
+test("jugador extra sobrevive reload offline y sincroniza snapshot y decisión", async () => {
+  const storage = new MemoryStorage(); let operation = 0;
+  const local = new LocalMatchRepository({ storage, idFactory: () => `extra-op-${++operation}` });
+  const workspace = workspaceFixture();
+  const extra = createMasterPlayer(workspace.players.map((player) => ({ ...player, active: false })), { fullName: "Juvenil Puntual", displayName: "Juvenil", number: 20, role: "FIELD" }, { id: "extra-reload", now: 2 });
+  const augmented: TeamWorkspace = { ...workspace, players: [...workspace.players, extra] };
+  let session = createDraftMatch("extra-offline", { ...MATCH_SCOPE, opponent: "Rival", venue: "AWAY", date: "2026-09-07" }, 3);
+  session = addExtraPlayerToMatch(session, rosterWithExtraPlayers(augmented, MATCH_SCOPE.seasonId, [extra.playerId]), extra.playerId, 4);
+  local.save(session);
+  const reopened = new LocalMatchRepository({ storage, idFactory: () => `extra-reopen-${++operation}` });
+  assert.deepEqual(reopened.load(session.matchId)?.preparation?.extraPlayerIds, [extra.playerId]);
+  assert.equal(reopened.load(session.matchId)?.players[0].id, extra.playerId);
+  const remote = new InMemoryRemoteMatchRepository();
+  await new SyncCoordinator(reopened, remote, { isOnline: () => true }).syncMatch(session.matchId);
+  const metadata = remote.documents.get(`${session.matchId}:match`)?.payload as { preparation?: { extraPlayerIds?: string[] }; players?: Array<{ id: string }> };
+  assert.deepEqual(metadata.preparation?.extraPlayerIds, [extra.playerId]);
+  assert.equal(metadata.players?.[0].id, extra.playerId);
+  assert.equal(reopened.getSummary(session.matchId).pending, 0);
+});
+
+test("persistencia V2 legacy migra club y equipos sin inventar un equipo real", () => {
+  const storage = new MemoryStorage();
+  const legacy = workspaceFixture();
+  storage.setItem("alamedapp:team:v1:cd-alameda", JSON.stringify({ storageVersion: 2, savedAt: 99, roster: { teamId: legacy.teamId, team: legacy.team, players: legacy.players, staff: legacy.staff, seasons: [], seasonPlayers: [], seasonStaff: [] }, sync: { schemaVersion: 2, outbox: [], knownRemoteRevisions: {}, lastLocalMutationAt: null, lastSyncedAt: null, lastError: null, lastErrorKind: null, conflicts: [] } }));
+  const migrated = new LocalTeamRepository({ storage }).load("cd-alameda");
+  assert.equal(migrated.club.name, "Club Deportivo Alameda");
+  assert.equal(migrated.clubId, "cd-alameda");
+  assert.deepEqual(migrated.teams, []);
+  assert.equal(migrated.players.length, legacy.players.length);
+});
+
+test("equipo deportivo y tombstone usan outbox estable e idempotente", async () => {
+  const storage = new MemoryStorage(); let operation = 0;
+  const local = new LocalTeamRepository({ storage, idFactory: () => `team-unit-op-${++operation}` });
+  let workspace = createTeamProfile(workspaceFixture(), { name: "Senior A" }, { teamId: "senior-sync", now: 2 });
+  local.save(workspace);
+  workspace = changeAdminLifecycle(workspace, "TEAM", "senior-sync", "DELETE", 3);
+  local.save(workspace);
+  const queued = local.getSyncState("cd-alameda").outbox.filter((item) => item.entityType === "TEAM_UNIT");
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].entityId, "senior-sync");
+  const operationId = queued[0].id;
+  const remote = new TeamRemote();
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch("cd-alameda");
+  assert.equal((remote.documents.get("team_unit:senior-sync")?.payload as { deletedAt?: number }).deletedAt, 3);
+  assert.equal(remote.documents.get("team_unit:senior-sync")?.operationId, operationId);
+  assert.equal(local.getSummary("cd-alameda").pending, 0);
 });

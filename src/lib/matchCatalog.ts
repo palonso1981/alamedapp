@@ -13,6 +13,11 @@ export interface MatchCatalogEntry {
   time?: string;
   status: MatchLifecycleStatus;
   updatedAt: number;
+  archivedAt?: number;
+  deletedAt?: number;
+  eventCount?: number;
+  playerIds?: string[];
+  staffIds?: string[];
 }
 
 function validEntry(value: unknown): value is MatchCatalogEntry {
@@ -44,6 +49,13 @@ export function listMatchCatalog(
   }
 }
 
+export function visibleMatchCatalog(
+  entries: readonly MatchCatalogEntry[],
+  includeArchived = false,
+): MatchCatalogEntry[] {
+  return entries.filter((entry) => !entry.deletedAt && (includeArchived || !entry.archivedAt));
+}
+
 export function updateMatchCatalog(
   session: MatchSession,
   storage: LocalStorageAdapter | null = browserMatchStorage(),
@@ -60,6 +72,11 @@ export function updateMatchCatalog(
     time: preparation.time,
     status: session.matchFinished ? "FINISHED" : preparation.status,
     updatedAt: preparation.updatedAt,
+    archivedAt: preparation.archivedAt,
+    deletedAt: preparation.deletedAt,
+    eventCount: session.events.length,
+    playerIds: session.players.map((player) => player.id),
+    staffIds: session.staff.map((member) => member.id),
   };
   const entries = listMatchCatalog(storage).filter((item) => item.matchId !== session.matchId);
   try {

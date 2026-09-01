@@ -25,10 +25,28 @@ export interface StaffMember {
   photoUrl?: string;
 }
 
-export const CDA_TEAM_ID = "cd-alameda" as const;
+/** Ámbito estable del club. Se mantiene CDA_TEAM_ID como alias de compatibilidad. */
+export const CDA_CLUB_ID = "cd-alameda" as const;
+export const CDA_TEAM_ID = CDA_CLUB_ID;
 
-export interface TeamProfile {
+export interface ClubProfile {
+  clubId: string;
+  name: string;
+  shortName: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface LifecycleMetadata {
+  archivedAt?: number;
+  /** Tombstone irreversible en V1; no implica purga física remota. */
+  deletedAt?: number;
+}
+
+export interface TeamProfile extends LifecycleMetadata {
   teamId: string;
+  /** Ausente en el contenedor legacy anterior a Admin V1. */
+  clubId?: string;
   name: string;
   shortName: string;
   category?: string;
@@ -37,7 +55,7 @@ export interface TeamProfile {
   updatedAt: number;
 }
 
-export interface Season {
+export interface Season extends LifecycleMetadata {
   seasonId: string;
   teamId: string;
   label: string;
@@ -49,7 +67,7 @@ export interface Season {
   updatedAt: number;
 }
 
-export interface SeasonPlayer {
+export interface SeasonPlayer extends LifecycleMetadata {
   teamId: string;
   seasonId: string;
   playerId: string;
@@ -60,7 +78,7 @@ export interface SeasonPlayer {
   updatedAt: number;
 }
 
-export interface SeasonStaff {
+export interface SeasonStaff extends LifecycleMetadata {
   teamId: string;
   seasonId: string;
   staffId: string;
@@ -73,8 +91,10 @@ export interface SeasonStaff {
 
 export type MasterPlayerRole = "GOALKEEPER" | "FIELD";
 
-export interface MasterPlayer {
+export interface MasterPlayer extends LifecycleMetadata {
   playerId: string;
+  /** Identidad personal estable en todo el club. */
+  clubId?: string;
   fullName: string;
   displayName: string;
   number: number;
@@ -98,8 +118,9 @@ export type MasterStaffRole =
   | "FITNESS_COACH"
   | "OTHER";
 
-export interface MasterStaffMember {
+export interface MasterStaffMember extends LifecycleMetadata {
   staffId: string;
+  clubId?: string;
   fullName: string;
   displayName: string;
   role: MasterStaffRole;
@@ -121,6 +142,11 @@ export interface TeamRoster {
  * resuelta que consumen Prepartido y Directo para mantener compatibilidad.
  */
 export interface TeamWorkspace extends TeamRoster {
+  /** Ámbito real del agregado local/sync. `teamId` queda como alias legacy. */
+  clubId: string;
+  club: ClubProfile;
+  /** Equipos deportivos reales del club. */
+  teams: TeamProfile[];
   team: TeamProfile;
   seasons: Season[];
   seasonPlayers: SeasonPlayer[];
@@ -156,11 +182,16 @@ export interface MatchPreparation {
   starterPlayerIds: string[];
   startingGoalkeeperId?: string;
   selectedStaffIds: string[];
+  /** Jugadores del club convocados puntualmente sin membership habitual. */
+  extraPlayerIds?: string[];
   /** Metadata opcional; los minutos reales continúan derivados del replay. */
   targetMinutes: Record<string, number>;
   createdAt: number;
   updatedAt: number;
   startedAt?: number;
+  archivedAt?: number;
+  /** Tombstone funcional. Los eventos se conservan local/remotamente. */
+  deletedAt?: number;
 }
 
 export interface Match {

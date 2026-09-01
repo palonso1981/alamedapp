@@ -1,4 +1,5 @@
 import {
+  CDA_CLUB_ID,
   MasterPlayer,
   MasterPlayerRole,
   MasterStaffMember,
@@ -39,6 +40,18 @@ function cleanRequired(value: string, label: string): string {
 function cleanOptional(value?: string): string | undefined {
   const cleaned = value?.trim();
   return cleaned ? cleaned : undefined;
+}
+
+function identityKey(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLocaleLowerCase("es").replace(/\s+/g, " ");
+}
+
+export function findClubPlayerByIdentity(
+  players: readonly MasterPlayer[],
+  fullName: string,
+): MasterPlayer | undefined {
+  const key = identityKey(fullName);
+  return players.find((player) => !player.deletedAt && identityKey(player.fullName) === key);
 }
 
 function validNumber(number: number): number {
@@ -89,6 +102,7 @@ export function createMasterPlayer(
   const goalkeeperCapable = input.canPlayGoalkeeper ?? input.role === "GOALKEEPER";
   return {
     playerId: options.id ?? globalThis.crypto.randomUUID(),
+    clubId: CDA_CLUB_ID,
     fullName: cleanRequired(input.fullName, "El nombre"),
     displayName: cleanRequired(input.displayName, "El nombre corto"),
     number,
@@ -161,6 +175,7 @@ export function createMasterStaff(
   const now = options.now ?? Date.now();
   return {
     staffId: options.id ?? globalThis.crypto.randomUUID(),
+    clubId: CDA_CLUB_ID,
     fullName: cleanRequired(input.fullName, "El nombre"),
     displayName: cleanRequired(input.displayName, "El nombre corto"),
     role: input.role,

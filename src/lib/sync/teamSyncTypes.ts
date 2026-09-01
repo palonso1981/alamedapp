@@ -15,6 +15,7 @@ import {
 export const TEAM_SYNC_SCHEMA_VERSION = 2 as const;
 export type TeamEntityType =
   | "TEAM"
+  | "TEAM_UNIT"
   | "PLAYER"
   | "STAFF"
   | "SEASON"
