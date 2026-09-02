@@ -55,35 +55,35 @@ export function MatchRailControl(props: MatchRailControlProps) {
 
   const stateButtons = (
     <div className="grid grid-cols-3 gap-1">
-      <button type="button" disabled={props.reviewing} onClick={props.onToggleSuperiority} className={`min-h-10 rounded-lg text-[10px] font-black disabled:opacity-40 ${props.superiorityActive ? "animate-pulse bg-amber-400 text-slate-950" : "bg-slate-800 text-slate-500"}`} aria-pressed={props.superiorityActive} aria-label="Alternar superioridad">⚡</button>
-      <button type="button" disabled={props.reviewing} onClick={props.onToggleFlyingGoalkeeper} className={`min-h-10 rounded-lg text-[10px] font-black disabled:opacity-40 ${props.flyingGoalkeeperActive ? "bg-rose-600 text-white" : "bg-slate-800 text-slate-500"}`} aria-pressed={props.flyingGoalkeeperActive} aria-label={`Portero-jugador${props.flyingGoalkeeperLabel ? `: ${props.flyingGoalkeeperLabel}` : ""}`}>◇⁺</button>
-      <span className={`grid min-h-10 place-items-center rounded-lg text-[10px] font-black ${props.inferiorityActive ? "bg-red-950 text-red-200" : "bg-slate-900 text-slate-500"}`} aria-label={props.inferiorityActive ? "Estado cuatro contra cinco" : "Estado cinco contra cinco"}>{props.inferiorityActive ? "4v5" : "5v5"}</span>
+      <button type="button" disabled={props.reviewing} onClick={props.onToggleSuperiority} className={`min-h-12 rounded-lg text-[10px] font-black disabled:opacity-40 ${props.superiorityActive ? "animate-pulse bg-amber-400 text-slate-950" : "bg-slate-800 text-slate-500"}`} aria-pressed={props.superiorityActive} aria-label="Alternar superioridad">⚡</button>
+      <button type="button" disabled={props.reviewing} onClick={props.onToggleFlyingGoalkeeper} className={`min-h-12 rounded-lg text-[10px] font-black disabled:opacity-40 ${props.flyingGoalkeeperActive ? "bg-rose-600 text-white" : "bg-slate-800 text-slate-500"}`} aria-pressed={props.flyingGoalkeeperActive} aria-label={`Portero-jugador${props.flyingGoalkeeperLabel ? `: ${props.flyingGoalkeeperLabel}` : ""}`}>◇⁺</button>
+      <span className={`grid min-h-12 place-items-center rounded-lg text-[10px] font-black ${props.inferiorityActive ? "bg-red-950 text-red-200" : "bg-slate-900 text-slate-500"}`} aria-label={props.inferiorityActive ? "Estado cuatro contra cinco" : "Estado cinco contra cinco"}>{props.inferiorityActive ? "4v5" : "5v5"}</span>
     </div>
   );
 
   const lifecycle = props.reviewing ? (
-    <span className="grid min-h-10 place-items-center rounded-lg border border-cyan-800 bg-slate-900 text-[10px] font-black text-cyan-300">P{props.period} ●</span>
+    <span className="grid min-h-12 place-items-center rounded-lg border border-cyan-800 bg-slate-900 text-[10px] font-black text-cyan-300">P{props.period} ●</span>
   ) : startSecond ? (
     <div className="grid gap-1">
       <button type="button" onClick={props.onStartSecondPeriod} className="min-h-12 rounded-xl bg-cyan-500 px-2 text-[10px] font-black text-slate-950">▶ P2</button>
       {confirmResume ? (
         <div className="grid grid-cols-2 gap-1 rounded-xl bg-amber-300 p-1">
-          <button type="button" onClick={() => { props.onResumeFirstPeriod(); setConfirmResume(false); }} className="min-h-10 rounded-lg bg-slate-950 text-sm font-black text-white" aria-label="Confirmar reanudar P1">✓ P1</button>
-          <button type="button" onClick={() => setConfirmResume(false)} className="min-h-10 rounded-lg bg-amber-100 font-black text-slate-950" aria-label="Cancelar reanudación">×</button>
+          <button type="button" onClick={() => { props.onResumeFirstPeriod(); setConfirmResume(false); }} className="min-h-12 rounded-lg bg-slate-950 text-sm font-black text-white" aria-label="Confirmar reanudar P1">✓ P1</button>
+          <button type="button" onClick={() => setConfirmResume(false)} className="min-h-12 rounded-lg bg-amber-100 font-black text-slate-950" aria-label="Cancelar reanudación">×</button>
         </div>
       ) : (
-        <button type="button" onClick={() => setConfirmResume(true)} className="min-h-9 rounded-lg bg-slate-900 px-2 text-[9px] font-black text-amber-300" aria-label="Preparar reanudación de P1">↶ REANUDAR P1</button>
+        <button type="button" onClick={() => setConfirmResume(true)} className="min-h-11 rounded-lg bg-slate-900 px-2 text-[9px] font-black text-amber-300" aria-label="Preparar reanudación de P1">↶ REANUDAR P1</button>
       )}
     </div>
   ) : closed || props.matchFinished ? (
-    <span className="grid min-h-10 place-items-center rounded-lg bg-slate-900 text-[10px] font-black text-slate-500">{props.matchFinished ? "FIN" : `P${props.period} ✓`}</span>
+    <span className="grid min-h-12 place-items-center rounded-lg bg-slate-900 text-[10px] font-black text-slate-500">{props.matchFinished ? "FIN" : `P${props.period} ✓`}</span>
   ) : confirmFinish ? (
     <div className="grid grid-cols-2 gap-1 rounded-xl bg-amber-300 p-1">
       <button type="button" onClick={finish} className="min-h-11 rounded-lg bg-slate-950 text-lg font-black text-white" aria-label={`Confirmar finalizar ${props.period === 1 ? "parte" : "partido"}`}>✓</button>
       <button type="button" onClick={() => setConfirmFinish(false)} className="min-h-11 rounded-lg bg-amber-100 text-lg font-black text-slate-950" aria-label="Cancelar cierre">×</button>
     </div>
   ) : (
-    <button type="button" onClick={() => setConfirmFinish(true)} className="min-h-10 rounded-lg border border-slate-700 bg-slate-900 px-1 text-[9px] font-black text-slate-400">■ {props.period === 1 ? "PARTE" : "PARTIDO"}</button>
+    <button type="button" onClick={() => setConfirmFinish(true)} className="min-h-12 rounded-lg border border-slate-700 bg-slate-900 px-1 text-[9px] font-black text-slate-400">■ {props.period === 1 ? "PARTE" : "PARTIDO"}</button>
   );
 
   return (
@@ -99,7 +99,7 @@ export function MatchRailControl(props: MatchRailControlProps) {
         </div>
         {stateButtons}
         {lifecycle}
-        <div className="grid grid-cols-2 gap-1"><button type="button" onClick={cycleVertical} className="min-h-9 rounded-lg bg-slate-900 text-slate-500" aria-label="Cambiar altura del control">↕</button><button type="button" onClick={toggleSide} className="min-h-9 rounded-lg bg-slate-900 text-slate-500" aria-label="Cambiar lateral del control">⇆</button></div>
+        <div className="grid grid-cols-2 gap-1"><button type="button" onClick={cycleVertical} className="min-h-11 rounded-lg bg-slate-900 text-slate-500" aria-label="Cambiar altura del control">↕</button><button type="button" onClick={toggleSide} className="min-h-11 rounded-lg bg-slate-900 text-slate-500" aria-label="Cambiar lateral del control">⇆</button></div>
       </aside>
 
       <aside className={`fixed bottom-[max(.5rem,env(safe-area-inset-bottom))] z-40 flex max-w-[calc(100vw-1rem)] items-stretch gap-1 rounded-2xl border border-slate-600/80 bg-slate-950/95 p-1.5 shadow-2xl sm:hidden ${sideClass}`} aria-label="Control de partido móvil">
@@ -107,7 +107,7 @@ export function MatchRailControl(props: MatchRailControlProps) {
         <button type="button" onClick={props.onIncreaseRemaining} disabled={remaining >= duration || closed || props.reviewing} className="min-h-14 min-w-14 rounded-xl bg-emerald-500 text-xl font-black text-slate-950 disabled:bg-slate-800 disabled:text-slate-600">+1</button>
         <output className="grid min-w-16 place-items-center rounded-xl bg-cyan-300 font-mono text-3xl font-black text-slate-950" aria-label={`${remaining} minutos restantes`}>{remaining}</output>
         <button type="button" onClick={props.onDecreaseRemaining} disabled={remaining <= 0 || closed || props.reviewing} className="min-h-14 min-w-14 rounded-xl bg-slate-800 text-xl font-black disabled:opacity-25">−1</button>
-        <button type="button" onClick={toggleSide} className="min-w-9 rounded-xl text-slate-500" aria-label="Cambiar lateral">⇆</button>
+        <button type="button" onClick={toggleSide} className="min-w-11 rounded-xl text-slate-500" aria-label="Cambiar lateral">⇆</button>
         <div className="absolute bottom-[calc(100%+.35rem)] left-0 flex gap-1 rounded-xl bg-slate-950/95 p-1">{stateButtons}{lifecycle}</div>
       </aside>
     </>

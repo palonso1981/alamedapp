@@ -13,6 +13,7 @@ interface ContextualSurfaceProps {
   compact?: boolean;
   viewportOnMobile?: boolean;
   wide?: boolean;
+  immersive?: boolean;
 }
 
 type ContextualStyle = CSSProperties & {
@@ -36,6 +37,7 @@ export function ContextualSurface({
   compact = false,
   viewportOnMobile = false,
   wide = false,
+  immersive = false,
 }: ContextualSurfaceProps) {
   const placement = contextualPlacement(anchor);
   const center = placement.horizontal === "CENTER";
@@ -61,7 +63,7 @@ export function ContextualSurface({
     "--context-mobile-bottom": anchor.y < 0.5 ? "5.5rem" : "auto",
     "--context-mobile-left": anchor.x >= 0.5 ? "0.5rem" : "auto",
     "--context-mobile-right": anchor.x < 0.5 ? "0.5rem" : "auto",
-    "--context-width": compact ? "13rem" : wide ? "29rem" : "25rem",
+    "--context-width": compact ? "13rem" : immersive ? "64rem" : wide ? "29rem" : "25rem",
   };
 
   const stopPropagation = (event: MouseEvent<HTMLElement>) => {
@@ -71,13 +73,15 @@ export function ContextualSurface({
   return (
     <div
       className={`pointer-events-none ${
-        viewportOnMobile
+        immersive
+          ? "fixed inset-0 z-[90] bg-slate-950/80"
+          : viewportOnMobile
           ? "fixed inset-0 z-[80] bg-slate-950/65 sm:absolute sm:z-30 sm:bg-transparent"
           : "absolute inset-0 z-30"
       }`}
     >
       <section
-        className={`contextual-surface-frame ${compact ? "contextual-surface-frame--compact p-2" : "p-2.5 pr-12"} ${viewportOnMobile ? "contextual-surface-frame--viewport" : ""} pointer-events-auto overflow-y-auto rounded-2xl border border-white/20 bg-slate-950/95 shadow-2xl backdrop-blur-sm`}
+        className={`contextual-surface-frame ${compact ? "contextual-surface-frame--compact p-2" : immersive ? "p-2.5" : "p-2.5 pr-12"} ${viewportOnMobile ? "contextual-surface-frame--viewport" : ""} ${immersive ? "contextual-surface-frame--immersive" : ""} pointer-events-auto overflow-y-auto rounded-2xl border border-white/20 bg-slate-950/95 shadow-2xl backdrop-blur-sm`}
         style={style}
         aria-label={label}
         onClick={stopPropagation}
@@ -85,7 +89,7 @@ export function ContextualSurface({
         {!compact && <button
           type="button"
           onClick={onCancel}
-          className="absolute right-2 top-2 grid min-h-10 min-w-10 place-items-center rounded-xl bg-slate-800 text-xl font-bold text-slate-300"
+          className="absolute right-2 top-2 grid min-h-11 min-w-11 place-items-center rounded-xl bg-slate-800 text-xl font-bold text-slate-300"
           aria-label="Cancelar acción pendiente"
         >
           ×

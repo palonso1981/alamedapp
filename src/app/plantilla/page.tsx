@@ -39,10 +39,22 @@ export default function RosterPage() {
   const [seasonId, setSeasonId] = useState("");
   const [realTeamId, setRealTeamId] = useState("");
   const [scope, setScope] = useState<"ROSTER" | "CLUB">("ROSTER");
+  const [playerPosition, setPlayerPosition] = useState<FutsalPosition | "">("");
+  const [additionalGoalkeeper, setAdditionalGoalkeeper] = useState(false);
 
   useEffect(() => ensureRegistry(), [ensureRegistry]);
   useEffect(() => ensureTeam(currentClubId), [currentClubId, ensureTeam]);
   useEffect(() => { setRealTeamId(""); setSeasonId(""); setEditor(null); }, [currentClubId]);
+  useEffect(() => {
+    if (editor?.kind !== "PLAYER") return;
+    const position = editor.value?.primaryPosition ?? "";
+    setPlayerPosition(position);
+    setAdditionalGoalkeeper(
+      position === "GOALKEEPER"
+        ? false
+        : editor.value?.canPlayGoalkeeper ?? editor.value?.role === "GOALKEEPER",
+    );
+  }, [editor]);
   useEffect(() => {
     if (!workspace || seasonId) return;
     const teams = availableTeams(workspace);
@@ -82,10 +94,13 @@ export default function RosterPage() {
 
   function submitPlayer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const data = new FormData(event.currentTarget);
-    const canPlayGoalkeeper = String(data.get("canPlayGoalkeeper")) === "true";
     const primaryPosition = String(data.get("primaryPosition") ?? "");
+    const canPlayGoalkeeper = primaryPosition === "GOALKEEPER"
+      ? false
+      : String(data.get("canPlayGoalkeeper")) === "true";
     const dominantFoot = String(data.get("dominantFoot") ?? "");
-    const input = { fullName: String(data.get("fullName") ?? ""), displayName: String(data.get("displayName") ?? ""), number: Number(data.get("number")), photoUrl: String(data.get("photoUrl") ?? ""), role: (canPlayGoalkeeper ? "GOALKEEPER" : "FIELD") as MasterPlayerRole, canPlayGoalkeeper, dateOfBirth: String(data.get("dateOfBirth") ?? ""), primaryPosition: primaryPosition ? primaryPosition as FutsalPosition : undefined, dominantFoot: dominantFoot ? dominantFoot as Exclude<DominantFoot, "UNKNOWN"> : undefined };
+    const goalkeeperCapable = primaryPosition === "GOALKEEPER" || canPlayGoalkeeper;
+    const input = { fullName: String(data.get("fullName") ?? ""), displayName: String(data.get("displayName") ?? ""), number: Number(data.get("number")), photoUrl: String(data.get("photoUrl") ?? ""), role: (goalkeeperCapable ? "GOALKEEPER" : "FIELD") as MasterPlayerRole, canPlayGoalkeeper, dateOfBirth: String(data.get("dateOfBirth") ?? ""), primaryPosition: primaryPosition ? primaryPosition as FutsalPosition : undefined, dominantFoot: dominantFoot ? dominantFoot as Exclude<DominantFoot, "UNKNOWN"> : undefined };
     const membershipSeason = scope === "ROSTER" ? seasonId || undefined : null;
     if (editor?.kind === "PLAYER" && editor.value) updatePlayer(currentClubId, editor.value.playerId, input, membershipSeason); else createPlayer(currentClubId, input, scope === "CLUB" ? null : membershipSeason);
     if (!useTeamStore.getState().errors[currentClubId]) setEditor(null);
@@ -133,7 +148,20 @@ export default function RosterPage() {
       <div className="flex items-center justify-between"><h2 className="text-xl font-black">{editor.value ? "EDITAR" : "NUEVO"} {editor.kind === "PLAYER" ? "JUGADOR" : "STAFF"}</h2><button type="button" onClick={() => setEditor(null)} className="min-h-11 min-w-11 rounded-full bg-slate-800 text-xl">×</button></div>
       <label className="block text-sm font-bold text-slate-300">Nombre completo<input name="fullName" required defaultValue={editor.value?.fullName} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /><span className="mt-1 block text-[11px] font-normal text-slate-500">Identidad estable de la persona dentro del club.</span></label>
       <label className="block text-sm font-bold text-slate-300">Nombre corto<input name="displayName" required defaultValue={editor.value?.displayName} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /><span className="mt-1 block text-[11px] font-normal text-slate-500">Nombre visible en pista y controles compactos.</span></label>
-      {editor.kind === "PLAYER" ? <><div className="grid grid-cols-2 gap-3"><label className="text-sm font-bold text-slate-300">Dorsal<input name="number" required type="number" min="0" max="99" defaultValue={editor.value?.number ?? ""} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /></label><label className="text-sm font-bold text-slate-300">Nacimiento<input name="dateOfBirth" type="date" defaultValue={editor.value?.dateOfBirth ?? ""} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /></label></div><div className="grid grid-cols-2 gap-3"><label className="text-sm font-bold text-slate-300">Posición<select name="primaryPosition" defaultValue={editor.value?.primaryPosition ?? ""} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white"><option value="">Sin definir</option><option value="GOALKEEPER">Portero</option><option value="FIXO">Cierre</option><option value="WINGER">Ala</option><option value="PIVOT">Pívot</option><option value="UNIVERSAL">Universal</option></select></label><label className="text-sm font-bold text-slate-300">Pierna<select name="dominantFoot" defaultValue={editor.value?.dominantFoot ?? ""} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white"><option value="">Sin definir</option><option value="RIGHT">Derecha</option><option value="LEFT">Izquierda</option><option value="BOTH">Ambas</option></select></label></div><label className="block text-sm font-bold text-slate-300">Puede ejercer de portero<select name="canPlayGoalkeeper" defaultValue={String(editor.value?.canPlayGoalkeeper ?? editor.value?.role === "GOALKEEPER")} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white"><option value="false">No</option><option value="true">Sí</option></select></label></> : <><label className="block text-sm font-bold text-slate-300">Rol<select name="role" defaultValue={editor.value?.role ?? "HEAD_COACH"} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white">{STAFF_ROLES.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}</select></label><label className="block text-sm font-bold text-slate-300">Rol libre (solo Otro)<input name="customRole" defaultValue={editor.value?.customRole} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /></label></>}
+      {editor.kind === "PLAYER" ? <>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="text-sm font-bold text-slate-300">Dorsal<input name="number" required type="number" min="0" max="99" defaultValue={editor.value?.number ?? ""} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /></label>
+          <label className="text-sm font-bold text-slate-300">Nacimiento<input name="dateOfBirth" type="date" defaultValue={editor.value?.dateOfBirth ?? ""} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /></label>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="text-sm font-bold text-slate-300">Posición<select name="primaryPosition" value={playerPosition} onChange={(event) => setPlayerPosition(event.target.value as FutsalPosition | "")} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white"><option value="">Sin definir</option><option value="GOALKEEPER">Portero</option><option value="FIXO">Cierre</option><option value="WINGER">Ala</option><option value="PIVOT">Pívot</option><option value="UNIVERSAL">Universal</option></select></label>
+          <label className="text-sm font-bold text-slate-300">Pierna<select name="dominantFoot" defaultValue={editor.value?.dominantFoot ?? ""} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white"><option value="">Sin definir</option><option value="RIGHT">Derecha</option><option value="LEFT">Izquierda</option><option value="BOTH">Ambas</option></select></label>
+        </div>
+        {playerPosition === "GOALKEEPER" ? <>
+          <input type="hidden" name="canPlayGoalkeeper" value="false" />
+          <div className="rounded-xl border border-emerald-700/60 bg-emerald-950/40 p-3 text-sm font-bold text-emerald-200">◉ Apto como portero por su posición natural.</div>
+        </> : <label className="block text-sm font-bold text-slate-300">También puede actuar de portero<select name="canPlayGoalkeeper" value={String(additionalGoalkeeper)} onChange={(event) => setAdditionalGoalkeeper(event.target.value === "true")} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white"><option value="false">No</option><option value="true">Sí</option></select><span className="mt-1 block text-[11px] font-normal text-slate-500">Márcalo solo si este jugador de campo puede ocupar la función de portero.</span></label>}
+      </> : <><label className="block text-sm font-bold text-slate-300">Rol<select name="role" defaultValue={editor.value?.role ?? "HEAD_COACH"} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white">{STAFF_ROLES.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}</select></label><label className="block text-sm font-bold text-slate-300">Rol libre (solo Otro)<input name="customRole" defaultValue={editor.value?.customRole} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /></label></>}
       <label className="block text-sm font-bold text-slate-300">URL de fotografía · temporal<input name="photoUrl" type="url" defaultValue={editor.value?.photoUrl} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /><span className="mt-1 block text-[11px] font-normal text-slate-500">Mecanismo técnico provisional. Más adelante se sustituirá por Subir/Elegir foto con Storage.</span></label>
       <div className="flex items-center gap-2">
         {editor.value && scope === "CLUB" && (() => {

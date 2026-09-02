@@ -90,13 +90,13 @@ function TeamDiscipline({ label, side, period, periodDiscipline, totalDiscipline
     <div className="min-w-0 px-1.5 py-1 sm:px-2" aria-label={`Disciplina ${label}`}>
       <div className="mb-1 flex items-center justify-between gap-2">
         <span className={`text-[10px] font-black tracking-wider ${side === "FOR" ? "text-cyan-300" : "text-rose-300"}`}>{label}</span>
-        <button type="button" onClick={() => onInspect(side, "CARD")} className="grid min-h-7 min-w-7 place-items-center rounded-md text-xs text-slate-500" aria-label={`Revisar disciplina ${label}`}>↗</button>
+        <button type="button" onClick={() => onInspect(side, "CARD")} className="grid min-h-9 min-w-9 place-items-center rounded-md text-xs text-slate-500 sm:min-h-11 sm:min-w-11" aria-label={`Revisar disciplina ${label}`}>↗</button>
       </div>
       <div className="flex items-center gap-1">
-        <button type="button" onClick={() => onInspect(side, "FOUL")} className={`min-h-10 min-w-11 rounded-lg border px-1 font-mono text-xl font-black ${thresholdReached ? "border-red-300 bg-red-600 text-white" : nearThreshold ? "border-amber-300 bg-amber-950 text-amber-100" : "border-slate-700 bg-slate-900 text-orange-200"}`} aria-label={`Faltas ${label} del periodo ${period}: ${periodDiscipline.fouls}`}>
+        <button type="button" onClick={() => onInspect(side, "FOUL")} className={`min-h-10 min-w-11 rounded-lg border px-1 font-mono text-xl font-black sm:min-h-12 sm:min-w-12 ${thresholdReached ? "border-red-300 bg-red-600 text-white" : nearThreshold ? "border-amber-300 bg-amber-950 text-amber-100" : "border-slate-700 bg-slate-900 text-orange-200"}`} aria-label={`Faltas ${label} del periodo ${period}: ${periodDiscipline.fouls}`}>
           F{periodDiscipline.fouls}
         </button>
-        <button type="button" onClick={() => onGenericFoul(side)} className={`grid min-h-10 min-w-10 place-items-center rounded-lg border text-lg font-black ${confirmingFoul ? "border-emerald-200 bg-emerald-500 text-slate-950" : "border-slate-700 bg-slate-900 text-orange-200"}`} aria-label={confirmingFoul ? `Confirmar falta ${label} sin jugador` : `Añadir falta ${label} sin jugador`}>
+        <button type="button" onClick={() => onGenericFoul(side)} className={`grid min-h-10 min-w-10 place-items-center rounded-lg border text-lg font-black sm:min-h-12 sm:min-w-12 ${confirmingFoul ? "border-emerald-200 bg-emerald-500 text-slate-950" : "border-slate-700 bg-slate-900 text-orange-200"}`} aria-label={confirmingFoul ? `Confirmar falta ${label} sin jugador` : `Añadir falta ${label} sin jugador`}>
           {confirmingFoul ? "✓" : "+"}
         </button>
         <CardCounter color="YELLOW" count={totalDiscipline.yellowCards} onClick={onYellow ?? (() => onInspect(side, "CARD"))} add={Boolean(onYellow)} label={label} />
@@ -109,7 +109,7 @@ function TeamDiscipline({ label, side, period, periodDiscipline, totalDiscipline
 function CardCounter({ color, count, onClick, add, label }: { color: "YELLOW" | "RED"; count: number; onClick: () => void; add: boolean; label: string }) {
   const yellow = color === "YELLOW";
   return (
-    <button type="button" onClick={onClick} className={`relative flex min-h-10 min-w-9 items-center justify-center gap-1 rounded-lg ${yellow ? "bg-yellow-950/60 text-yellow-100" : "bg-red-950/60 text-red-100"}`} aria-label={`${add ? "Añadir" : "Revisar"} tarjeta ${yellow ? "amarilla" : "roja"} ${label}`}>
+    <button type="button" onClick={onClick} className={`relative flex min-h-10 min-w-9 items-center justify-center gap-1 rounded-lg sm:min-h-12 sm:min-w-11 ${yellow ? "bg-yellow-950/60 text-yellow-100" : "bg-red-950/60 text-red-100"}`} aria-label={`${add ? "Añadir" : "Revisar"} tarjeta ${yellow ? "amarilla" : "roja"} ${label}`}>
       <span className={`h-5 w-3 rotate-3 rounded-sm border ${yellow ? "border-yellow-100 bg-yellow-400" : "border-red-100 bg-red-500"}`} aria-hidden="true" />
       <span className="text-[10px] font-black">{count}</span>
       {add && <span className="absolute -right-0.5 -top-1 text-[10px] font-black text-white">+</span>}

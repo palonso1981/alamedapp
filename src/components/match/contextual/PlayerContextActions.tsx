@@ -58,7 +58,7 @@ export function PlayerContextActions({
       <div className="rounded-xl border border-red-500/60 bg-red-950/90 p-3 text-center text-xs font-black text-red-100">
         <span className="text-2xl" aria-hidden="true">⇄</span>
         <p>Repara con banquillo o cronología</p>
-        <button type="button" onClick={onCancel} className="mt-2 min-h-10 w-full rounded-lg bg-slate-800">×</button>
+        <button type="button" onClick={onCancel} className="mt-2 min-h-12 w-full rounded-lg bg-slate-800">×</button>
       </div>
     );
   }
@@ -84,7 +84,7 @@ export function PlayerContextActions({
         <button
           type="button"
           onClick={onBack}
-          className="col-span-2 min-h-10 rounded-xl text-xs font-bold text-slate-400"
+          className="col-span-2 min-h-12 rounded-xl text-xs font-bold text-slate-400"
         >
           ↶
         </button>
@@ -98,7 +98,7 @@ export function PlayerContextActions({
         <button
           type="button"
           onClick={onCancel}
-          className="absolute -right-1 -top-1 z-10 grid h-9 w-9 place-items-center rounded-xl bg-slate-950 text-lg text-slate-400"
+          className="absolute -right-1 -top-1 z-10 grid h-11 w-11 place-items-center rounded-xl bg-slate-950 text-lg text-slate-400"
           aria-label="Cerrar acciones del jugador"
         >
           ×

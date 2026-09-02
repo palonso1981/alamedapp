@@ -156,6 +156,36 @@ export const KEEPER_BODY_SCREEN_SIDE: Readonly<
   LEFT_LEG_FOOT: "RIGHT",
 };
 
+export interface KeeperBodyHitbox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export const KEEPER_BODY_SURFACE = {
+  left: 0.15,
+  top: 0.125,
+  width: 0.7,
+  height: 0.75,
+} as const;
+
+/**
+ * Zonas táctiles normalizadas sobre la silueta frontal. Son deliberadamente
+ * más anchas que los trazos visibles y no se solapan, para que un dedo no
+ * pueda resolver dos partes corporales distintas.
+ */
+export const KEEPER_BODY_HITBOXES: Readonly<
+  Record<KeeperBodyPart, KeeperBodyHitbox>
+> = {
+  HEAD: { left: 0.375, top: 0, width: 0.25, height: 0.28 },
+  TORSO: { left: 0.34, top: 0.28, width: 0.32, height: 0.27 },
+  RIGHT_ARM_HAND: { left: 0, top: 0.28, width: 0.34, height: 0.27 },
+  LEFT_ARM_HAND: { left: 0.66, top: 0.28, width: 0.34, height: 0.27 },
+  RIGHT_LEG_FOOT: { left: 0.18, top: 0.55, width: 0.3, height: 0.45 },
+  LEFT_LEG_FOOT: { left: 0.52, top: 0.55, width: 0.3, height: 0.45 },
+};
+
 export function validGoalTarget(point: GoalTargetCoordinates): boolean {
   return (
     (point.geometryVersion === 1 ||

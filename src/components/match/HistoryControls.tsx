@@ -38,7 +38,7 @@ export function HistoryControls({
               onUndo();
               setConfirmingUndo(false);
             }}
-            className="grid min-h-10 min-w-10 place-items-center rounded-lg bg-amber-300 text-lg font-black text-slate-950"
+            className="grid min-h-11 min-w-11 place-items-center rounded-lg bg-amber-300 text-lg font-black text-slate-950"
             aria-label={`Confirmar deshacer ${undoDescription}`}
           >
             ✓
@@ -46,7 +46,7 @@ export function HistoryControls({
           <button
             type="button"
             onClick={() => setConfirmingUndo(false)}
-            className="grid min-h-10 min-w-10 place-items-center rounded-lg bg-slate-800 text-lg font-black"
+            className="grid min-h-11 min-w-11 place-items-center rounded-lg bg-slate-800 text-lg font-black"
             aria-label="Cancelar deshacer"
           >
             ×

@@ -554,14 +554,14 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               redo(matchId);
             }}
           />
-          <button type="button" onClick={() => { setDisciplineFocus(null); setHistoryOpen(true); }} className="min-h-10 rounded-lg bg-slate-900 px-3 text-xs font-black text-cyan-200" aria-label="Abrir historial completo">HISTORIAL · {activeEventCount}{pendingEventCount > 0 ? ` · ? ${pendingEventCount}` : ""}</button>
+          <button type="button" onClick={() => { setDisciplineFocus(null); setHistoryOpen(true); }} className="min-h-11 rounded-lg bg-slate-900 px-3 text-xs font-black text-cyan-200" aria-label="Abrir historial completo">HISTORIAL · {activeEventCount}{pendingEventCount > 0 ? ` · ? ${pendingEventCount}` : ""}</button>
           {(matchId === "prueba" || matchId === "prueba-porteria") && (
             <button type="button" onClick={() => {
               if (!window.confirm(`¿Reiniciar solo el demo ${matchId}? Se borrará su captura local.`)) return;
               setInteraction(IDLE_LIVE_INTERACTION);
               setHistoryOpen(false);
               resetDemo(matchId);
-            }} className="min-h-10 rounded-lg bg-slate-900 px-2 text-xs font-bold text-slate-400" aria-label="Reiniciar partido demo">↺ DEMO</button>
+            }} className="min-h-11 rounded-lg bg-slate-900 px-2 text-xs font-bold text-slate-400" aria-label="Reiniciar partido demo">↺ DEMO</button>
           )}
         </div>
       </header>
@@ -595,7 +595,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         <div className="mx-auto mb-2 max-w-3xl rounded-2xl border border-rose-400/60 bg-rose-950/80 p-2 shadow-xl" role="dialog" aria-label="Elegir portero-jugador funcional">
           <div className="mb-2 flex items-center justify-between px-1">
             <p className="text-xs font-black uppercase tracking-wide text-rose-100">¿Quién asume la portería?</p>
-            <button type="button" onClick={() => setSelectingFlyingGoalkeeper(false)} className="min-h-10 min-w-10 rounded-xl bg-slate-800 text-lg" aria-label="Cancelar selección">×</button>
+            <button type="button" onClick={() => setSelectingFlyingGoalkeeper(false)} className="min-h-11 min-w-11 rounded-xl bg-slate-800 text-lg" aria-label="Cancelar selección">×</button>
           </div>
           <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
             {replay.onCourtPlayerIds

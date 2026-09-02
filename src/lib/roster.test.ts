@@ -28,6 +28,7 @@ import { matchCatalogClubId, visibleMatchCatalog } from "./matchCatalog";
 import { changeClubLifecycle, createClubWorkspace, defaultClubRegistry } from "./clubDomain";
 import { loadClubRegistry, saveClubRegistry } from "./clubRegistry";
 import {
+  canPlayGoalkeeper,
   createMasterPlayer,
   createMasterStaff,
   playerSnapshot,
@@ -222,6 +223,127 @@ test("ficha maestra separa perfil natural, capacidad de portero y rol funcional"
   assert.equal(snapshot.goalkeeperCapable, true);
   assert.equal(snapshot.naturalPosition, "UNIVERSAL");
   assert.equal(snapshot.dateOfBirth, "2004-02-29");
+});
+
+test("portero natural siempre es elegible y la capacidad adicional solo aplica a jugadores de campo", () => {
+  const naturalGoalkeeper = createMasterPlayer([], {
+    fullName: "Portero Natural",
+    displayName: "POR",
+    number: 1,
+    role: "FIELD",
+    primaryPosition: "GOALKEEPER",
+    canPlayGoalkeeper: false,
+  }, { id: "natural-gk", now: 1 });
+  const regularFieldPlayer = createMasterPlayer([naturalGoalkeeper], {
+    fullName: "Jugador Campo",
+    displayName: "Campo",
+    number: 2,
+    role: "FIELD",
+    primaryPosition: "WINGER",
+    canPlayGoalkeeper: false,
+  }, { id: "regular-field", now: 2 });
+  const alternateGoalkeeper = createMasterPlayer([naturalGoalkeeper, regularFieldPlayer], {
+    fullName: "Portero Alternativo",
+    displayName: "Alternativo",
+    number: 3,
+    role: "FIELD",
+    primaryPosition: "FIXO",
+    canPlayGoalkeeper: true,
+  }, { id: "alternate-gk", now: 3 });
+
+  assert.equal(naturalGoalkeeper.canPlayGoalkeeper, false);
+  assert.equal(canPlayGoalkeeper(naturalGoalkeeper), true);
+  assert.equal(playerSnapshot(naturalGoalkeeper).goalkeeperCapable, true);
+  assert.equal(canPlayGoalkeeper(regularFieldPlayer), false);
+  assert.equal(canPlayGoalkeeper(alternateGoalkeeper), true);
+
+  const explicitFieldOverride: MasterPlayer = {
+    ...regularFieldPlayer,
+    role: "GOALKEEPER",
+    canPlayGoalkeeper: false,
+  };
+  const legacyFieldGoalkeeper: MasterPlayer = {
+    ...regularFieldPlayer,
+    role: "GOALKEEPER",
+    canPlayGoalkeeper: undefined,
+  };
+  assert.equal(canPlayGoalkeeper(explicitFieldOverride), false);
+  assert.equal(canPlayGoalkeeper(legacyFieldGoalkeeper), true);
+
+  const movedToField = updateMasterPlayer(
+    [naturalGoalkeeper],
+    naturalGoalkeeper.playerId,
+    { primaryPosition: "WINGER", canPlayGoalkeeper: false },
+    4,
+  )[0];
+  assert.equal(canPlayGoalkeeper(movedToField), false);
+  const movedToGoal = updateMasterPlayer(
+    [regularFieldPlayer],
+    regularFieldPlayer.playerId,
+    { primaryPosition: "GOALKEEPER" },
+    5,
+  )[0];
+  assert.equal(canPlayGoalkeeper(movedToGoal), true);
+});
+
+test("portero natural sobrevive membresía, persistencia e inicio de partido", () => {
+  const naturalGoalkeeper = createMasterPlayer([], {
+    fullName: "Portero Persistente",
+    displayName: "POR",
+    number: 1,
+    role: "FIELD",
+    primaryPosition: "GOALKEEPER",
+    canPlayGoalkeeper: false,
+  }, { id: "persistent-natural-gk", now: 1 });
+  const fieldPlayers = Array.from({ length: 5 }, (_, index) => createMasterPlayer(
+    [naturalGoalkeeper],
+    {
+      fullName: `Campo ${index + 1}`,
+      displayName: `C${index + 1}`,
+      number: index + 2,
+      role: "FIELD",
+      primaryPosition: "WINGER",
+      canPlayGoalkeeper: false,
+    },
+    { id: `persistent-field-${index + 1}`, now: index + 2 },
+  ));
+  let workspace = {
+    ...emptyTeamWorkspace("cd-alameda", 1),
+    players: [naturalGoalkeeper, ...fieldPlayers],
+  };
+  workspace = createSeason(
+    workspace,
+    { label: "2026-27", copyLegacyRoster: true },
+    { seasonId: "natural-gk-season", now: 10 },
+  );
+  const seasonalRoster = rosterForSeason(workspace, "natural-gk-season");
+  assert.equal(canPlayGoalkeeper(seasonalRoster.players[0]), true);
+
+  const storage = new MemoryStorage();
+  const repository = new LocalTeamRepository({ storage });
+  repository.save(workspace);
+  const reopened = repository.load("cd-alameda");
+  const reopenedRoster = rosterForSeason(reopened, "natural-gk-season");
+  assert.equal(canPlayGoalkeeper(reopenedRoster.players[0]), true);
+
+  let session = createDraftMatch("natural-gk-start", {
+    ...MATCH_SCOPE,
+    seasonId: "natural-gk-season",
+    opponent: "Rival",
+    venue: "HOME",
+    date: "2026-09-02",
+  }, 20);
+  for (const player of reopenedRoster.players.slice(0, 5)) {
+    session = toggleCalledPlayer(session, reopenedRoster, player.playerId, 21);
+    session = toggleStarter(session, reopenedRoster, player.playerId, 22);
+  }
+  session = selectStartingGoalkeeper(session, reopenedRoster, naturalGoalkeeper.playerId, 23);
+  assert.equal(validateStartingLineup(session, reopenedRoster).valid, true);
+  const started = startPreparedMatch(session, reopenedRoster, 24);
+  const replay = replayMatch(started.players, started.events);
+  assert.equal(replay.lineupValidation.goalkeeper.status, "PLAYER");
+  assert.equal(replay.lineupValidation.goalkeeper.playerId, naturalGoalkeeper.playerId);
+  assert.equal(replay.issues.length, 0);
 });
 
 test("dorsales activos no se duplican y un inactivo no bloquea el dorsal", () => {
@@ -666,6 +788,31 @@ test("identidades maestras quedan aisladas por club y se reutilizan entre equipo
   assert.deepEqual(clubExtraPlayerCandidates(testsClub).map((player) => player.playerId), ["tests-p-1"]);
   assert.equal(clubExtraPlayerCandidates(alameda).some((player) => player.playerId === "tests-p-1"), false);
   assert.throws(() => assertSeasonScope(alameda, "senior-a", "juvenil-26"), /temporada no pertenece/i);
+});
+
+test("Prepartido busca jugadores activos de todo el club sin duplicar por equipo o temporada", () => {
+  let workspace = createTeamProfile(workspaceFixture(), { name: "Senior" }, { teamId: "senior-search", now: 10 });
+  workspace = createTeamProfile(workspace, { name: "Juvenil" }, { teamId: "juvenil-search", now: 11 });
+  workspace = createSeason(workspace, { teamId: "senior-search", label: "2026-27" }, { seasonId: "senior-search-season", now: 12 });
+  workspace = createSeason(workspace, { teamId: "juvenil-search", label: "2026-27" }, { seasonId: "juvenil-search-season", now: 13 });
+  workspace = upsertSeasonPlayer(workspace, "senior-search-season", "p-2", { active: true }, 14);
+  workspace = upsertSeasonPlayer(workspace, "juvenil-search-season", "p-3", { active: true }, 15);
+  workspace = upsertSeasonPlayer(workspace, "juvenil-search-season", "p-3", { number: 23, active: true }, 16);
+  workspace = changeAdminLifecycle(workspace, "PLAYER", "p-4", "ARCHIVE", 17);
+
+  const currentRosterIds = rosterForSeason(workspace, "senior-search-season")
+    .players
+    .filter((player) => player.active)
+    .map((player) => player.playerId);
+  const candidates = clubExtraPlayerCandidates(workspace, currentRosterIds);
+  const candidateIds = candidates.map((player) => player.playerId);
+
+  assert.equal(candidateIds.includes("p-2"), false);
+  assert.equal(candidateIds.includes("p-3"), true);
+  assert.equal(candidateIds.includes("p-4"), false);
+  assert.equal(candidateIds.length, new Set(candidateIds).size);
+  assert.equal(clubExtraPlayerCandidates(workspace, currentRosterIds, "J3").some((player) => player.playerId === "p-3"), true);
+  assert.equal(clubExtraPlayerCandidates(workspace, currentRosterIds, "", true).some((player) => player.playerId === "p-4"), true);
 });
 
 test("temporadas archivadas y tombstones no reaparecen en operativa normal", () => {

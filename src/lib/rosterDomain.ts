@@ -72,6 +72,7 @@ function validDateOfBirth(value?: string): string | undefined {
 }
 
 export function canPlayGoalkeeper(player: MasterPlayer): boolean {
+  if (player.primaryPosition === "GOALKEEPER") return true;
   return player.canPlayGoalkeeper ?? player.role === "GOALKEEPER";
 }
 
@@ -99,7 +100,11 @@ export function createMasterPlayer(
   const number = validNumber(input.number);
   assertUniqueActiveNumber(players, number);
   const now = options.now ?? Date.now();
-  const goalkeeperCapable = input.canPlayGoalkeeper ?? input.role === "GOALKEEPER";
+  const additionalGoalkeeperCapability =
+    input.canPlayGoalkeeper ??
+    (input.primaryPosition !== "GOALKEEPER" && input.role === "GOALKEEPER");
+  const goalkeeperCapable =
+    input.primaryPosition === "GOALKEEPER" || additionalGoalkeeperCapability;
   return {
     playerId: options.id ?? globalThis.crypto.randomUUID(),
     clubId: options.clubId ?? CDA_CLUB_ID,
@@ -110,7 +115,7 @@ export function createMasterPlayer(
     dateOfBirth: validDateOfBirth(input.dateOfBirth),
     primaryPosition: input.primaryPosition,
     dominantFoot: input.dominantFoot,
-    canPlayGoalkeeper: goalkeeperCapable,
+    canPlayGoalkeeper: additionalGoalkeeperCapability,
     role: goalkeeperCapable ? "GOALKEEPER" : "FIELD",
     active: true,
     createdAt: now,
@@ -126,11 +131,17 @@ export function updateMasterPlayer(
 ): MasterPlayer[] {
   const current = players.find((player) => player.playerId === playerId);
   if (!current) throw new Error("El jugador no existe en la plantilla.");
-  const goalkeeperCapable =
+  const primaryPosition = changes.primaryPosition ?? current.primaryPosition;
+  const currentAdditionalGoalkeeperCapability =
+    current.canPlayGoalkeeper ??
+    (current.primaryPosition !== "GOALKEEPER" && current.role === "GOALKEEPER");
+  const additionalGoalkeeperCapability =
     changes.canPlayGoalkeeper ??
     (changes.role !== undefined
-      ? changes.role === "GOALKEEPER"
-      : canPlayGoalkeeper(current));
+      ? primaryPosition !== "GOALKEEPER" && changes.role === "GOALKEEPER"
+      : currentAdditionalGoalkeeperCapability);
+  const goalkeeperCapable =
+    primaryPosition === "GOALKEEPER" || additionalGoalkeeperCapability;
   const next: MasterPlayer = {
     ...current,
     fullName:
@@ -151,15 +162,12 @@ export function updateMasterPlayer(
       changes.dateOfBirth === undefined
         ? current.dateOfBirth
         : validDateOfBirth(changes.dateOfBirth),
-    primaryPosition:
-      changes.primaryPosition === undefined
-        ? current.primaryPosition
-        : changes.primaryPosition,
+    primaryPosition,
     dominantFoot:
       changes.dominantFoot === undefined
         ? current.dominantFoot
         : changes.dominantFoot,
-    canPlayGoalkeeper: goalkeeperCapable,
+    canPlayGoalkeeper: additionalGoalkeeperCapability,
     role: goalkeeperCapable ? "GOALKEEPER" : "FIELD",
     active: changes.active ?? current.active,
     updatedAt: now,

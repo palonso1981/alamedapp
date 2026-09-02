@@ -40,7 +40,7 @@ import {
 import { contextualPlacement } from "./contextualPlacement";
 import { courtHeightForWidth, FUTSAL_COURT_ASPECT_RATIO, normalizeCourtPoint } from "./courtGeometry";
 import { CANONICAL_COURT_ORIENTATION, courtOrientationForPeriod } from "./courtGeometry";
-import { classifyGoalTarget, deriveKeeperBodyZone, deriveKeeperBodyZoneFromPart, GOAL_FRAME, isInsideGoalFrame, isOutcomeCompatibleWithGoalTarget, KEEPER_BODY_SCREEN_SIDE, normalizeGoalTargetPoint } from "./goalTarget";
+import { classifyGoalTarget, deriveKeeperBodyZone, deriveKeeperBodyZoneFromPart, GOAL_FRAME, isInsideGoalFrame, isOutcomeCompatibleWithGoalTarget, KEEPER_BODY_HITBOXES, KEEPER_BODY_SCREEN_SIDE, KEEPER_BODY_SURFACE, normalizeGoalTargetPoint } from "./goalTarget";
 import { assistCandidates, filterTimelineEvents } from "./matchReview";
 import { effectiveReviewStatus, reviewEventCounts, targetMinutesComparisons } from "./postMatchReview";
 import { deriveGoalZoneV1, derivePitchZoneV1, PITCH_ZONE_MODEL_VERSION } from "./spatialZones";
@@ -3031,6 +3031,44 @@ test("resize del GoalTargetPicker no altera coordenadas ni clasificación V3", (
   assert.deepEqual(small, large);
   assert.equal(isInsideGoalFrame(small), true);
   assert.equal(classifyGoalTarget(small) === "FUERA", false);
+});
+
+test("las seis zonas táctiles del portero son completas, normalizadas y no ambiguas", () => {
+  const expectedParts = [
+    "HEAD",
+    "TORSO",
+    "RIGHT_ARM_HAND",
+    "LEFT_ARM_HAND",
+    "RIGHT_LEG_FOOT",
+    "LEFT_LEG_FOOT",
+  ].sort();
+  const entries = Object.entries(KEEPER_BODY_HITBOXES);
+  assert.deepEqual(entries.map(([part]) => part).sort(), expectedParts);
+
+  for (const [, hitbox] of entries) {
+    assert.ok(hitbox.left >= 0 && hitbox.top >= 0);
+    assert.ok(hitbox.width >= 0.18 && hitbox.height >= 0.2);
+    assert.ok(hitbox.left + hitbox.width <= 1);
+    assert.ok(hitbox.top + hitbox.height <= 1);
+  }
+
+  const compactPortraitPicker = { width: 354, height: 354 * 16 / 25 };
+  for (const [part, hitbox] of entries) {
+    const physicalWidth = compactPortraitPicker.width * KEEPER_BODY_SURFACE.width * hitbox.width;
+    const physicalHeight = compactPortraitPicker.height * KEEPER_BODY_SURFACE.height * hitbox.height;
+    assert.ok(physicalWidth >= 44, `${part} necesita al menos 44 px de ancho`);
+    assert.ok(physicalHeight >= 44, `${part} necesita al menos 44 px de alto`);
+  }
+
+  for (let first = 0; first < entries.length; first += 1) {
+    for (let second = first + 1; second < entries.length; second += 1) {
+      const a = entries[first][1];
+      const b = entries[second][1];
+      const overlapWidth = Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left);
+      const overlapHeight = Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top);
+      assert.equal(overlapWidth > 0 && overlapHeight > 0, false, `${entries[first][0]} y ${entries[second][0]} no deben solaparse`);
+    }
+  }
 });
 
 test("prueba-porteria es un fixture limpio, aislado y reiniciable", () => {

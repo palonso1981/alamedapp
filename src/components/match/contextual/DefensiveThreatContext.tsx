@@ -41,10 +41,11 @@ export function DefensiveThreatContext({
       onCancel={onCancel}
       viewportOnMobile
       wide
+      immersive={threat.step === "GOAL_TARGET"}
     >
       {threat.step === "GOAL_TARGET" && (
         <div>
-          <p className="mb-2 text-center text-xs font-black uppercase tracking-widest text-rose-200">↓ destino</p>
+          <p className="mb-2 pr-12 text-center text-xs font-black uppercase tracking-widest text-rose-200">↓ destino</p>
           <GoalTargetPicker value={threat.goalTarget} onSelect={onTarget} />
         </div>
       )}
