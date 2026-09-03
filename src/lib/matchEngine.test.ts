@@ -1472,7 +1472,7 @@ test("tocar pista directamente prepara amenaza rival sin jugador", () => {
     eventId: "defensive-intent",
   });
   assert.equal(transition.state.kind, "THREAT_PENDING");
-  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.flowId, "AGAINST_ORIGIN_GOAL_DETAILS_PHASE");
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.flowId, "AGAINST_ORIGIN_TARGET_RESULT_BODY_DETAILS_PHASE");
   assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "GOAL_TARGET");
   transition = reduceLiveInteraction(transition.state, {
     type: "PHASE_SELECTED",
@@ -1483,9 +1483,11 @@ test("tocar pista directamente prepara amenaza rival sin jugador", () => {
   transition = reduceLiveInteraction(transition.state, {
     type: "GOAL_TARGET_SELECTED",
     goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 },
-    outcome: "PARADA",
-    keeperBodyPart: "TORSO",
   });
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "GOAL_RESULT");
+  transition = reduceLiveInteraction(transition.state, { type: "DEFENSIVE_OUTCOME_SELECTED", outcome: "PARADA" });
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "KEEPER_BODY_PART");
+  transition = reduceLiveInteraction(transition.state, { type: "KEEPER_BODY_PART_SELECTED", keeperBodyPart: "TORSO" });
   assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "DETAILS");
   transition = reduceLiveInteraction(transition.state, {
     type: "SAVE_OUTCOME_SELECTED",
@@ -2234,7 +2236,9 @@ test("rechace ofrece y encadena segunda jugada reversible con fase heredada", ()
     origin: { x: 0.66, y: 0.4 },
     eventId: "seq-a",
   });
-  transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, outcome: "PARADA", keeperBodyPart: "TORSO" });
+  transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 } });
+  transition = reduceLiveInteraction(transition.state, { type: "DEFENSIVE_OUTCOME_SELECTED", outcome: "PARADA" });
+  transition = reduceLiveInteraction(transition.state, { type: "KEEPER_BODY_PART_SELECTED", keeperBodyPart: "TORSO" });
   transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "REBOUND" });
   transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "TRANSITION" });
   assert.equal(transition.state.kind, "SECOND_PLAY_OFFER");
@@ -2243,7 +2247,8 @@ test("rechace ofrece y encadena segunda jugada reversible con fase heredada", ()
   transition = reduceLiveInteraction(transition.state, { type: "START_SECOND_PLAY" });
   transition = reduceLiveInteraction(transition.state, { type: "COURT_TAPPED", origin: { x: 0.35, y: 0.5 }, eventId: "seq-b" });
   assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.phase, "TRANSITION");
-  transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.25, y: 0.3 }, outcome: "GOL" });
+  transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.25, y: 0.3 } });
+  transition = reduceLiveInteraction(transition.state, { type: "DEFENSIVE_OUTCOME_SELECTED", outcome: "GOL" });
   assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.parentEventId, "seq-a");
   assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.sequenceId, "seq-a");
   assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.phase, "TRANSITION");
@@ -2270,8 +2275,11 @@ test("toda amenaza RIV raíz exige fase, también FUERA, y cancelar no crea even
       goalTarget: outcome === "FUERA"
         ? { geometryVersion: 2, x: 0.1, y: 0.4 }
         : { geometryVersion: 2, x: 0.5, y: 0.4 },
-      outcome,
     });
+    if (outcome === "GOL") {
+      assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "GOAL_RESULT");
+      transition = reduceLiveInteraction(transition.state, { type: "DEFENSIVE_OUTCOME_SELECTED", outcome });
+    }
     assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "PHASE");
     assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.phase, null);
     assert.equal(transition.effect, undefined);
@@ -2299,8 +2307,10 @@ test("segunda jugada GOL, FUERA y PARADA se guardan con fase heredada sin paso P
       goalTarget: outcome === "FUERA"
         ? { geometryVersion: 2, x: 0.9, y: 0.4 }
         : { geometryVersion: 2, x: 0.5, y: 0.4 },
-      outcome,
     });
+    if (outcome === "GOL") {
+      transition = reduceLiveInteraction(transition.state, { type: "DEFENSIVE_OUTCOME_SELECTED", outcome });
+    }
     assert.equal(transition.effect?.type, "RECORD_THREAT");
     assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.phase, "SET_PIECE_CORNER");
     assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.parentEventId, "root-rebound");
@@ -2315,9 +2325,9 @@ test("segunda jugada GOL, FUERA y PARADA se guardan con fase heredada sin paso P
   saved = reduceLiveInteraction(saved.state, {
     type: "GOAL_TARGET_SELECTED",
     goalTarget: { geometryVersion: 2, x: 0.55, y: 0.55 },
-    outcome: "PARADA",
-    keeperBodyPart: "RIGHT_ARM_HAND",
   });
+  saved = reduceLiveInteraction(saved.state, { type: "DEFENSIVE_OUTCOME_SELECTED", outcome: "PARADA" });
+  saved = reduceLiveInteraction(saved.state, { type: "KEEPER_BODY_PART_SELECTED", keeperBodyPart: "RIGHT_ARM_HAND" });
   assert.equal(saved.state.kind === "THREAT_PENDING" && saved.state.step, "DETAILS");
   saved = reduceLiveInteraction(saved.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "CATCH" });
   assert.equal(saved.effect?.type === "RECORD_THREAT" && saved.effect.phase, "SET_PIECE_CORNER");
@@ -2567,9 +2577,9 @@ test("segunda jugada A→B→C hereda fase sin interacción y cancela sin evento
   transition = reduceLiveInteraction(transition.state, {
     type: "GOAL_TARGET_SELECTED",
     goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 },
-    outcome: "PARADA",
-    keeperBodyPart: "TORSO",
   });
+  transition = reduceLiveInteraction(transition.state, { type: "DEFENSIVE_OUTCOME_SELECTED", outcome: "PARADA" });
+  transition = reduceLiveInteraction(transition.state, { type: "KEEPER_BODY_PART_SELECTED", keeperBodyPart: "TORSO" });
   transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "REBOUND" });
   transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "TRANSITION" });
   const a = transition.effect;
@@ -2578,9 +2588,9 @@ test("segunda jugada A→B→C hereda fase sin interacción y cancela sin evento
   transition = reduceLiveInteraction(transition.state, {
     type: "GOAL_TARGET_SELECTED",
     goalTarget: { geometryVersion: 1, x: 0.46, y: 0.7 },
-    outcome: "PARADA",
-    keeperBodyPart: "LEFT_LEG_FOOT",
   });
+  transition = reduceLiveInteraction(transition.state, { type: "DEFENSIVE_OUTCOME_SELECTED", outcome: "PARADA" });
+  transition = reduceLiveInteraction(transition.state, { type: "KEEPER_BODY_PART_SELECTED", keeperBodyPart: "LEFT_LEG_FOOT" });
   transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "REBOUND" });
   const b = transition.effect;
   assert.equal(b?.type === "RECORD_THREAT" && b.parentEventId, "chain-a");
@@ -2591,8 +2601,8 @@ test("segunda jugada A→B→C hereda fase sin interacción y cancela sin evento
   transition = reduceLiveInteraction(transition.state, {
     type: "GOAL_TARGET_SELECTED",
     goalTarget: { geometryVersion: 1, x: 0.2, y: 0.3 },
-    outcome: "GOL",
   });
+  transition = reduceLiveInteraction(transition.state, { type: "DEFENSIVE_OUTCOME_SELECTED", outcome: "GOL" });
   const c = transition.effect;
   assert.equal(c?.type === "RECORD_THREAT" && c.parentEventId, "chain-b");
   assert.equal(c?.type === "RECORD_THREAT" && c.sequenceId, "chain-a");
@@ -2692,7 +2702,9 @@ test("blocaje y despeje cierran la secuencia; editar o borrar un padre activo qu
       origin: { x: 0.55, y: 0.5 },
       eventId: `closed-${saveOutcome}`,
     });
-    transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 }, outcome: "PARADA", keeperBodyPart: "TORSO" });
+    transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 1, x: 0.5, y: 0.45 } });
+    transition = reduceLiveInteraction(transition.state, { type: "DEFENSIVE_OUTCOME_SELECTED", outcome: "PARADA" });
+    transition = reduceLiveInteraction(transition.state, { type: "KEEPER_BODY_PART_SELECTED", keeperBodyPart: "TORSO" });
     transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome });
     transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "POSITIONAL" });
     assert.equal(transition.state.kind, "IDLE");
@@ -3023,6 +3035,91 @@ test("los bordes visuales V3 distinguen interior y exterior junto a postes y lar
     "FUERA",
   );
   assert.equal(isInsideGoalFrame(point(0.5, 0.5)), true);
+});
+
+test("todo destino interior admite GOL y PARADA sin que la silueta decida el resultado", () => {
+  const epsilon = 0.001;
+  const targets = [
+    { label: "centro", x: 0.5, y: 0.5 },
+    { label: "poste izquierdo", x: GOAL_FRAME.left + epsilon, y: 0.55 },
+    { label: "poste derecho", x: GOAL_FRAME.right - epsilon, y: 0.55 },
+    { label: "bajo larguero", x: 0.5, y: GOAL_FRAME.top + epsilon },
+    { label: "escuadra izquierda", x: GOAL_FRAME.left + epsilon, y: GOAL_FRAME.top + epsilon },
+    { label: "escuadra derecha", x: GOAL_FRAME.right - epsilon, y: GOAL_FRAME.top + epsilon },
+    { label: "raso", x: 0.5, y: GOAL_FRAME.bottom - epsilon },
+    { label: "cuerpo visual", x: 0.5, y: 0.55 },
+  ];
+
+  for (const target of targets) {
+    const goalTarget = { geometryVersion: GOAL_TARGET_GEOMETRY_VERSION, x: target.x, y: target.y } as const;
+    assert.equal(isInsideGoalFrame(goalTarget), true, target.label);
+    for (const outcome of ["GOL", "PARADA"] as const) {
+      let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+        type: "COURT_TAPPED",
+        origin: { x: 0.5, y: 0.5 },
+        eventId: `${target.label}-${outcome}`,
+      });
+      transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget });
+      assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "GOAL_RESULT", target.label);
+      assert.deepEqual(transition.state.kind === "THREAT_PENDING" && transition.state.goalTarget, goalTarget);
+      transition = reduceLiveInteraction(transition.state, { type: "DEFENSIVE_OUTCOME_SELECTED", outcome });
+      assert.equal(
+        transition.state.kind === "THREAT_PENDING" && transition.state.step,
+        outcome === "GOL" ? "PHASE" : "KEEPER_BODY_PART",
+        `${target.label} debe admitir ${outcome}`,
+      );
+      assert.deepEqual(transition.state.kind === "THREAT_PENDING" && transition.state.goalTarget, goalTarget);
+    }
+  }
+});
+
+test("los destinos exteriores producen FUERA sin pedir resultado ni intervención", () => {
+  const epsilon = 0.001;
+  const targets = [
+    { x: GOAL_FRAME.left - epsilon, y: 0.5 },
+    { x: GOAL_FRAME.right + epsilon, y: 0.5 },
+    { x: 0.5, y: GOAL_FRAME.top - epsilon },
+    { x: 0.5, y: GOAL_FRAME.bottom + epsilon },
+    { x: GOAL_FRAME.left - epsilon, y: GOAL_FRAME.top - epsilon },
+    { x: GOAL_FRAME.right + epsilon, y: GOAL_FRAME.top - epsilon },
+  ];
+  for (const target of targets) {
+    const goalTarget = { geometryVersion: GOAL_TARGET_GEOMETRY_VERSION, ...target } as const;
+    let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+      type: "COURT_TAPPED",
+      origin: { x: 0.5, y: 0.5 },
+      eventId: `outside-${target.x}-${target.y}`,
+    });
+    transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget });
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.outcome, "FUERA");
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "PHASE");
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.keeperBodyPart, null);
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.saveOutcome, null);
+  }
+});
+
+test("target y bodyPart son independientes y las seis partes preservan las coordenadas", () => {
+  const goalTarget = {
+    geometryVersion: GOAL_TARGET_GEOMETRY_VERSION,
+    x: GOAL_FRAME.right - 0.002,
+    y: GOAL_FRAME.bottom - 0.002,
+  } as const;
+  const parts = ["HEAD", "TORSO", "LEFT_ARM_HAND", "RIGHT_ARM_HAND", "LEFT_LEG_FOOT", "RIGHT_LEG_FOOT"] as const;
+  for (const keeperBodyPart of parts) {
+    let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+      type: "COURT_TAPPED",
+      origin: { x: 0.5, y: 0.5 },
+      eventId: `independent-${keeperBodyPart}`,
+    });
+    transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget });
+    transition = reduceLiveInteraction(transition.state, { type: "DEFENSIVE_OUTCOME_SELECTED", outcome: "PARADA" });
+    transition = reduceLiveInteraction(transition.state, { type: "KEEPER_BODY_PART_SELECTED", keeperBodyPart });
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "DETAILS");
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.keeperBodyPart, keeperBodyPart);
+    assert.deepEqual(transition.state.kind === "THREAT_PENDING" && transition.state.goalTarget, goalTarget);
+    transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "CATCH" });
+    assert.deepEqual(transition.state.kind === "THREAT_PENDING" && transition.state.goalTarget, goalTarget);
+  }
 });
 
 test("resize del GoalTargetPicker no altera coordenadas ni clasificación V3", () => {

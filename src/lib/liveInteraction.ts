@@ -8,17 +8,20 @@ import {
   SaveOutcome,
   ThreatSide,
 } from "../types";
+import { isInsideGoalFrame } from "./goalTarget";
 
 export type ThreatCaptureStep =
   | "OUTCOME"
   | "GOAL_TARGET"
+  | "GOAL_RESULT"
+  | "KEEPER_BODY_PART"
   | "DETAILS"
   | "PHASE"
   | "ASSIST";
 
 export type ThreatCaptureFlowId =
   | "FOR_ORIGIN_OUTCOME_PHASE"
-  | "AGAINST_ORIGIN_GOAL_DETAILS_PHASE";
+  | "AGAINST_ORIGIN_TARGET_RESULT_BODY_DETAILS_PHASE";
 
 export interface ThreatCaptureFlowDefinition {
   id: ThreatCaptureFlowId;
@@ -39,9 +42,9 @@ export const THREAT_CAPTURE_FLOWS: Readonly<
     steps: ["OUTCOME", "PHASE"],
   },
   AGAINST: {
-    id: "AGAINST_ORIGIN_GOAL_DETAILS_PHASE",
+    id: "AGAINST_ORIGIN_TARGET_RESULT_BODY_DETAILS_PHASE",
     side: "AGAINST",
-    steps: ["GOAL_TARGET", "DETAILS", "PHASE"],
+    steps: ["GOAL_TARGET", "GOAL_RESULT", "KEEPER_BODY_PART", "DETAILS", "PHASE"],
   },
 };
 
@@ -83,9 +86,9 @@ export type LiveInteractionAction =
   | {
       type: "GOAL_TARGET_SELECTED";
       goalTarget: GoalTargetCoordinates;
-      outcome: LiveThreatOutcome;
-      keeperBodyPart?: KeeperBodyPart;
     }
+  | { type: "DEFENSIVE_OUTCOME_SELECTED"; outcome: "GOL" | "PARADA" }
+  | { type: "KEEPER_BODY_PART_SELECTED"; keeperBodyPart: KeeperBodyPart }
   | { type: "SAVE_OUTCOME_SELECTED"; saveOutcome: SaveOutcome }
   | { type: "PHASE_SELECTED"; phase: LiveThreatPhase }
   | { type: "OUTCOME_SELECTED"; outcome: LiveThreatOutcome }
@@ -305,21 +308,60 @@ export function reduceLiveInteraction(
     if (state.side !== "AGAINST" || state.step !== "GOAL_TARGET") {
       return { state };
     }
+    const outside = !isInsideGoalFrame(action.goalTarget);
     const targeted: PendingThreat = {
       ...state,
       goalTarget: action.goalTarget,
-      outcome: action.outcome,
-      keeperBodyPart: action.keeperBodyPart ?? null,
+      outcome: outside ? "FUERA" : null,
+      keeperBodyPart: null,
       saveOutcome: null,
-      step: action.outcome === "PARADA" ? "DETAILS" : "PHASE",
+      step: outside ? "PHASE" : "GOAL_RESULT",
     };
-    return action.outcome !== "PARADA" && targeted.parentEventId && targeted.phase
+    return outside && targeted.parentEventId && targeted.phase
       ? recordDefensiveThreat(targeted, targeted.phase)
       : { state: targeted };
   }
 
+  if (action.type === "DEFENSIVE_OUTCOME_SELECTED") {
+    if (state.side !== "AGAINST" || state.step !== "GOAL_RESULT" || !state.goalTarget) {
+      return { state };
+    }
+    const resolved: PendingThreat = {
+      ...state,
+      outcome: action.outcome,
+      keeperBodyPart: null,
+      saveOutcome: null,
+      step: action.outcome === "PARADA" ? "KEEPER_BODY_PART" : "PHASE",
+    };
+    return action.outcome === "GOL" && resolved.parentEventId && resolved.phase
+      ? recordDefensiveThreat(resolved, resolved.phase)
+      : { state: resolved };
+  }
+
+  if (action.type === "KEEPER_BODY_PART_SELECTED") {
+    if (
+      state.side !== "AGAINST" ||
+      state.step !== "KEEPER_BODY_PART" ||
+      state.outcome !== "PARADA"
+    ) {
+      return { state };
+    }
+    return {
+      state: {
+        ...state,
+        keeperBodyPart: action.keeperBodyPart,
+        step: "DETAILS",
+      },
+    };
+  }
+
   if (action.type === "SAVE_OUTCOME_SELECTED") {
-    if (state.side !== "AGAINST" || state.step !== "DETAILS") {
+    if (
+      state.side !== "AGAINST" ||
+      state.step !== "DETAILS" ||
+      state.outcome !== "PARADA" ||
+      !state.keeperBodyPart
+    ) {
       return { state };
     }
     const detailed: PendingThreat = {

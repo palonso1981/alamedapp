@@ -840,13 +840,17 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             {pendingThreat?.side === "AGAINST" && (
               <DefensiveThreatContext
                 threat={pendingThreat}
-                onTarget={(goalTarget, outcome, keeperBodyPart) =>
+                onTarget={(goalTarget) =>
                   applyInteraction({
                     type: "GOAL_TARGET_SELECTED",
                     goalTarget,
-                    outcome,
-                    keeperBodyPart,
                   })
+                }
+                onDefensiveOutcome={(outcome) =>
+                  applyInteraction({ type: "DEFENSIVE_OUTCOME_SELECTED", outcome })
+                }
+                onBodyPart={(keeperBodyPart) =>
+                  applyInteraction({ type: "KEEPER_BODY_PART_SELECTED", keeperBodyPart })
                 }
                 onSaveOutcome={(saveOutcome) =>
                   applyInteraction({ type: "SAVE_OUTCOME_SELECTED", saveOutcome })

@@ -160,16 +160,19 @@ derivarán de eventos; no se persistirán contadores agregados.
 
 El recorrido RIV tiene una definición propia:
 
-`origen → GoalTargetPicker → detalles compatibles → fase → autoguardado`.
+`origen → destino → [GOL | PARADA] → [parte corporal] → [desenlace] → fase`.
 
-`GoalTargetPicker` representa frontalmente la portería CDA con postes, larguero,
-red/profundidad, una zona exterior amplia y una figura de guardia proporcionada.
-El toque normalizado infiere FUERA fuera del marco y propone GOL o PARADA dentro.
-La zona táctil de intervención es más amplia que el cuerpo dibujado: cubre brazos,
-zonas bajas, escuadras y proximidad de postes. Como una misma coordenada real
-puede ser gol o parada, la V2 confirma el resultado interior sin desplazar el
-punto; así no obliga a falsear la posición para obtener PARADA. Una parada deriva
-`UPPER`/`LOWER` y pide solo `CATCH`, `REBOUND` o `CLEARANCE`. El operador no
+El paso de destino muestra una portería CDA vacía: no contiene silueta ni zonas
+corporales interactivas y guarda exclusivamente `goalTarget.x/y` normalizados.
+Un punto exterior produce `FUERA`; cualquier punto interior conduce siempre a
+una elección explícita entre `GOL` y `PARADA`. La geometría del portero no
+participa en esa decisión.
+
+Solo después de elegir `PARADA` aparece una vista independiente con la silueta
+grande y seis regiones anatómicas. Elegir una parte corporal no altera el destino
+ya fijado ni intenta validar una relación física entre ambos datos. Después se
+elige `CATCH`, `REBOUND` o `CLEARANCE`. `UPPER`/`LOWER` se deriva de la parte
+corporal, no de la coordenada de destino. El operador no
 elige al portero: replay lo resuelve desde la alineación exacta del evento.
 Al activar Portero-Jugador se elige explícitamente una de las cinco personas en
 pista. Los eventos legacy sin esa identidad quedan `PENDING` y activan el
@@ -185,14 +188,14 @@ valida contra la geometría de su versión. `WOODWORK` queda reservado como
 detalle futuro del destino (palo/travesaño), no como cuarta consecuencia al
 nivel de GOL/PARADA/FUERA.
 
-La división corporal V2 es estable: `y < 0.55` deriva `UPPER` y el resto
-`LOWER`. Se calcula desde el punto real seleccionado. La versión geométrica se
-persiste para mantener exactamente la semántica V1 de sesiones anteriores.
+La división corporal V2 es estable: cabeza, torso y brazos derivan `UPPER`;
+piernas y pies derivan `LOWER`. La versión geométrica se persiste para mantener
+exactamente la semántica de sesiones anteriores.
 
 Las amenazas RIV anteriores sin `defensive` continúan siendo eventos válidos
 legacy y no reciben destinos inventados durante migración. Las capturas nuevas
-guardan `defensive.version = 1`, destino, referencia de portero y, si procede,
-zona corporal y desenlace de parada.
+guardan `defensive.version = 2`, destino, referencia de portero y, si procede,
+parte corporal y desenlace de parada.
 
 La pista usa una orientación analítica canónica permanente: portería CDA a la
 izquierda, portería rival a la derecha y ataque CDA hacia la derecha en P1 y

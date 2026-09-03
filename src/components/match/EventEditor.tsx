@@ -6,7 +6,8 @@ import { normalizeCourtPoint } from "../../lib/courtGeometry";
 import { effectiveThreatPhase, EventEditChanges, REGULATION_MATCH_CLOCK } from "../../lib/matchEngine";
 import { assistCandidates } from "../../lib/matchReview";
 import { EventPosition, GoalAssist, GoalkeeperReference, GoalTargetCoordinates, KeeperBodyPart, LiveThreatOutcome, LiveThreatPhase, MatchEvent, Player, SaveOutcome, StaffMember, TimelineEntry } from "../../types";
-import { GoalTargetPicker } from "./contextual/GoalTargetPicker";
+import { isInsideGoalFrame } from "../../lib/goalTarget";
+import { GoalTargetPicker, KeeperBodyPicker } from "./contextual/GoalTargetPicker";
 
 const PHASES: LiveThreatPhase[] = ["POSITIONAL", "TRANSITION", "SET_PIECE_CORNER", "SET_PIECE_FREE_KICK", "SET_PIECE_KICK_IN", "FLYING_GOALKEEPER", "PENALTY", "DOUBLE_PENALTY"];
 
@@ -119,7 +120,11 @@ function CourtPointEditor({ value, onChange }: { value: { x: number; y: number }
 
 function DefensiveDetailEditor({ event, lineupIds, flyingGoalkeeper, players, onChange }: { event: Extract<MatchEvent, { type: "threat_recorded" }>; lineupIds: string[]; flyingGoalkeeper: boolean; players: Player[]; onChange: (event: MatchEvent) => void }) {
   const goalkeeper = event.defensive?.goalkeeper ?? { status: "PENDING" };
-  const setTarget = (goalTarget: GoalTargetCoordinates, outcome: LiveThreatOutcome, keeperBodyPart?: KeeperBodyPart) => {
+  const setTarget = (goalTarget: GoalTargetCoordinates) => {
+    const inside = isInsideGoalFrame(goalTarget);
+    const outcome = inside
+      ? event.outcome === "GOL" || event.outcome === "PARADA" ? event.outcome : "GOL"
+      : "FUERA";
     onChange({
       ...event,
       outcome,
@@ -127,19 +132,41 @@ function DefensiveDetailEditor({ event, lineupIds, flyingGoalkeeper, players, on
         version: 2,
         goalTarget,
         goalkeeper,
-        keeperBodyPart: outcome === "PARADA" ? keeperBodyPart : undefined,
+        keeperBodyPart: outcome === "PARADA" ? event.defensive?.version === 2 ? event.defensive.keeperBodyPart : undefined : undefined,
         saveOutcome: outcome === "PARADA" ? event.defensive?.saveOutcome : undefined,
       },
       pendingReview: goalkeeper.status === "PENDING" ? true : event.pendingReview,
     });
   };
+  const setOutcome = (outcome: "GOL" | "PARADA") => onChange({
+    ...event,
+    outcome,
+    defensive: event.defensive ? {
+      version: 2,
+      goalTarget: event.defensive.goalTarget,
+      goalkeeper: event.defensive.goalkeeper,
+      keeperBodyPart: outcome === "PARADA" && event.defensive.version === 2 ? event.defensive.keeperBodyPart : undefined,
+      saveOutcome: outcome === "PARADA" ? event.defensive.saveOutcome : undefined,
+    } : undefined,
+  });
+  const setBodyPart = (keeperBodyPart: KeeperBodyPart) => onChange({
+    ...event,
+    defensive: event.defensive ? {
+      version: 2,
+      goalTarget: event.defensive.goalTarget,
+      goalkeeper: event.defensive.goalkeeper,
+      keeperBodyPart,
+      saveOutcome: event.defensive.saveOutcome,
+    } : undefined,
+  });
   const setGoalkeeper = (reference: GoalkeeperReference) => onChange({ ...event, defensive: event.defensive ? { ...event.defensive, goalkeeper: reference.status === "PLAYER" ? { ...reference, resolution: "MANUAL" } : reference } : undefined, pendingReview: reference.status === "PENDING" ? true : event.pendingReview });
   const setSaveOutcome = (saveOutcome: SaveOutcome) => onChange({ ...event, defensive: event.defensive ? { ...event.defensive, saveOutcome } : undefined });
   const eligibleGoalkeepers = lineupIds.filter((id) => {
     const player = players.find((candidate) => candidate.id === id);
     return Boolean(player) && (flyingGoalkeeper || player?.position?.toUpperCase().includes("PORTERO"));
   });
-  return <div className="space-y-2 rounded-xl border border-rose-900 bg-rose-950/20 p-2"><div className="flex items-center justify-between"><p className="text-[10px] font-black uppercase text-rose-200">Portería CDA</p>{!event.defensive && <span className="rounded-full bg-slate-800 px-2 py-1 text-[9px] text-slate-400">LEGACY · sin destino</span>}</div><GoalTargetPicker value={event.defensive?.goalTarget} onSelect={setTarget} compact />{event.defensive && <><Select label="Portero en el instante" value={goalkeeper.status === "PLAYER" ? goalkeeper.playerId : "PENDING"} onChange={(value) => setGoalkeeper(value === "PENDING" ? { status: "PENDING" } : { status: "PLAYER", playerId: value })} options={[...eligibleGoalkeepers.map((id) => { const player = players.find((candidate) => candidate.id === id)!; return { value: id, label: `${player.number} · ${player.name}` }; }), { value: "PENDING", label: "? Pendiente de identificar" }]} />{event.outcome === "PARADA" && <div className="grid grid-cols-3 gap-2">{([['CATCH','BLOCAJE'],['REBOUND','RECHACE'],['CLEARANCE','DESPEJE']] as Array<[SaveOutcome,string]>).map(([value,label]) => <button key={value} type="button" onClick={() => setSaveOutcome(value)} className={`min-h-11 rounded-xl text-[10px] font-black ${event.defensive?.saveOutcome === value ? "bg-sky-600" : "bg-slate-800"}`}>{label}</button>)}</div>}</>}</div>;
+  const inside = event.defensive ? isInsideGoalFrame(event.defensive.goalTarget) : false;
+  return <div className="space-y-2 rounded-xl border border-rose-900 bg-rose-950/20 p-2"><div className="flex items-center justify-between"><p className="text-[10px] font-black uppercase text-rose-200">Portería CDA</p>{!event.defensive && <span className="rounded-full bg-slate-800 px-2 py-1 text-[9px] text-slate-400">LEGACY · sin destino</span>}</div><GoalTargetPicker value={event.defensive?.goalTarget} onSelect={setTarget} compact />{event.defensive && <>{inside && <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setOutcome("GOL")} className={`min-h-12 rounded-xl font-black ${event.outcome === "GOL" ? "bg-rose-600" : "bg-slate-800"}`}>GOL</button><button type="button" onClick={() => setOutcome("PARADA")} className={`min-h-12 rounded-xl font-black ${event.outcome === "PARADA" ? "bg-sky-600" : "bg-slate-800"}`}>PARADA</button></div>}<Select label="Portero en el instante" value={goalkeeper.status === "PLAYER" ? goalkeeper.playerId : "PENDING"} onChange={(value) => setGoalkeeper(value === "PENDING" ? { status: "PENDING" } : { status: "PLAYER", playerId: value })} options={[...eligibleGoalkeepers.map((id) => { const player = players.find((candidate) => candidate.id === id)!; return { value: id, label: `${player.number} · ${player.name}` }; }), { value: "PENDING", label: "? Pendiente de identificar" }]} />{event.outcome === "PARADA" && <><KeeperBodyPicker onSelect={setBodyPart} /><div className="grid grid-cols-3 gap-2">{([['CATCH','BLOCAJE'],['REBOUND','RECHACE'],['CLEARANCE','DESPEJE']] as Array<[SaveOutcome,string]>).map(([value,label]) => <button key={value} type="button" onClick={() => setSaveOutcome(value)} className={`min-h-11 rounded-xl text-[10px] font-black ${event.defensive?.saveOutcome === value ? "bg-sky-600" : "bg-slate-800"}`}>{label}</button>)}</div></>}</>}</div>;
 }
 
 function NumberField({ label, value, min, max, step = 1, onChange }: { label: string; value: number; min: number; max?: number; step?: number; onChange: (value: number) => void }) { return <label className="text-[10px] font-bold uppercase text-slate-400">{label}<input type="number" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-white" /></label>; }
