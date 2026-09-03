@@ -121,8 +121,13 @@ export function assertSeasonScope(
   teamId: string,
   seasonId: string,
 ): Season {
-  const team = workspace.teams.find((item) => item.teamId === teamId && item.clubId === workspace.clubId && item.active && !item.archivedAt && !item.deletedAt);
-  if (!team) throw new Error("El equipo no pertenece al club actual o no está activo.");
+  const team = workspace.teams.find((item) => item.teamId === teamId) ??
+    (teamId === workspace.teamId ? workspace.team : undefined);
+  const teamClubId = team?.clubId ?? workspace.clubId;
+  const teamBelongsToWorkspace = teamId === workspace.teamId
+    ? teamClubId === workspace.clubId || teamClubId === workspace.teamId
+    : teamClubId === workspace.clubId;
+  if (!team || !teamBelongsToWorkspace || !team.active || team.archivedAt || team.deletedAt) throw new Error("El equipo no pertenece al club actual o no está activo.");
   const season = workspace.seasons.find((item) => item.seasonId === seasonId && item.teamId === teamId && (item.clubId ?? workspace.clubId) === workspace.clubId && item.active && !item.archivedAt && !item.deletedAt);
   if (!season) throw new Error("La temporada no pertenece al equipo y club seleccionados.");
   return season;

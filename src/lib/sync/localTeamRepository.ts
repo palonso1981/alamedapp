@@ -237,6 +237,17 @@ function migrateSync(value: unknown, teamId: string): TeamSyncState {
           ]),
         )
       : {};
+  const conflicts = Array.isArray(source.conflicts)
+    ? source.conflicts.flatMap((conflict) => {
+        if (typeof conflict !== "object" || conflict === null) return [];
+        const typed = conflict as TeamSyncConflict;
+        if (!retained.has(typed.operationId)) return [];
+        const operation = outbox.find((item) => item.id === typed.operationId);
+        return operation
+          ? [{ ...typed, entityKey: teamEntityKey(operation.entityType, operation.entityId, operation.namespace) }]
+          : [];
+      })
+    : [];
   return {
     schemaVersion: 3,
     outbox,
@@ -246,15 +257,7 @@ function migrateSync(value: unknown, teamId: string): TeamSyncState {
     lastSyncedAt: typeof source.lastSyncedAt === "number" ? source.lastSyncedAt : null,
     lastError: typeof source.lastError === "string" ? source.lastError : null,
     lastErrorKind: source.lastErrorKind ?? null,
-    conflicts: Array.isArray(source.conflicts)
-      ? source.conflicts.flatMap((conflict) => {
-          if (typeof conflict !== "object" || conflict === null) return [];
-          const typed = conflict as TeamSyncConflict;
-          if (!retained.has(typed.operationId)) return [];
-          const operation = outbox.find((item) => item.id === typed.operationId);
-          return operation ? [{ ...typed, entityKey: teamEntityKey(operation.entityType, operation.entityId, operation.namespace) }] : [];
-        })
-      : [],
+    conflicts,
   };
 }
 
@@ -589,6 +592,9 @@ export class LocalTeamRepository {
     this.write(teamId, record.roster, {
       ...record.sync,
       outbox,
+      conflicts: record.sync.conflicts.filter(
+        (conflict) => conflict.operationId !== operationId,
+      ),
       knownRemoteRevisions: { ...record.sync.knownRemoteRevisions, [key]: remoteRevision },
       lastSyncedAt: this.now(),
       lastError: null,
@@ -677,6 +683,29 @@ export class LocalTeamRepository {
     if (!record) return;
     const outbox = record.sync.outbox.map((operation) =>
       operation.status === "ERROR"
+        ? {
+            ...operation,
+            status: "PENDING" as const,
+            nextAttemptAt: 0,
+            lastError: undefined,
+            errorKind: undefined,
+          }
+        : operation,
+    );
+    this.write(teamId, record.roster, {
+      ...record.sync,
+      outbox,
+      lastError: null,
+      lastErrorKind: null,
+    });
+    this.notify(teamId);
+  }
+
+  retryConflicts(teamId: string): void {
+    const record = readEnvelope(teamId, this.storage());
+    if (!record) return;
+    const outbox = record.sync.outbox.map((operation) =>
+      operation.status === "CONFLICT"
         ? {
             ...operation,
             status: "PENDING" as const,

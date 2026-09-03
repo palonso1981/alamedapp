@@ -138,7 +138,9 @@ export function availableTeams(workspace: TeamWorkspace, includeArchived = false
 }
 
 export function clubPlayers(workspace: TeamWorkspace, includeArchived = false): MasterPlayer[] {
-  return workspace.players.filter((player) => !player.deletedAt && (includeArchived || !player.archivedAt));
+  return workspace.players.filter((player) =>
+    !player.deletedAt && (includeArchived || (player.active && !player.archivedAt)),
+  );
 }
 
 export function clubStaff(workspace: TeamWorkspace, includeArchived = false): MasterStaffMember[] {

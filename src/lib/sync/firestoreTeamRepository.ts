@@ -9,6 +9,23 @@ function firestoreValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function stableFirestoreValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableFirestoreValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, stableFirestoreValue(nested)]),
+    );
+  }
+  return value;
+}
+
+function sameFirestorePayload(left: unknown, right: unknown): boolean {
+  return JSON.stringify(stableFirestoreValue(firestoreValue(left))) ===
+    JSON.stringify(stableFirestoreValue(firestoreValue(right)));
+}
+
 export class FirestoreDevTeamRepository
   implements RevisionedRemoteRepository<TeamSyncOperation>
 {
@@ -73,6 +90,12 @@ export class FirestoreDevTeamRepository
       const remoteRevision =
         typeof current?.revision === "number" ? current.revision : 0;
       if (current?.lastOperationId === operation.id) {
+        return { status: "ALREADY_APPLIED", revision: remoteRevision };
+      }
+      if (
+        current?.payload !== undefined &&
+        sameFirestorePayload(current.payload, payload)
+      ) {
         return { status: "ALREADY_APPLIED", revision: remoteRevision };
       }
       if (remoteRevision !== operation.baseRevision) {

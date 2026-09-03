@@ -19,6 +19,7 @@ import {
   calculateDeletionImpact,
   assignLegacyMatchSeason,
   availableTeams,
+  clubPlayers,
   changeAdminLifecycle,
   changeMatchLifecycle,
   createTeamProfile,
@@ -72,6 +73,9 @@ class TeamRemote implements RevisionedRemoteRepository<TeamSyncOperation> {
     const key = teamEntityKey(operation.entityType, operation.entityId, operation.namespace);
     const current = this.documents.get(key);
     if (current?.operationId === operation.id) return { status: "ALREADY_APPLIED", revision: current.revision };
+    if (current && JSON.stringify(current.payload) === JSON.stringify(operation.payload)) {
+      return { status: "ALREADY_APPLIED", revision: current.revision };
+    }
     const revision = current?.revision ?? 0;
     if (revision !== operation.baseRevision) return { status: "CONFLICT", remoteRevision: revision, remotePayload: current?.payload ?? null };
     this.documents.set(key, { revision: revision + 1, payload: structuredClone(operation.payload), operationId: operation.id });
@@ -467,6 +471,57 @@ test("conflicto de plantilla conserva payload local y remoto", async () => {
   assert.equal((state.conflicts[0].localPayload as MasterPlayer).playerId, player.playerId);
 });
 
+test("payload remoto idéntico adopta la revisión y no crea un falso conflicto", async () => {
+  const storage = new MemoryStorage(); let operation = 0;
+  const local = new LocalTeamRepository({ storage, idFactory: () => `equivalent-op-${++operation}` });
+  const remote = new TeamRemote();
+  const workspace = { ...workspaceFixture(), staff: [], players: [workspaceFixture().players[0]] };
+  local.save(workspace);
+  const playerOperation = local.getSyncState(workspace.teamId).outbox.find((item) => item.entityType === "PLAYER")!;
+  const key = teamEntityKey(playerOperation.entityType, playerOperation.entityId, playerOperation.namespace);
+  remote.documents.set(key, {
+    revision: 7,
+    payload: structuredClone(playerOperation.payload),
+    operationId: "ack-perdido-en-otra-sesion",
+  });
+
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(workspace.teamId);
+
+  const sync = local.getSyncState(workspace.teamId);
+  assert.equal(sync.outbox.some((item) => item.id === playerOperation.id), false);
+  assert.equal(sync.conflicts.length, 0);
+  assert.equal(sync.knownRemoteRevisions[key], 7);
+  assert.equal(remote.documents.get(key)?.operationId, "ack-perdido-en-otra-sesion");
+});
+
+test("recomprobar un conflicto solo lo cierra si local y nube ya son idénticos", async () => {
+  const storage = new MemoryStorage(); let operation = 0;
+  const local = new LocalTeamRepository({ storage, idFactory: () => `recheck-op-${++operation}` });
+  const remote = new TeamRemote();
+  const workspace = { ...workspaceFixture(), staff: [], players: [workspaceFixture().players[0]] };
+  local.save(workspace);
+  const playerOperation = local.getSyncState(workspace.teamId).outbox.find((item) => item.entityType === "PLAYER")!;
+  const key = teamEntityKey(playerOperation.entityType, playerOperation.entityId, playerOperation.namespace);
+  remote.documents.set(key, { revision: 3, payload: { remote: true }, operationId: "remote-change" });
+  const coordinator = new SyncCoordinator(local, remote, { isOnline: () => true });
+  await coordinator.syncMatch(workspace.teamId);
+  assert.equal(local.getSummary(workspace.teamId).conflicts, 1);
+
+  local.retryConflicts(workspace.teamId);
+  await coordinator.syncMatch(workspace.teamId);
+  let sync = local.getSyncState(workspace.teamId);
+  assert.equal(sync.conflicts.length, 1, "una divergencia real sigue conservando ambas versiones");
+  assert.deepEqual(sync.conflicts[0].remotePayload, { remote: true });
+
+  remote.documents.set(key, { revision: 3, payload: structuredClone(playerOperation.payload), operationId: "remote-equivalent" });
+  local.retryConflicts(workspace.teamId);
+  await coordinator.syncMatch(workspace.teamId);
+  sync = local.getSyncState(workspace.teamId);
+  assert.equal(sync.outbox.some((item) => item.id === playerOperation.id), false);
+  assert.equal(sync.conflicts.length, 0);
+  assert.equal(sync.knownRemoteRevisions[key], 3);
+});
+
 test("Prepartido deriva convocatoria, cinco, banquillo, portero, staff y plan", () => {
   const roster = rosterFixture(); let session = createDraftMatch("prematch-complete", { ...MATCH_SCOPE, opponent: "Rival", venue: "HOME", date: "2026-09-01" }, 1);
   for (const player of roster.players.slice(0, 7)) session = toggleCalledPlayer(session, roster, player.playerId, 2);
@@ -813,6 +868,48 @@ test("Prepartido busca jugadores activos de todo el club sin duplicar por equipo
   assert.equal(candidateIds.length, new Set(candidateIds).size);
   assert.equal(clubExtraPlayerCandidates(workspace, currentRosterIds, "J3").some((player) => player.playerId === "p-3"), true);
   assert.equal(clubExtraPlayerCandidates(workspace, currentRosterIds, "", true).some((player) => player.playerId === "p-4"), true);
+});
+
+test("archivar equipo o temporada y retirar membership no archiva la identidad maestra", () => {
+  let workspace = createTeamProfile(workspaceFixture(), { name: "Juvenil" }, { teamId: "juvenil-safe", now: 1 });
+  workspace = createSeason(workspace, { teamId: "juvenil-safe", label: "2026-27" }, { seasonId: "juvenil-safe-26", now: 2 });
+  workspace = upsertSeasonPlayer(workspace, "juvenil-safe-26", "p-3", { active: true }, 3);
+  const original = workspace.players.find((player) => player.playerId === "p-3")!;
+
+  workspace = upsertSeasonPlayer(workspace, "juvenil-safe-26", "p-3", { active: false }, 4);
+  workspace = changeAdminLifecycle(workspace, "SEASON", "juvenil-safe-26", "ARCHIVE", 5);
+  workspace = changeAdminLifecycle(workspace, "TEAM", "juvenil-safe", "ARCHIVE", 6);
+
+  assert.deepEqual(workspace.players.find((player) => player.playerId === "p-3"), original);
+  assert.equal(clubPlayers(workspace).some((player) => player.playerId === "p-3"), true);
+  assert.equal(clubExtraPlayerCandidates(workspace).some((player) => player.playerId === "p-3"), true);
+
+  workspace = changeAdminLifecycle(workspace, "PLAYER", "p-3", "ARCHIVE", 7);
+  assert.equal(clubPlayers(workspace).some((player) => player.playerId === "p-3"), false);
+  assert.equal(clubPlayers(workspace, true).some((player) => player.playerId === "p-3"), true);
+});
+
+test("crear partido acepta Senior A legacy/canónico del club y mantiene rechazos estrictos", () => {
+  let legacy = workspaceFixture();
+  legacy = {
+    ...legacy,
+    team: { ...legacy.team, name: "CD Alameda Senior A", shortName: "SEN A", clubId: legacy.clubId },
+  };
+  legacy = createSeason(legacy, { teamId: legacy.teamId, label: "2026-27" }, { seasonId: "alameda-26", now: 10 });
+  assert.doesNotThrow(() => assertSeasonScope(legacy, legacy.teamId, "alameda-26"));
+
+  let canonical = createTeamProfile(workspaceFixture(), { name: "CD Alameda Senior A", shortName: "SEN A" }, { teamId: "senior-a-valid", now: 11 });
+  canonical = createSeason(canonical, { teamId: "senior-a-valid", label: "2026-27" }, { seasonId: "senior-a-26", now: 12 });
+  assert.doesNotThrow(() => assertSeasonScope(canonical, "senior-a-valid", "senior-a-26"));
+
+  const foreign = {
+    ...canonical,
+    teams: canonical.teams.map((team) => team.teamId === "senior-a-valid" ? { ...team, clubId: "otro-club" } : team),
+  };
+  assert.throws(() => assertSeasonScope(foreign, "senior-a-valid", "senior-a-26"), /no pertenece al club actual/i);
+
+  const archived = changeAdminLifecycle(canonical, "TEAM", "senior-a-valid", "ARCHIVE", 13);
+  assert.throws(() => assertSeasonScope(archived, "senior-a-valid", "senior-a-26"), /no pertenece al club actual|no está activo/i);
 });
 
 test("temporadas archivadas y tombstones no reaparecen en operativa normal", () => {

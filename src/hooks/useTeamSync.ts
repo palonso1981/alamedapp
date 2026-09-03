@@ -12,7 +12,11 @@ import {
   RevisionedRemoteRepository,
   SyncCoordinator,
 } from "../lib/sync/syncCoordinator";
-import { TeamSyncOperation } from "../lib/sync/teamSyncTypes";
+import {
+  TeamEntityType,
+  TeamSyncNamespace,
+  TeamSyncOperation,
+} from "../lib/sync/teamSyncTypes";
 import { MatchSyncSummary } from "../lib/sync/syncTypes";
 
 const EMPTY_SUMMARY: MatchSyncSummary = {
@@ -42,19 +46,84 @@ const coordinator = new SyncCoordinator(browserTeamRepository, lazyRemote);
 
 export interface TeamSyncView {
   summary: MatchSyncSummary;
+  conflicts: TeamConflictView[];
+  errors: TeamErrorView[];
   config: FirebaseDevConfigStatus;
   online: boolean;
   retry: () => void;
+  recheckConflicts: () => void;
+}
+
+export interface TeamConflictView {
+  entityType: TeamEntityType;
+  entityId: string;
+  entityLabel: string;
+  clubId: string;
+  namespace: TeamSyncNamespace;
+  operationId: string;
+  baseRevision: number;
+  localRevision: number | null;
+  remoteRevision: number;
+  status: "CONFLICT";
+}
+
+export interface TeamErrorView {
+  entityType: TeamEntityType;
+  entityId: string;
+  entityLabel: string;
+  clubId: string;
+  namespace: TeamSyncNamespace;
+  operationId: string;
+  baseRevision: number;
+  error: string;
+}
+
+function payloadLabel(payload: TeamSyncOperation["payload"]): string {
+  if ("displayName" in payload) return payload.displayName;
+  if ("name" in payload) return payload.name;
+  if ("label" in payload) return payload.label;
+  return "Entidad sin nombre";
 }
 
 export function useTeamSync(teamId: string): TeamSyncView {
   const config = useMemo(() => firebaseDevConfigStatus(), []);
   const [summary, setSummary] = useState<MatchSyncSummary>(EMPTY_SUMMARY);
+  const [conflicts, setConflicts] = useState<TeamConflictView[]>([]);
+  const [errors, setErrors] = useState<TeamErrorView[]>([]);
   const [online, setOnline] = useState(true);
-  const refresh = useCallback(
-    () => setSummary(browserTeamRepository.getSummary(teamId)),
-    [teamId],
-  );
+  const refresh = useCallback(() => {
+    const sync = browserTeamRepository.getSyncState(teamId);
+    setSummary(browserTeamRepository.getSummary(teamId));
+    setConflicts(sync.conflicts.flatMap((conflict) => {
+      const operation = sync.outbox.find((item) => item.id === conflict.operationId);
+      if (!operation || operation.status !== "CONFLICT") return [];
+      const revision = "revision" in operation.payload && typeof operation.payload.revision === "number"
+        ? operation.payload.revision
+        : null;
+      return [{
+        entityType: operation.entityType,
+        entityId: operation.entityId,
+        entityLabel: payloadLabel(operation.payload),
+        clubId: operation.teamId,
+        namespace: operation.namespace,
+        operationId: operation.id,
+        baseRevision: operation.baseRevision,
+        localRevision: revision,
+        remoteRevision: conflict.remoteRevision,
+        status: "CONFLICT" as const,
+      }];
+    }));
+    setErrors(sync.outbox.flatMap((operation) => operation.status === "ERROR" ? [{
+      entityType: operation.entityType,
+      entityId: operation.entityId,
+      entityLabel: payloadLabel(operation.payload),
+      clubId: operation.teamId,
+      namespace: operation.namespace,
+      operationId: operation.id,
+      baseRevision: operation.baseRevision,
+      error: operation.lastError ?? "Error de sincronización sin detalle.",
+    }] : []));
+  }, [teamId]);
   const sync = useCallback(() => {
     if (!config.configured || !navigator.onLine) return;
     void coordinator.syncMatch(teamId).then(refresh);
@@ -62,6 +131,11 @@ export function useTeamSync(teamId: string): TeamSyncView {
   const retry = useCallback(() => {
     if (!config.configured || !navigator.onLine) return;
     void coordinator.retryMatch(teamId).then(refresh);
+  }, [config.configured, refresh, teamId]);
+  const recheckConflicts = useCallback(() => {
+    if (!config.configured || !navigator.onLine) return;
+    browserTeamRepository.retryConflicts(teamId);
+    void coordinator.syncMatch(teamId).then(refresh);
   }, [config.configured, refresh, teamId]);
 
   useEffect(() => {
@@ -91,5 +165,5 @@ export function useTeamSync(teamId: string): TeamSyncView {
     };
   }, [refresh, retry, sync, teamId]);
 
-  return { summary, config, online, retry };
+  return { summary, conflicts, errors, config, online, retry, recheckConflicts };
 }
