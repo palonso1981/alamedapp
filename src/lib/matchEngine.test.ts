@@ -44,6 +44,7 @@ import { classifyGoalTarget, deriveKeeperBodyZone, deriveKeeperBodyZoneFromPart,
 import { assistCandidates, filterTimelineEvents } from "./matchReview";
 import { effectiveReviewStatus, reviewEventCounts, targetMinutesComparisons } from "./postMatchReview";
 import { deriveGoalZoneV1, derivePitchZoneV1, PITCH_ZONE_MODEL_VERSION } from "./spatialZones";
+import { functionalGoalkeeperBadge } from "./goalkeeperPresentation";
 import {
   DEMO_EXTRA_PLAYER,
   DEMO_PLAYERS,
@@ -63,6 +64,15 @@ import {
 } from "../types";
 
 const players: Player[] = DEMO_PLAYERS.map((player) => ({ ...player }));
+
+test("la etiqueta visual distingue portero funcional, perfil natural y P-J", () => {
+  const natural: Player = { id: "gk", name: "Portero", number: 1, naturalPosition: "GOALKEEPER", position: "PORTERO" };
+  const field: Player = { id: "field", name: "Campo", number: 4, naturalPosition: "FIXO", position: "JUGADOR", goalkeeperCapable: true };
+  assert.equal(functionalGoalkeeperBadge(natural, "gk"), "PORTERO");
+  assert.equal(functionalGoalkeeperBadge(field, "field"), "PORTERO · ROL FUNCIONAL");
+  assert.equal(functionalGoalkeeperBadge(field, "gk"), null);
+  assert.equal(field.position, "JUGADOR", "la etiqueta funcional no convierte por sí sola al jugador en P-J");
+});
 
 function initialLineup(matchId = "match-a"): MatchEvent[] {
   return [

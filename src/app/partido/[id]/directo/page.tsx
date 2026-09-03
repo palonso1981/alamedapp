@@ -25,8 +25,10 @@ import {
   RecentEventsPanel,
 } from "../../../../components/match/RecentEventsPanel";
 import { PlayerAvatar } from "../../../../components/player/PlayerAvatar";
+import { ClubContextLabel } from "../../../../components/app/ClubContextLabel";
 import { normalizeCourtPoint } from "../../../../lib/courtGeometry";
 import { eventDescription } from "../../../../lib/eventPresentation";
+import { functionalGoalkeeperBadge } from "../../../../lib/goalkeeperPresentation";
 import {
   IDLE_LIVE_INTERACTION,
   LiveInteractionAction,
@@ -44,6 +46,7 @@ import {
 } from "../../../../store/useMatchStore";
 import {
   INFERIORITY_SLOT_ID,
+  CDA_CLUB_ID,
   MatchEvent,
   Player,
 } from "../../../../types";
@@ -301,6 +304,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
 
   const periodClosed = session.reviewPeriod === undefined && (session.matchFinished || (session.closedPeriods?.includes(session.period) || false));
   const lineupBlocked = replay.lineupValidation.captureBlocked;
+  const functionalGoalkeeperId = replay.lineupValidation.goalkeeper.status === "PLAYER"
+    ? replay.lineupValidation.goalkeeper.playerId
+    : undefined;
   const captureBlocked = lineupBlocked || periodClosed;
   const blockedAction = () => {
     setFeedback(periodClosed ? "■ Periodo cerrado" : "⚠ Corrige la alineación antes de registrar otra acción");
@@ -487,14 +493,18 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         />
       )}
       <header className="mx-auto mb-2 flex max-w-7xl flex-wrap items-center justify-between gap-2 border-b border-gray-700 pb-2">
-        <div>
+        <div className="flex min-w-0 items-center gap-2">
+          <Link href="/partidos" className="grid min-h-12 min-w-12 shrink-0 place-items-center rounded-xl border border-cyan-700/70 bg-slate-900 text-lg font-black text-cyan-200 active:scale-95" aria-label="Salir del Directo y volver a Partidos" title="Partidos">⌂</Link>
+          <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400">
             Partido {matchId}
           </p>
           <h1 className="text-xl font-bold">Directo: CD Alameda</h1>
+          <ClubContextLabel clubId={session.preparation?.clubId ?? CDA_CLUB_ID} />
+          </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex w-full items-center justify-center gap-1.5 sm:w-auto">
           <MatchScoreboard
             score={chronologyReplay.score}
             period={capturePeriod}
@@ -731,6 +741,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               if (!player) return null;
               const selected = selectedPlayerId === player.id;
               const minutes = replay.playerMinutes[player.id];
+              const goalkeeperBadge = functionalGoalkeeperBadge(player, functionalGoalkeeperId);
+              const flyingGoalkeeper = replay.flyingGoalkeeperActive && replay.flyingGoalkeeperPlayerId === player.id;
               return (
                 <button
                   key={player.id}
@@ -749,7 +761,16 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   }`}
                   style={{ left: `${position.x * 100}%`, top: `${position.y * 100}%` }}
                   aria-pressed={selected}
+                  aria-label={`${player.name}${goalkeeperBadge ? `, ${goalkeeperBadge}` : ""}${flyingGoalkeeper ? ", portero-jugador" : ""}`}
                 >
+                  {goalkeeperBadge && (
+                    <span className={`absolute -top-2 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[8px] font-black tracking-wide shadow-lg sm:text-[9px] ${goalkeeperBadge === "PORTERO" ? "border-cyan-200 bg-cyan-950 text-cyan-100" : "border-amber-200 bg-amber-950 text-amber-100"}`}>
+                      {goalkeeperBadge === "PORTERO" ? goalkeeperBadge : "PORTERO · ROL"}
+                    </span>
+                  )}
+                  {flyingGoalkeeper && (
+                    <span className="absolute -bottom-2 left-1/2 z-20 -translate-x-1/2 rounded-full border border-rose-200 bg-rose-700 px-1.5 py-0.5 text-[8px] font-black tracking-wide text-white shadow-lg">P-J</span>
+                  )}
                   <PlayerAvatar player={player} selected={selected} compact />
                   <span className="mt-1 hidden max-w-full truncate text-xs font-semibold sm:block">{player.name}</span>
                   <span className="mt-1 flex items-baseline gap-1.5" aria-label={`${minutes.currentStintMinutes} minutos en el tramo actual; ${minutes.totalMinutes} minutos acumulados`}>
