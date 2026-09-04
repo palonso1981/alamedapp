@@ -26,6 +26,8 @@
     "src/lib/preMatch.ts",
     "src/lib/roster.test.ts",
     "src/lib/matchCatalog.ts",
+    "src/lib/dashboardAnalytics.ts",
+    "src/lib/dashboardAnalytics.test.ts",
     "src/lib/sync/teamSyncTypes.ts",
     "src/lib/sync/localTeamRepository.ts",
     "src/store/useMatchStore.ts",
