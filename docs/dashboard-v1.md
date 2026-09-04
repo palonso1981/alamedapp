@@ -44,3 +44,30 @@ La granularidad ausente se expresa como `N/D`. V1 trabaja con `EVENTOS COMPLETOS
 ## Offline y rendimiento
 
 La ruta `/dashboard` carga en una sola pasada el catálogo y las sesiones locales; después filtra y deriva en memoria. No realiza una consulta remota por widget y sigue funcionando sin Internet para los partidos presentes en el dispositivo.
+
+## Evolución V1.1 — analizar y comparar
+
+La navegación se separa en Resumen, Equipo, Jugadores, Porteros y Mapas/Zonas. El ámbito analizado admite temporada, partido, P1/P2, local/visitante y resultado derivado del marcador. La referencia predeterminada de un partido es la media del mismo periodo de la temporada; cuando se analiza P1 o P2 también puede compararse con el otro periodo del mismo partido.
+
+Una media de partido es `total de la muestra / partidos válidos`. Una media de periodo usa `total del periodo / periodos válidos`; nunca mezcla partidos completos y periodos. La presentación comparativa prioriza `valor analizado`, `media de referencia` y `diferencia absoluta`. El signo no recibe automáticamente semántica positiva o negativa: más amenazas generadas y más amenazas recibidas no significan lo mismo.
+
+Los ratios se derivan como `valor / minutosObservados × 40` y son `N/D` sin denominador. Para jugadores, el denominador de los datos “con él en pista” son exclusivamente sus minutos reconstruidos, incluyendo todos sus intervalos de entrada y salida. Esos datos describen al equipo durante sus minutos y no afirman causalidad. Una muestra inferior a 20 minutos se marca como `MUESTRA BAJA`; es un umbral técnico configurable, no una regla deportiva ni un filtro de ranking.
+
+La ficha `/dashboard/jugador/{playerId}` presenta identidad congelada para el partido/temporada, acciones propias, contexto colectivo, evolución de minutos y mapa exacto de tiros. Una amenaza propia solo se atribuye al `playerId` del evento. Las asistencias `PLAYER` se cuentan; `PENDING` no. No se muestra un mapa de pases de asistencia porque el modelo no captura la coordenada del pase y nunca se reutiliza el origen del tiro para inventarla.
+
+## Zonas derivadas V1.1
+
+Las coordenadas normalizadas siguen siendo la fuente de verdad. El resumen de pista 1–6 se deriva desde la perspectiva del portero CDA, situado en la portería izquierda y mirando hacia la derecha: cerca, Z1 derecha/Z2 centro/Z3 izquierda; lejos, Z4 derecha/Z5 centro/Z6 izquierda. En el lienzo canónico, la derecha del portero es la parte inferior. El corte longitudinal técnico es `x = 0.25` (penalti aproximadamente Z2 y doble penalti aproximadamente Z5); los bordes están cubiertos por tests para evitar inversiones futuras.
+
+La portería conserva los puntos exactos y añade una matriz interior 3×2 derivada de `targetX/targetY`. FUERA queda separado del denominador interior. La silueta solo agrega `keeperBodyPart`, y blocaje/rechace/despeje solo agregan `saveOutcome`; ninguno se infiere a partir del target. Toda atribución continúa perteneciendo al portero funcional en el instante del evento.
+
+Una falta crítica es F5 o cualquier falta posterior del mismo equipo en ese periodo. Se deriva de `periodFoulNumber`; P2 reinicia la secuencia. Una falta genérica suma al equipo, pero no se atribuye a una persona.
+
+## Evoluciones posteriores, fuera de V1.1
+
+- Comparación ON/OFF completa con/sin jugador.
+- Referencias históricas agregadas, admitiendo que pueden carecer de granularidad espacial o de evento.
+- Constructor avanzado de selecciones de partidos y competiciones.
+- Almacenamiento real de fotografías y coordenada del pase de asistencia.
+
+Dashboard V1.1 no importa ni modifica `dashboard-historico/` ni el XLSX histórico.
