@@ -567,6 +567,180 @@ test("revisión y procedencia sobreviven offline, reapertura y sync", async () =
   assert.equal(reopened.getSummary(session.matchId).pending, 0);
 });
 
+test("postpartido P2 conserva revisiones remotas y permite revisión retroactiva sin conflictos", async () => {
+  const storage = new MemoryStorage();
+  let now = 1_000;
+  const local = new LocalMatchRepository({
+    storage,
+    now: () => now,
+    idFactory: idFactory(),
+  });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, {
+    isOnline: () => true,
+  });
+  const base = createSession("finished-p2-review-no-conflicts");
+  const liveThreat = createLiveThreatEvent({
+    id: "live-before-review",
+    matchId: base.matchId,
+    position: { period: 2, minute: 8, order: 1 },
+    side: "FOR",
+    playerId: "p1",
+    origin: { x: 0.35, y: 0.45 },
+    outcome: "FUERA",
+    phase: "TRANSITION",
+    provenance: "LIVE",
+    now: 900,
+  });
+  const live = {
+    ...base,
+    period: 2,
+    minute: 12,
+    periodMinutes: { 1: 20, 2: 12 },
+    closedPeriods: [1],
+    events: [...base.events, liveThreat],
+  };
+  local.save(live);
+  await coordinator.syncMatch(base.matchId);
+
+  now += 1;
+  const finished = {
+    ...live,
+    minute: 20,
+    periodMinutes: { 1: 20, 2: 20 },
+    closedPeriods: [1, 2],
+    matchFinished: true,
+    reviewStatus: "NOT_REVIEWED" as const,
+  };
+  local.save(finished);
+  await coordinator.syncMatch(base.matchId);
+  assert.equal(local.getSummary(base.matchId).conflicts, 0);
+  assert.equal(local.getSummary(base.matchId).pending, 0);
+
+  // A: abrir Postpartido sobre P2 no invalida el envelope ni pierde revisiones.
+  const revisionsBeforeReview = local.getSyncState(base.matchId).knownRemoteRevisions;
+  now += 1;
+  let reviewing = {
+    ...finished,
+    reviewPeriod: 2,
+    reviewMinute: 20,
+    reviewStatus: "IN_REVIEW" as const,
+    reviewStartedAt: now,
+  };
+  local.save(reviewing);
+  assert.ok(local.load(base.matchId));
+  assert.deepEqual(
+    local.getSyncState(base.matchId).knownRemoteRevisions,
+    revisionsBeforeReview,
+  );
+  await coordinator.syncMatch(base.matchId);
+  assert.equal(local.getSummary(base.matchId).conflicts, 0);
+  assert.equal(local.getSummary(base.matchId).pending, 0);
+
+  // B: un evento retroactivo nace en revisión sin alterar la procedencia LIVE previa.
+  now += 1;
+  const reviewedOne = createLiveThreatEvent({
+    id: "manual-review-one",
+    matchId: base.matchId,
+    position: { period: 2, minute: 10, order: 1 },
+    side: "AGAINST",
+    origin: { x: 0.55, y: 0.35 },
+    outcome: "FUERA",
+    phase: "POSITIONAL",
+    provenance: "MANUAL_REVIEW",
+    now,
+  });
+  reviewing = { ...reviewing, events: [...reviewing.events, reviewedOne] };
+  local.save(reviewing);
+  await coordinator.syncMatch(base.matchId);
+  assert.equal(local.getSummary(base.matchId).conflicts, 0);
+
+  // C: varias altas consecutivas conservan baseRevision por entidad.
+  const reviewedMany = [11, 12, 13].map((minute, index) =>
+    createFoulEvent({
+      id: `manual-review-foul-${index + 1}`,
+      matchId: base.matchId,
+      position: { period: 2, minute, order: 1 },
+      side: index % 2 === 0 ? "FOR" : "AGAINST",
+      playerId: index % 2 === 0 ? "p2" : null,
+      provenance: "MANUAL_REVIEW",
+      now: now + index + 1,
+    }),
+  );
+  now += 4;
+  reviewing = { ...reviewing, events: [...reviewing.events, ...reviewedMany] };
+  local.save(reviewing);
+  await coordinator.syncMatch(base.matchId);
+  assert.equal(local.getSummary(base.matchId).conflicts, 0);
+
+  // D: editar una entidad ya sincronizada usa su revisión remota conocida.
+  now += 1;
+  reviewing = {
+    ...reviewing,
+    events: editEvent(
+      reviewing.players,
+      reviewing.events,
+      reviewedOne.id,
+      { minute: 9 },
+      now,
+    ),
+  };
+  local.save(reviewing);
+  await coordinator.syncMatch(base.matchId);
+  assert.equal(local.getSummary(base.matchId).conflicts, 0);
+
+  // E: soft delete y restore actualizan el mismo documento sin sobrescritura silenciosa.
+  now += 1;
+  reviewing = {
+    ...reviewing,
+    events: softDeleteEvent(
+      reviewing.players,
+      reviewing.events,
+      reviewedMany[0].id,
+      now,
+    ),
+  };
+  local.save(reviewing);
+  await coordinator.syncMatch(base.matchId);
+  assert.equal(local.getSummary(base.matchId).conflicts, 0);
+
+  now += 1;
+  reviewing = {
+    ...reviewing,
+    events: restoreEvent(
+      reviewing.players,
+      reviewing.events,
+      reviewedMany[0].id,
+      now,
+    ),
+  };
+  local.save(reviewing);
+  await coordinator.syncMatch(base.matchId);
+
+  const finalSummary = local.getSummary(base.matchId);
+  const remoteMetadata = remote.documents.get(`${base.matchId}:match`)?.payload as {
+    matchFinished: boolean;
+    reviewStatus?: string;
+  };
+  const remoteLive = remote.documents.get(
+    `${base.matchId}:event:${liveThreat.id}`,
+  )?.payload as typeof liveThreat;
+  const remoteReviewed = remote.documents.get(
+    `${base.matchId}:event:${reviewedOne.id}`,
+  )?.payload as typeof reviewedOne;
+  assert.equal(finalSummary.conflicts, 0);
+  assert.equal(finalSummary.pending, 0);
+  assert.equal(remoteMetadata.matchFinished, true);
+  assert.equal(remoteMetadata.reviewStatus, "IN_REVIEW");
+  assert.equal(remoteLive.provenance, "LIVE");
+  assert.equal(remoteReviewed.provenance, "MANUAL_REVIEW");
+  assert.equal(remoteReviewed.minute, 9);
+  assert.equal(
+    (remote.documents.get(`${base.matchId}:event:${reviewedMany[0].id}`)?.payload as typeof reviewedMany[number]).deletedAt,
+    null,
+  );
+});
+
 test("crear y editar dos veces offline sincroniza solo la versión final", async () => {
   const storage = new MemoryStorage();
   const local = new LocalMatchRepository({ storage, idFactory: idFactory() });

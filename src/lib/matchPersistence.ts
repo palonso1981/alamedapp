@@ -512,7 +512,7 @@ function validPersistedSession(
       (typeof value.reviewPeriod !== "number" ||
         !Number.isInteger(value.reviewPeriod) ||
         !(value.closedPeriods as number[]).includes(value.reviewPeriod) ||
-        value.reviewPeriod === value.period ||
+        (value.reviewPeriod === value.period && value.matchFinished !== true) ||
         typeof value.reviewMinute !== "number" ||
         !Number.isInteger(value.reviewMinute) ||
         value.reviewMinute < 0 ||
