@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "tsc -p tsconfig.test.json && node --test .test-build/lib/matchEngine.test.js .test-build/lib/dashboardAnalytics.test.js .test-build/lib/sync/sync.test.js .test-build/lib/roster.test.js"
+    "test": "tsc -p tsconfig.test.json && node --test .test-build/lib/matchEngine.test.js .test-build/lib/dashboardAnalytics.test.js .test-build/lib/dashboardAnalysis.test.js .test-build/lib/sync/sync.test.js .test-build/lib/roster.test.js"
   },
   "dependencies": {
     "firebase": "^12.17.1",
