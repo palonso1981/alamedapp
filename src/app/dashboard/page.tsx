@@ -116,6 +116,7 @@ function Trend({ values, reference, label }: { values: number[]; reference: numb
 
 const AREAS = ["RESUMEN", "EQUIPO", "JUGADORES", "PORTEROS", "MAPAS / ZONAS"] as const;
 type DashboardArea = typeof AREAS[number];
+type ReferenceMode = "SEASON" | "HOME" | "AWAY" | "WIN" | "DRAW" | "LOSS" | "OTHER_PERIOD";
 
 export default function DashboardPage() {
   const ensureRegistry = useTeamStore((state) => state.ensureRegistry);
@@ -135,7 +136,7 @@ export default function DashboardPage() {
   const [playerView, setPlayerView] = useState<"GENERAL" | "EN_PISTA" | "POR_40" | "DISCIPLINA">("GENERAL");
   const [positionFilter, setPositionFilter] = useState("ALL");
   const [sortPlayer, setSortPlayer] = useState<"MINUTES" | "GOALS" | "THREATS" | "PLUS_MINUS">("MINUTES");
-  const [referenceMode, setReferenceMode] = useState<"SEASON" | "OTHER_PERIOD">("SEASON");
+  const [referenceMode, setReferenceMode] = useState<ReferenceMode>("SEASON");
   const [keeperAId, setKeeperAId] = useState("");
   const [keeperBId, setKeeperBId] = useState("");
 
@@ -186,6 +187,10 @@ export default function DashboardPage() {
     }
   }, [availableMatches, matchId]);
 
+  useEffect(() => {
+    if (referenceMode === "OTHER_PERIOD" && period === "ALL") setReferenceMode("SEASON");
+  }, [period, referenceMode]);
+
   const analysis = useMemo(
     () => buildDashboardAnalysis(records, {
       clubId: currentClubId,
@@ -207,9 +212,9 @@ export default function DashboardPage() {
     matchId: referenceMode === "OTHER_PERIOD" && matchId !== "ALL" ? matchId : undefined,
     period: referenceMode === "OTHER_PERIOD" && (period === 1 || period === 2) ? (period === 1 ? 2 : 1) : matchId === "ALL" ? "ALL" : period,
     includeArchived,
-    venue,
-    result: resultFilter,
-  }), [currentClubId, includeArchived, matchId, period, records, referenceMode, resultFilter, seasonId, teamId, venue]);
+    venue: referenceMode === "HOME" ? "HOME" : referenceMode === "AWAY" ? "AWAY" : "ALL",
+    result: referenceMode === "WIN" ? "WIN" : referenceMode === "DRAW" ? "DRAW" : referenceMode === "LOSS" ? "LOSS" : "ALL",
+  }), [currentClubId, includeArchived, matchId, period, records, referenceMode, seasonId, teamId]);
   const comparisons = {
     threatsFor: compareAnalysisMetric(analysis, reference, "threatsFor"),
     threatsAgainst: compareAnalysisMetric(analysis, reference, "threatsAgainst"),
@@ -226,7 +231,7 @@ export default function DashboardPage() {
     if (sortPlayer === "PLUS_MINUS") return b.onCourt.goalDifference - a.onCourt.goalDifference || b.minutes - a.minutes;
     return b.minutes - a.minutes;
   });
-  const referenceLabel = referenceMode === "OTHER_PERIOD" ? (period === 1 ? "P2" : "P1") : period === "ALL" ? "MEDIA TEMP." : `MEDIA P${period}`;
+  const referenceLabel = referenceMode === "OTHER_PERIOD" ? (period === 1 ? "P2" : "P1") : `MEDIA ${referenceMode === "SEASON" ? (period === "ALL" ? "TEMP." : `P${period}`) : referenceMode}`;
   const keeperA = analysis.goalkeepers.find((keeper) => keeper.playerId === keeperAId) ?? analysis.goalkeepers[0];
   const keeperB = analysis.goalkeepers.find((keeper) => keeper.playerId === keeperBId) ?? analysis.goalkeepers[1];
 
@@ -263,7 +268,7 @@ export default function DashboardPage() {
           <div className="mt-2 grid grid-cols-2 gap-2 sm:flex">
             <select aria-label="Local o visitante" value={venue} onChange={(event) => setVenue(event.target.value as VenueFilter)} className="min-h-10 rounded-xl bg-slate-800 px-3 text-xs font-black"><option value="ALL">TODAS LAS SEDES</option><option value="HOME">LOCAL</option><option value="AWAY">VISITANTE</option></select>
             <select aria-label="Resultado" value={resultFilter} onChange={(event) => setResultFilter(event.target.value as ResultFilter)} className="min-h-10 rounded-xl bg-slate-800 px-3 text-xs font-black"><option value="ALL">TODOS LOS RESULTADOS</option><option value="WIN">VICTORIAS</option><option value="DRAW">EMPATES</option><option value="LOSS">DERROTAS</option></select>
-            {matchId !== "ALL" && (period === 1 || period === 2) && <select aria-label="Referencia" value={referenceMode} onChange={(event) => setReferenceMode(event.target.value as "SEASON" | "OTHER_PERIOD")} className="col-span-2 min-h-10 rounded-xl bg-slate-800 px-3 text-xs font-black"><option value="SEASON">COMPARAR · MEDIA P{period}</option><option value="OTHER_PERIOD">COMPARAR · P{period === 1 ? 2 : 1} MISMO PARTIDO</option></select>}
+            {matchId !== "ALL" && <select aria-label="Referencia" value={referenceMode} onChange={(event) => setReferenceMode(event.target.value as ReferenceMode)} className="col-span-2 min-h-10 rounded-xl bg-slate-800 px-3 text-xs font-black"><option value="SEASON">COMPARAR · MEDIA {period === "ALL" ? "TEMPORADA" : `P${period}`}</option><option value="HOME">COMPARAR · MEDIA LOCAL</option><option value="AWAY">COMPARAR · MEDIA VISITANTE</option><option value="WIN">COMPARAR · MEDIA VICTORIAS</option><option value="DRAW">COMPARAR · MEDIA EMPATES</option><option value="LOSS">COMPARAR · MEDIA DERROTAS</option>{(period === 1 || period === 2) && <option value="OTHER_PERIOD">COMPARAR · P{period === 1 ? 2 : 1} MISMO PARTIDO</option>}</select>}
           </div>
         </section>
 
