@@ -5,7 +5,6 @@ import { MouseEvent, useEffect, useMemo, useState } from "react";
 
 import { FutsalCourtMarkings } from "../../../../components/court/FutsalCourtMarkings";
 import { BenchPanel } from "../../../../components/match/BenchPanel";
-import { ContextualSurface } from "../../../../components/match/contextual/ContextualSurface";
 import { DefensiveThreatContext } from "../../../../components/match/contextual/DefensiveThreatContext";
 import { PlayerContextActions } from "../../../../components/match/contextual/PlayerContextActions";
 import { ThreatContextPicker } from "../../../../components/match/contextual/ThreatContextPicker";
@@ -27,6 +26,13 @@ import {
 import { PlayerAvatar } from "../../../../components/player/PlayerAvatar";
 import { ClubContextLabel } from "../../../../components/app/ClubContextLabel";
 import { normalizeCourtPoint } from "../../../../lib/courtGeometry";
+import {
+  AttackDirection,
+  canonicalToVisualPoint,
+  oppositeDirection,
+  visualRestartToCanonical,
+  visualToCanonicalPoint,
+} from "../../../../lib/captureOrientation";
 import { eventDescription } from "../../../../lib/eventPresentation";
 import { functionalGoalkeeperBadge } from "../../../../lib/goalkeeperPresentation";
 import {
@@ -53,6 +59,7 @@ import {
 
 const CLOCK_SIDE_STORAGE_KEY = "alamedapp:directo-clock-side:v1";
 const CLOCK_VERTICAL_STORAGE_KEY = "alamedapp:directo-clock-vertical:v1";
+const ORIENTATION_STORAGE_PREFIX = "alamedapp:directo-orientation:v1";
 /** La competición debe inyectar sus umbrales; localmente no se presupone ninguno. */
 const FOUL_THRESHOLDS: readonly number[] = [];
 
@@ -105,6 +112,21 @@ function undoTarget(
   ).at(-1);
 }
 
+function RestartTargets({ onRestart }: { onRestart: (end: "LEFT" | "RIGHT", side: "TOP" | "BOTTOM", kind: "CORNER" | "DANGEROUS_KICK_IN") => void }) {
+  const corner = "absolute z-20 grid h-10 w-10 place-items-center rounded-full border-2 border-amber-200 bg-amber-500 text-lg font-black text-slate-950 shadow-lg active:scale-90";
+  const band = "absolute z-20 grid h-9 w-20 place-items-center rounded-full border border-violet-200 bg-violet-700 text-[9px] font-black text-white shadow-lg active:scale-90";
+  return <>
+    <button type="button" onClick={() => onRestart("LEFT", "TOP", "CORNER")} className={`${corner} left-0 top-0`} aria-label="Córner izquierda superior">⌜</button>
+    <button type="button" onClick={() => onRestart("RIGHT", "TOP", "CORNER")} className={`${corner} right-0 top-0`} aria-label="Córner derecha superior">⌝</button>
+    <button type="button" onClick={() => onRestart("LEFT", "BOTTOM", "CORNER")} className={`${corner} bottom-0 left-0`} aria-label="Córner izquierda inferior">⌞</button>
+    <button type="button" onClick={() => onRestart("RIGHT", "BOTTOM", "CORNER")} className={`${corner} bottom-0 right-0`} aria-label="Córner derecha inferior">⌟</button>
+    <button type="button" onClick={() => onRestart("LEFT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} left-12 top-0`} aria-label="Banda cercana izquierda superior">BANDA</button>
+    <button type="button" onClick={() => onRestart("RIGHT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} right-12 top-0`} aria-label="Banda cercana derecha superior">BANDA</button>
+    <button type="button" onClick={() => onRestart("LEFT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 left-12`} aria-label="Banda cercana izquierda inferior">BANDA</button>
+    <button type="button" onClick={() => onRestart("RIGHT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 right-12`} aria-label="Banda cercana derecha inferior">BANDA</button>
+  </>;
+}
+
 export default function DirectoPage({ params }: { params: { id: string } }) {
   const matchId = params.id;
   const session = useMatchStore((state) => state.matches[matchId]);
@@ -120,6 +142,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const recordThreat = useMatchStore((state) => state.recordThreat);
   const toggleGameState = useMatchStore((state) => state.toggleGameState);
   const recordFoul = useMatchStore((state) => state.recordFoul);
+  const recordRestart = useMatchStore((state) => state.recordRestart);
+  const adjustFoulCount = useMatchStore((state) => state.adjustFoulCount);
   const recordCard = useMatchStore((state) => state.recordCard);
   const recordStaffCard = useMatchStore((state) => state.recordStaffCard);
   const setPendingReview = useMatchStore((state) => state.setPendingReview);
@@ -152,6 +176,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [genericFoulConfirm, setGenericFoulConfirm] = useState<"FOR" | "AGAINST" | null>(null);
   const [secondPeriodSetupOpen, setSecondPeriodSetupOpen] = useState(false);
+  const [benchMode, setBenchMode] = useState<"CLOSED" | "BROWSE" | "CHANGE_OUT" | "CHANGE_IN">("CLOSED");
+  const [attackDirection, setAttackDirection] = useState<AttackDirection>("RIGHT");
+  const [orientationReady, setOrientationReady] = useState(false);
 
   useEffect(() => {
     const savedSide = window.localStorage.getItem(CLOCK_SIDE_STORAGE_KEY);
@@ -173,6 +200,28 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     setSelectingFlyingGoalkeeper(false);
     setSecondPeriodSetupOpen(false);
   }, [ensureMatch, matchId]);
+
+  useEffect(() => {
+    if (!session) return;
+    const key = `${ORIENTATION_STORAGE_PREFIX}:${matchId}:P${session.period}`;
+    const saved = window.localStorage.getItem(key);
+    if (saved === "LEFT" || saved === "RIGHT") {
+      setAttackDirection(saved);
+      setOrientationReady(true);
+      return;
+    }
+    if (session.period === 2) {
+      const first = window.localStorage.getItem(`${ORIENTATION_STORAGE_PREFIX}:${matchId}:P1`);
+      if (first === "LEFT" || first === "RIGHT") {
+        const proposed = oppositeDirection(first);
+        setAttackDirection(proposed);
+        window.localStorage.setItem(key, proposed);
+        setOrientationReady(true);
+        return;
+      }
+    }
+    setOrientationReady(false);
+  }, [matchId, session]);
 
   useEffect(() => {
     if (!feedback) return;
@@ -271,16 +320,6 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     interaction.kind === "PLAYER_SELECTED" && interaction.location === "BENCH"
       ? interaction.playerId
       : null;
-  const selectedCourtAnchor = selectedCourtPlayerId
-    ? courtPlayerPosition(
-        selectedCourtPlayerId,
-        replay.onCourtPlayerIds,
-        session.players,
-        replay.lineupValidation.goalkeeper.status === "PLAYER"
-          ? replay.lineupValidation.goalkeeper.playerId
-          : undefined,
-      )
-    : undefined;
   const pendingThreat =
     interaction.kind === "THREAT_PENDING" ? interaction : null;
   const substitutionSourceLabel =
@@ -345,6 +384,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       setFeedback(
         `✓ ${playerOut?.name ?? "INFERIORIDAD"} → ${playerIn?.name ?? "jugador"}`,
       );
+      setBenchMode("CLOSED");
     } else if (effect?.type === "RECORD_THREAT") {
       recordThreat(matchId, effect);
       const actor = effect.playerId
@@ -360,9 +400,24 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     const bounds = event.currentTarget.getBoundingClientRect();
     applyInteraction({
       type: "COURT_TAPPED",
-      origin: normalizeCourtPoint(event.clientX, event.clientY, bounds),
+      origin: visualToCanonicalPoint(normalizeCourtPoint(event.clientX, event.clientY, bounds), attackDirection),
       eventId: globalThis.crypto.randomUUID(),
     });
+  };
+
+  const chooseOrientation = (direction: AttackDirection) => {
+    setAttackDirection(direction);
+    window.localStorage.setItem(`${ORIENTATION_STORAGE_PREFIX}:${matchId}:P${session.period}`, direction);
+    setOrientationReady(true);
+  };
+
+  const flipCourt = () => chooseOrientation(oppositeDirection(attackDirection));
+
+  const quickRestart = (end: "LEFT" | "RIGHT", spatialSide: "TOP" | "BOTTOM", restart: "CORNER" | "DANGEROUS_KICK_IN") => {
+    if (captureBlocked) return blockedAction();
+    const inferred = visualRestartToCanonical({ end, band: spatialSide, direction: attackDirection });
+    recordRestart(matchId, inferred.side, restart, inferred.spatialSide);
+    setFeedback(`✓ ${restart === "CORNER" ? "CÓRNER" : "BANDA CERCANA"} ${inferred.side === "FOR" ? "CDA" : "RIV"}`);
   };
 
   const handleStaffTap = (staffId: string) => {
@@ -420,6 +475,17 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         clockSide === "left" ? "sm:pl-28" : "sm:pr-28"
       }`}
     >
+      {!orientationReady && (
+        <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/90 p-4" role="dialog" aria-label="Elegir orientación de captura">
+          <div className="w-full max-w-2xl rounded-3xl border border-cyan-500 bg-slate-900 p-5 shadow-2xl">
+            <p className="mb-5 text-center text-xl font-black">¿HACIA DÓNDE ATACA CDA?</p>
+            <div className="grid grid-cols-2 gap-4">
+              <button type="button" onClick={() => chooseOrientation("LEFT")} className="min-h-32 rounded-2xl bg-cyan-700 text-4xl font-black active:scale-95">← <span className="block text-sm">IZQUIERDA</span></button>
+              <button type="button" onClick={() => chooseOrientation("RIGHT")} className="min-h-32 rounded-2xl bg-cyan-700 text-4xl font-black active:scale-95">→ <span className="block text-sm">DERECHA</span></button>
+            </div>
+          </div>
+        </div>
+      )}
       <MatchRailControl
         period={session.period}
         elapsedMinute={session.minute}
@@ -468,9 +534,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       {feedback && (
         <div
           role="status"
-          className="pointer-events-none fixed left-1/2 top-3 z-50 -translate-x-1/2 rounded-full border border-emerald-300/50 bg-emerald-950/95 px-4 py-2 text-sm font-black text-emerald-100 shadow-2xl"
+          className="fixed left-1/2 top-3 z-[110] flex -translate-x-1/2 items-center gap-3 rounded-full border border-emerald-300/50 bg-emerald-950/95 px-4 py-2 text-sm font-black text-emerald-100 shadow-2xl"
         >
-          {feedback}
+          <span>{feedback}</span>
+          <button type="button" onClick={() => { undo(matchId); setFeedback("↶ Deshecho"); }} className="min-h-10 rounded-full bg-white/15 px-3" aria-label="Deshacer la última acción">↶</button>
         </div>
       )}
       {secondPeriodSetupOpen && (
@@ -532,9 +599,24 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               setFeedback("✓ Roja RIV");
             }}
           />
+          <div className="grid grid-cols-2 gap-1" aria-label="Ajustar contador de faltas">
+            {(["FOR", "AGAINST"] as const).map((side) => <div key={side} className="grid grid-cols-2 gap-1 rounded-xl border border-slate-700 bg-slate-900 p-1">
+              <span className="col-span-2 text-center text-[9px] font-black text-slate-400">F {side === "FOR" ? "CDA" : "RIV"}</span>
+              <button type="button" onClick={() => { adjustFoulCount(matchId, side, -1); setFeedback(`✓ AJUSTE FALTA ${side === "FOR" ? "CDA" : "RIV"} −1`); }} className="min-h-11 min-w-11 rounded-lg bg-slate-700 text-xl font-black" aria-label={`Restar una falta ${side === "FOR" ? "CDA" : "rival"}`}>−</button>
+              <button type="button" onClick={() => { adjustFoulCount(matchId, side, 1); setFeedback(`✓ AJUSTE FALTA ${side === "FOR" ? "CDA" : "RIV"} +1`); }} className="min-h-11 min-w-11 rounded-lg bg-amber-600 text-xl font-black text-slate-950" aria-label={`Sumar una falta ${side === "FOR" ? "CDA" : "rival"}`}>+</button>
+            </div>)}
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => { setInteraction(IDLE_LIVE_INTERACTION); setBenchMode("CHANGE_OUT"); }} className={`min-h-14 rounded-xl border-2 px-4 text-sm font-black ${benchMode.startsWith("CHANGE") ? "border-amber-200 bg-amber-500 text-slate-950" : "border-amber-500 bg-amber-950 text-amber-100"}`}>⇄ CAMBIO</button>
+          <button type="button" onClick={() => { setInteraction(IDLE_LIVE_INTERACTION); setBenchMode((mode) => mode === "BROWSE" ? "CLOSED" : "BROWSE"); }} className="min-h-14 rounded-xl border border-slate-500 bg-slate-800 px-4 text-sm font-black">▦ BANCO</button>
+          <button type="button" onClick={flipCourt} className="min-h-14 min-w-14 rounded-xl border border-cyan-700 bg-slate-900 text-2xl" aria-label="Girar campo" title="Girar campo">↔</button>
+          <button type="button" onClick={() => {
+            if (captureBlocked) return blockedAction();
+            toggleGameState(matchId, "FLYING_GOALKEEPER", undefined, "AGAINST");
+            setFeedback(activeReplay.flyingGoalkeeperAgainstActive ? "PJ RIVAL OFF" : "PJ RIVAL ON");
+          }} aria-pressed={activeReplay.flyingGoalkeeperAgainstActive} className={`min-h-14 rounded-xl border-2 px-3 text-xs font-black ${activeReplay.flyingGoalkeeperAgainstActive ? "border-rose-200 bg-rose-600 text-white ring-2 ring-rose-200" : "border-slate-600 bg-slate-900 text-slate-300"}`}>PJ RIVAL {activeReplay.flyingGoalkeeperAgainstActive ? "ON" : ""}</button>
           <span
             className={`rounded-lg px-3 py-2 text-xs font-semibold ${
               session.persistenceStatus === "saved"
@@ -645,6 +727,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
+      {benchMode === "CHANGE_OUT" && (
+        <div className="mx-auto mb-2 max-w-xl rounded-2xl border-2 border-amber-400 bg-amber-950 px-4 py-3 text-center text-lg font-black text-amber-100">⇄ ELIGE QUIÉN SALE</div>
+      )}
       <main className="directo-workspace mx-auto grid max-w-screen-2xl gap-2">
         <section className="directo-court-panel relative min-w-0 rounded-2xl bg-gray-900 p-2 shadow-xl sm:p-3">
           <div className="directo-court-heading mb-2 flex min-h-10 items-center justify-between gap-3">
@@ -682,6 +767,23 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             )}
           </div>
 
+          <div className="directo-capture-grid grid items-stretch gap-2">
+          <aside className="directo-player-rail grid gap-2" aria-label="Jugadores de campo en pista">
+            {replay.onCourtPlayerIds.filter((id) => id !== functionalGoalkeeperId).map((slotId) => {
+              if (slotId === INFERIORITY_SLOT_ID) return <button key={slotId} type="button" onClick={() => { applyInteraction({ type: "COURT_PLAYER_TAPPED", playerId: slotId }); if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN"); }} className="min-h-16 rounded-xl border-2 border-dashed border-rose-400 bg-rose-950 text-xs font-black text-rose-100">4v5</button>;
+              const player = session.players.find((candidate) => candidate.id === slotId);
+              if (!player) return null;
+              const minutes = replay.playerMinutes[player.id];
+              const selected = selectedPlayerId === player.id;
+              return <button key={player.id} type="button" onClick={() => { applyInteraction({ type: "COURT_PLAYER_TAPPED", playerId: player.id }); if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN"); }} className={`flex min-h-16 flex-col items-center justify-center rounded-xl border-2 px-1 py-1 active:scale-95 ${selected ? "border-amber-200 bg-amber-500 text-slate-950" : "border-cyan-700 bg-slate-900"}`} aria-pressed={selected}>
+                <PlayerAvatar player={player} selected={selected} compact />
+                <span className="mt-1 max-w-full truncate text-[11px] font-black">{player.name}</span>
+                <span className="text-[10px] text-cyan-200">{minutes.currentStintMinutes}&apos; <span className="opacity-60">({minutes.totalMinutes}&apos;)</span></span>
+              </button>;
+            })}
+          </aside>
+          <div className="relative p-3 sm:p-4">
+            <RestartTargets onRestart={quickRestart} />
           <div
             onClick={handleCourtClick}
             data-testid="futsal-court"
@@ -695,9 +797,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             aria-label="Pista de fútbol sala. Toca directamente para amenaza rival o selecciona antes un jugador CDA."
           >
             <FutsalCourtMarkings />
-            <span className="pointer-events-none absolute bottom-2 left-1/2 z-[1] -translate-x-1/2 rounded-full bg-slate-950/35 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-white/55" aria-hidden="true">CDA →</span>
+            <span className="pointer-events-none absolute bottom-2 left-1/2 z-[1] -translate-x-1/2 rounded-full bg-slate-950/35 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-white/55" aria-hidden="true">{attackDirection === "RIGHT" ? "CDA →" : "← CDA"}</span>
 
-            {replay.onCourtPlayerIds.map((slotId) => {
+            {replay.onCourtPlayerIds.filter((slotId) => slotId === functionalGoalkeeperId).map((slotId) => {
               const position = courtPlayerPosition(
                 slotId,
                 replay.onCourtPlayerIds,
@@ -718,6 +820,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                         type: "COURT_PLAYER_TAPPED",
                         playerId: slotId,
                       });
+                      if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN");
                     }}
                     className={`absolute z-10 flex min-h-14 w-14 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-xl border-2 border-dashed px-1 py-1 text-center shadow-lg sm:min-h-20 sm:w-20 lg:w-24 ${
                       selected
@@ -753,13 +856,14 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                       type: "COURT_PLAYER_TAPPED",
                       playerId: player.id,
                     });
+                    if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN");
                   }}
                   className={`absolute z-10 flex min-h-16 w-16 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-xl border-2 px-1 py-1 text-center shadow-lg transition-all sm:min-h-20 sm:w-20 lg:w-24 ${
                     selected
                       ? "scale-110 border-yellow-200 bg-yellow-500 text-gray-950 ring-4 ring-yellow-300/30"
                       : "border-white/60 bg-gray-900/90 hover:bg-gray-800"
                   }`}
-                  style={{ left: `${position.x * 100}%`, top: `${position.y * 100}%` }}
+                  style={{ left: `${canonicalToVisualPoint(position, attackDirection).x * 100}%`, top: `${canonicalToVisualPoint(position, attackDirection).y * 100}%` }}
                   aria-pressed={selected}
                   aria-label={`${player.name}${goalkeeperBadge ? `, ${goalkeeperBadge}` : ""}${flyingGoalkeeper ? ", portero-jugador" : ""}`}
                 >
@@ -786,14 +890,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             })}
 
             {selectedCourtPlayerId &&
-              selectedCourtPlayerId !== INFERIORITY_SLOT_ID &&
-              selectedCourtAnchor && (
-                <ContextualSurface
-                  anchor={selectedCourtAnchor}
-                  label="Acciones del jugador seleccionado"
-                  onCancel={() => applyInteraction({ type: "CANCEL" })}
-                  compact
-                >
+              selectedCourtPlayerId !== INFERIORITY_SLOT_ID && (
+                <div className="fixed bottom-3 left-24 z-[75] w-56 rounded-2xl border border-amber-300 bg-slate-950 p-2 shadow-2xl sm:left-32" aria-label="Acciones del jugador seleccionado">
                   <PlayerContextActions
                     location="COURT"
                     captureBlocked={captureBlocked}
@@ -807,7 +905,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                     onBack={() => setRedDecisionPlayerId(null)}
                     onCancel={() => applyInteraction({ type: "CANCEL" })}
                   />
-                </ContextualSurface>
+                </div>
               )}
 
             {pendingThreat && (
@@ -815,7 +913,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 className={`pointer-events-none absolute z-20 h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-white shadow-[0_0_0_6px_rgba(255,255,255,0.22)] ${
                   pendingThreat.side === "FOR" ? "bg-cyan-400" : "bg-rose-500"
                 }`}
-                style={{ left: `${pendingThreat.origin.x * 100}%`, top: `${pendingThreat.origin.y * 100}%` }}
+                style={{ left: `${canonicalToVisualPoint(pendingThreat.origin, attackDirection).x * 100}%`, top: `${canonicalToVisualPoint(pendingThreat.origin, attackDirection).y * 100}%` }}
                 aria-hidden="true"
               />
             )}
@@ -843,7 +941,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 onTarget={(goalTarget) =>
                   applyInteraction({
                     type: "GOAL_TARGET_SELECTED",
-                    goalTarget,
+                    goalTarget: visualToCanonicalPoint(goalTarget, attackDirection),
                   })
                 }
                 onDefensiveOutcome={(outcome) =>
@@ -871,9 +969,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               <div className="pointer-events-none absolute inset-x-6 top-4 z-30 mx-auto max-w-xs rounded-full border border-rose-300 bg-rose-950/90 px-4 py-2 text-center text-xs font-black text-rose-100">↺ marca el nuevo origen</div>
             )}
           </div>
+          </div></div>
         </section>
 
-        <div className="directo-bench-panel-wrap min-w-0">
+        {benchMode !== "CLOSED" && benchMode !== "CHANGE_OUT" && <div className="fixed inset-0 z-[85] overflow-y-auto bg-slate-950/90 p-3 sm:grid sm:place-items-center">
+        <div className="directo-bench-panel-wrap w-full max-w-5xl min-w-0 rounded-2xl border border-cyan-700 bg-slate-950 p-2">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-lg font-black">{benchMode === "CHANGE_IN" ? `SALE ${substitutionSourceLabel ?? "—"} · ELIGE QUIÉN ENTRA` : "BANCO"}</p>
+            <button type="button" onClick={() => { setBenchMode("CLOSED"); setSelectedStaffId(null); applyInteraction({ type: "CANCEL" }); }} className="min-h-12 min-w-12 rounded-xl bg-slate-800 text-2xl">×</button>
+          </div>
           <BenchPanel
             players={bench}
             staff={session.staff}
@@ -888,7 +992,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             onStaffCard={(staffId, color) => captureBlocked ? blockedAction() : handleStaffCard(staffId, color)}
             onCancel={() => { setSelectedStaffId(null); applyInteraction({ type: "CANCEL" }); }}
           />
-        </div>
+        </div></div>}
 
         {historyOpen && <div className="directo-timeline-wrap min-w-0">
           <RecentEventsPanel

@@ -3,7 +3,10 @@ import test from "node:test";
 
 import {
   createFoulEvent,
+  createFoulCountAdjustmentEvent,
+  createGameStateEvent,
   createLiveThreatEvent,
+  createRestartEvent,
   editEvent,
   replayMatch,
   restoreEvent,
@@ -946,6 +949,28 @@ test("GoalTarget y pendingReview llegan intactos al documento remoto", async () 
   assert.equal(payload.pendingReview, true);
   assert.deepEqual(payload.defensive?.goalTarget, threat.defensive?.goalTarget);
   assert.equal(payload.defensive?.saveOutcome, "REBOUND");
+});
+
+test("eventos Directo V2 sobreviven offline reload y sincronizan por el mismo ID", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, { isOnline: () => true });
+  const session = createSession("directo-v2-sync");
+  const events = [
+    ...session.events,
+    createRestartEvent({ id: "restart-sync", matchId: session.matchId, position: { period: 1, minute: 4, order: 1 }, side: "FOR", restart: "CORNER", spatialSide: "TOP" }),
+    createFoulCountAdjustmentEvent({ id: "adjust-sync", matchId: session.matchId, position: { period: 1, minute: 5, order: 1 }, side: "AGAINST", delta: 1 }),
+    createGameStateEvent({ id: "pj-rival-sync", matchId: session.matchId, position: { period: 1, minute: 6, order: 1 }, state: "FLYING_GOALKEEPER", active: true, side: "AGAINST" }),
+  ];
+  local.save({ ...session, events });
+  assert.equal(local.load(session.matchId)?.events.length, events.length);
+  assert.ok(local.getSummary(session.matchId).pending > 0);
+  await coordinator.syncMatch(session.matchId);
+  for (const id of ["restart-sync", "adjust-sync", "pj-rival-sync"]) {
+    assert.equal((remote.documents.get(`${session.matchId}:event:${id}`)?.payload as { id?: string })?.id, id);
+  }
+  assert.equal(local.getSummary(session.matchId).pending, 0);
 });
 
 test("errores remotos se clasifican sin confundir permisos con offline", () => {

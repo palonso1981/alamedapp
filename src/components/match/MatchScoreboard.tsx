@@ -86,6 +86,7 @@ function TeamDiscipline({ label, side, period, periodDiscipline, totalDiscipline
   const nextThreshold = [...foulThresholds].sort((a, b) => a - b).find((value) => value >= periodDiscipline.fouls);
   const thresholdReached = foulThresholds.includes(periodDiscipline.fouls);
   const nearThreshold = nextThreshold !== undefined && periodDiscipline.fouls >= nextThreshold - 1;
+  const liveSeverity = periodDiscipline.fouls >= 6 ? "CRITICAL" : periodDiscipline.fouls === 5 ? "LIMIT" : periodDiscipline.fouls === 4 ? "WARNING" : "NORMAL";
   return (
     <div className="min-w-0 px-1 py-1 sm:px-2" aria-label={`Disciplina ${label}`}>
       <div className="mb-1 flex items-center justify-between gap-2">
@@ -93,7 +94,7 @@ function TeamDiscipline({ label, side, period, periodDiscipline, totalDiscipline
         <button type="button" onClick={() => onInspect(side, "CARD")} className="grid min-h-9 min-w-9 place-items-center rounded-md text-xs text-slate-500 sm:min-h-11 sm:min-w-11" aria-label={`Revisar disciplina ${label}`}>↗</button>
       </div>
       <div className="flex items-center gap-0.5 sm:gap-1">
-        <button type="button" onClick={() => onInspect(side, "FOUL")} className={`min-h-11 min-w-9 rounded-xl border px-0.5 font-mono text-base font-black sm:min-h-14 sm:min-w-14 sm:px-1 sm:text-xl ${thresholdReached ? "border-red-300 bg-red-600 text-white" : nearThreshold ? "border-amber-300 bg-amber-950 text-amber-100" : "border-slate-700 bg-slate-900 text-orange-200"}`} aria-label={`Faltas ${label} del periodo ${period}: ${periodDiscipline.fouls}`}>
+        <button type="button" onClick={() => onInspect(side, "FOUL")} className={`min-h-14 min-w-12 rounded-xl border-2 px-1 font-mono text-xl font-black sm:min-h-16 sm:min-w-16 sm:text-2xl ${liveSeverity === "CRITICAL" || thresholdReached ? "border-red-100 bg-red-600 text-white" : liveSeverity === "LIMIT" ? "border-orange-100 bg-orange-600 text-white" : liveSeverity === "WARNING" || nearThreshold ? "border-amber-300 bg-amber-950 text-amber-100" : "border-slate-700 bg-slate-900 text-orange-200"}`} aria-label={`Faltas ${label} del periodo ${period}: ${periodDiscipline.fouls}`}>
           F{periodDiscipline.fouls}
         </button>
         <button type="button" onClick={() => onGenericFoul(side)} className={`grid min-h-11 min-w-9 place-items-center rounded-xl border text-lg font-black shadow-inner sm:min-h-14 sm:min-w-14 sm:text-2xl ${confirmingFoul ? "border-emerald-200 bg-emerald-500 text-slate-950" : "border-orange-300/40 bg-slate-900 text-orange-200"}`} aria-label={confirmingFoul ? `Confirmar falta ${label} sin jugador` : `Añadir falta ${label} sin jugador`}>

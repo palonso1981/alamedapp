@@ -7,6 +7,7 @@ import {
   EventProvenance,
   EventPosition,
   FoulRecordedEvent,
+  FoulCountAdjustedEvent,
   GameContext,
   GameStateChangedEvent,
   GameStateKind,
@@ -26,6 +27,9 @@ import {
   LineupValidation,
   ReplayIssue,
   ReplayResult,
+  RestartRecordedEvent,
+  RestartKind,
+  RestartSpatialSide,
   SubstitutionEvent,
   ThreatOutcome,
   ThreatPhase,
@@ -169,12 +173,24 @@ export interface GameStateEventInput extends EventFactoryBase {
   state: GameStateKind;
   active: boolean;
   playerId?: string;
+  side?: ThreatSide;
 }
 
 export interface FoulEventInput extends EventFactoryBase {
   side: DisciplineSide;
   playerId?: string | null;
   origin?: NormalizedCoordinates;
+}
+
+export interface RestartEventInput extends EventFactoryBase {
+  side: ThreatSide;
+  restart: RestartKind;
+  spatialSide: RestartSpatialSide;
+}
+
+export interface FoulCountAdjustmentInput extends EventFactoryBase {
+  side: DisciplineSide;
+  delta: 1 | -1;
 }
 
 export interface CardEventInput extends EventFactoryBase {
@@ -190,6 +206,7 @@ interface ThreatEventInput extends EventFactoryBase {
   origin: NormalizedCoordinates;
   sequenceId?: string;
   parentEventId?: string;
+  restartEventId?: string;
 }
 
 export interface LiveThreatEventInput extends ThreatEventInput {
@@ -216,18 +233,20 @@ export interface EventEditChanges {
     Pick<SubstitutionEvent, "playerOutId" | "playerInId">
   >;
   threat?: Partial<
-    Pick<LiveThreatRecordedEvent, "side" | "playerId" | "origin" | "phase" | "sequenceId" | "parentEventId">
+    Pick<LiveThreatRecordedEvent, "side" | "playerId" | "origin" | "phase" | "sequenceId" | "parentEventId" | "restartEventId">
   > & {
     outcome?: ThreatOutcome;
     assist?: GoalAssist | null;
     defensive?: DefensiveThreatDetail | null;
   };
-  gameState?: Partial<Pick<GameStateChangedEvent, "state" | "active" | "playerId">>;
+  gameState?: Partial<Pick<GameStateChangedEvent, "state" | "active" | "playerId" | "side">>;
   foul?: Partial<Pick<FoulRecordedEvent, "side" | "playerId" | "origin">>;
   card?: Partial<Pick<CardRecordedEvent, "side" | "color">> & {
     playerId?: string | null;
     staffId?: string | null;
   };
+  restart?: Partial<Pick<RestartRecordedEvent, "side" | "restart" | "spatialSide">>;
+  foulAdjustment?: Partial<Pick<FoulCountAdjustedEvent, "side" | "delta">>;
 }
 
 function createId(): string {
@@ -286,6 +305,7 @@ export function createGameStateEvent(
     state: input.state,
     active: input.active,
     playerId: input.active ? input.playerId : undefined,
+    side: input.side,
   };
 }
 
@@ -298,6 +318,14 @@ export function createFoulEvent(input: FoulEventInput): FoulRecordedEvent {
     playerId: input.playerId ?? null,
     origin: input.origin ? { ...input.origin } : undefined,
   };
+}
+
+export function createRestartEvent(input: RestartEventInput): RestartRecordedEvent {
+  return { ...eventBase(input), type: "restart_recorded", side: input.side, restart: input.restart, spatialSide: input.spatialSide };
+}
+
+export function createFoulCountAdjustmentEvent(input: FoulCountAdjustmentInput): FoulCountAdjustedEvent {
+  return { ...eventBase(input), type: "foul_count_adjusted", side: input.side, delta: input.delta, unresolved: true, pendingReview: true };
 }
 
 export function createCardEvent(input: CardEventInput): CardRecordedEvent {
@@ -332,6 +360,7 @@ export function createLiveThreatEvent(
     outcome: input.outcome,
     sequenceId: input.sequenceId ?? base.id,
     parentEventId: input.parentEventId,
+    restartEventId: input.restartEventId,
     assist: input.assist ? { ...input.assist } : undefined,
     defensive: input.defensive
       ? {
@@ -608,6 +637,7 @@ function gameContexts(
   superiorityActive: boolean,
   flyingGoalkeeperActive: boolean,
   inferiorityActive: boolean,
+  flyingGoalkeeperAgainstActive = false,
 ): GameContext[] {
   const contexts: GameContext[] = [];
 
@@ -623,6 +653,9 @@ function gameContexts(
   }
   if (flyingGoalkeeperActive) {
     contexts.push("FLYING_GOALKEEPER");
+  }
+  if (flyingGoalkeeperAgainstActive) {
+    contexts.push("FLYING_GOALKEEPER_AGAINST");
   }
   return contexts;
 }
@@ -705,6 +738,7 @@ export function replayMatch(
   let hasLineup = false;
   let superiorityActive = false;
   let flyingGoalkeeperActive = false;
+  let flyingGoalkeeperAgainstActive = false;
   let flyingGoalkeeperPlayerId: string | undefined;
   let explicitGoalkeeperPlayerId: string | undefined;
   let inferiorityCause: InferiorityCause | undefined;
@@ -1048,7 +1082,7 @@ export function replayMatch(
                 detail.saveOutcome &&
                   detail.keeperBodyZone === deriveKeeperBodyZone(detail.goalTarget),
               )
-            : Boolean(detail.saveOutcome && detail.keeperBodyPart)
+            : Boolean(detail.saveOutcome)
           : detail.saveOutcome === undefined &&
             (detail.version === 1
               ? detail.keeperBodyZone === undefined
@@ -1111,9 +1145,21 @@ export function replayMatch(
           );
         }
       }
+      if (event.restartEventId) {
+        const restart = eventsById.get(event.restartEventId);
+        const compatiblePhase = restart?.type === "restart_recorded" && (
+          (restart.restart === "CORNER" && event.phase === "SET_PIECE_CORNER") ||
+          (restart.restart === "DANGEROUS_KICK_IN" && event.phase === "SET_PIECE_KICK_IN")
+        );
+        if (!restart || restart.deletedAt !== null || restart.type !== "restart_recorded" || restart.side !== event.side || compareEventPosition(restart, event) >= 0 || !compatiblePhase) {
+          issue(issues, event, "INVALID_EVENT_LINK", "La amenaza debe vincularse a un reinicio anterior compatible del mismo lado.");
+        }
+      }
     } else if (event.type === "game_state_changed") {
       if (event.state === "SUPERIORITY") {
         superiorityActive = event.active;
+      } else if (event.side === "AGAINST") {
+        flyingGoalkeeperAgainstActive = event.active;
       } else {
         flyingGoalkeeperActive = event.active;
         if (!event.active) {
@@ -1167,6 +1213,16 @@ export function replayMatch(
           (periodFoulsBefore ?? 0) < threshold &&
           (periodFoulsAfter ?? 0) >= threshold,
       );
+    } else if (event.type === "foul_count_adjusted") {
+      const teamKey = event.side === "FOR" ? "for" : "against";
+      const periodDiscipline = disciplineByPeriod[event.period] ?? emptyDiscipline();
+      periodFoulsBefore = periodDiscipline[teamKey].fouls;
+      const appliedDelta = event.delta < 0 && periodFoulsBefore === 0 ? 0 : event.delta;
+      periodDiscipline[teamKey].fouls = Math.max(0, periodFoulsBefore + appliedDelta);
+      disciplineByPeriod[event.period] = periodDiscipline;
+      discipline[teamKey].fouls = Math.max(0, discipline[teamKey].fouls + appliedDelta);
+      periodFoulsAfter = periodDiscipline[teamKey].fouls;
+      reachedFoulThresholds = foulThresholds.filter((threshold) => periodFoulsBefore! < threshold && periodFoulsAfter! >= threshold);
     } else if (event.type === "card_recorded") {
       const teamDiscipline =
         discipline[event.side === "FOR" ? "for" : "against"];
@@ -1221,6 +1277,7 @@ export function replayMatch(
           inferiorityCause &&
             onCourtPlayerIds.includes(INFERIORITY_SLOT_ID),
         ),
+        flyingGoalkeeperAgainstActive,
       ),
       periodFoulNumber,
       periodFoulsBefore,
@@ -1279,6 +1336,7 @@ export function replayMatch(
     superiorityActive,
     flyingGoalkeeperActive,
     flyingGoalkeeperPlayerId,
+    flyingGoalkeeperAgainstActive,
     inferiorityActive: Boolean(lineupValidation.inferiorityCause),
     lineupValidation,
     dismissedPlayerIds: Array.from(dismissedPlayerIds),
@@ -1479,6 +1537,10 @@ export function editEvent(
       ...(playerId === null ? { playerId: undefined } : playerId ? { playerId } : {}),
       ...(staffId === null ? { staffId: undefined } : staffId ? { staffId } : {}),
     };
+  } else if (edited.type === "restart_recorded" && changes.restart) {
+    edited = { ...edited, ...changes.restart };
+  } else if (edited.type === "foul_count_adjusted" && changes.foulAdjustment) {
+    edited = { ...edited, ...changes.foulAdjustment, unresolved: true, pendingReview: true };
   }
 
   if (

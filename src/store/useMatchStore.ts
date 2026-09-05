@@ -5,9 +5,11 @@ import {
   appendEvents,
   createCardEvent,
   createFoulEvent,
+  createFoulCountAdjustmentEvent,
   createGameStateEvent,
   createLineupInitializedEvent,
   createLiveThreatEvent,
+  createRestartEvent,
   createSubstitutionEvent,
   goalkeeperAtPosition,
   editEvent as editChronologyEvent,
@@ -40,6 +42,8 @@ import {
   Player,
   KeeperBodyPart,
   SaveOutcome,
+  RestartKind,
+  RestartSpatialSide,
   StaffMember,
 } from "../types";
 
@@ -157,6 +161,7 @@ interface RecordThreatInput {
   phase: LiveThreatPhase;
   sequenceId?: string;
   parentEventId?: string;
+  restartEventId?: string;
   assist?: GoalAssist;
   defensiveCapture?: {
     goalTarget: GoalTargetCoordinates;
@@ -190,7 +195,15 @@ interface MatchState {
     matchId: string,
     state: GameStateKind,
     playerId?: string,
+    side?: DisciplineSide,
   ) => void;
+  recordRestart: (
+    matchId: string,
+    side: DisciplineSide,
+    restart: RestartKind,
+    spatialSide: RestartSpatialSide,
+  ) => void;
+  adjustFoulCount: (matchId: string, side: DisciplineSide, delta: 1 | -1) => void;
   recordFoul: (
     matchId: string,
     side: DisciplineSide,
@@ -399,6 +412,37 @@ function captureClock(session: MatchSession): EventPosition {
 
 function captureProvenance(session: MatchSession) {
   return session.reviewPeriod !== undefined ? "MANUAL_REVIEW" as const : "LIVE" as const;
+}
+
+function pendingRestartId(
+  events: MatchEvent[],
+  side: DisciplineSide,
+  phase: LiveThreatPhase,
+): string | undefined {
+  const compatible =
+    phase === "SET_PIECE_CORNER"
+      ? "CORNER"
+      : phase === "SET_PIECE_KICK_IN"
+        ? "DANGEROUS_KICK_IN"
+        : undefined;
+  if (!compatible) return undefined;
+  const recent = [...events]
+    .filter((event) => event.deletedAt === null && "side" in event && event.side === side)
+    .sort((a, b) =>
+      a.period - b.period || a.minute - b.minute || a.order - b.order || a.createdAt - b.createdAt,
+    )
+    .reverse();
+  const restart = recent.find((event) => event.type === "restart_recorded");
+  if (!restart || restart.type !== "restart_recorded" || restart.restart !== compatible) {
+    return undefined;
+  }
+  const interveningThreat = recent.find(
+    (event) => event.type === "threat_recorded" &&
+      (event.period > restart.period ||
+        (event.period === restart.period && (event.minute > restart.minute ||
+          (event.minute === restart.minute && event.order > restart.order)))),
+  );
+  return interveningThreat ? undefined : restart.id;
 }
 
 function assertSportsCaptureAllowed(session: MatchSession): void {
@@ -786,6 +830,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             phase: input.phase,
             sequenceId: input.sequenceId,
             parentEventId: input.parentEventId,
+            restartEventId: input.restartEventId ?? pendingRestartId(session.events, input.side, input.phase),
             assist: input.assist,
             defensive,
             provenance: captureProvenance(session),
@@ -795,7 +840,7 @@ export const useMatchStore = create<MatchState>((set) => ({
       ),
     ),
 
-  toggleGameState: (matchId, stateKind, playerId) =>
+  toggleGameState: (matchId, stateKind, playerId, side = "FOR") =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -809,9 +854,12 @@ export const useMatchStore = create<MatchState>((set) => ({
           const active =
             stateKind === "SUPERIORITY"
               ? replay.superiorityActive
-              : replay.flyingGoalkeeperActive;
+              : side === "AGAINST"
+                ? replay.flyingGoalkeeperAgainstActive
+                : replay.flyingGoalkeeperActive;
           if (
             stateKind === "FLYING_GOALKEEPER" &&
+            side === "FOR" &&
             !active &&
             (!playerId || !replay.onCourtPlayerIds.includes(playerId))
           ) {
@@ -833,12 +881,51 @@ export const useMatchStore = create<MatchState>((set) => ({
             state: stateKind,
             active: !active,
             playerId:
-              stateKind === "FLYING_GOALKEEPER" && !active
+              stateKind === "FLYING_GOALKEEPER" && side === "FOR" && !active
                 ? playerId
                 : undefined,
+            side: stateKind === "FLYING_GOALKEEPER" ? side : undefined,
             provenance: captureProvenance(session),
           });
           return appendEvent(session.players, session.events, event);
+        }),
+      ),
+    ),
+
+  recordRestart: (matchId, side, restart, spatialSide) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) =>
+        command(session, () => {
+          assertSportsCaptureAllowed(session);
+          const clock = captureClock(session);
+          return appendEvent(session.players, session.events, createRestartEvent({
+            matchId,
+            position: { ...clock, order: getNextOrder(session.events, clock.period, clock.minute) },
+            side,
+            restart,
+            spatialSide,
+            provenance: captureProvenance(session),
+          }));
+        }),
+      ),
+    ),
+
+  adjustFoulCount: (matchId, side, delta) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) =>
+        command(session, () => {
+          assertSportsCaptureAllowed(session);
+          const clock = captureClock(session);
+          const current = replayMatch(session.players, session.events, { throughClock: clock }).disciplineByPeriod[clock.period];
+          const count = side === "FOR" ? current?.for.fouls ?? 0 : current?.against.fouls ?? 0;
+          if (delta < 0 && count === 0) throw new Error("El contador de faltas ya está en cero.");
+          return appendEvent(session.players, session.events, createFoulCountAdjustmentEvent({
+            matchId,
+            position: { ...clock, order: getNextOrder(session.events, clock.period, clock.minute) },
+            side,
+            delta,
+            provenance: captureProvenance(session),
+          }));
         }),
       ),
     ),

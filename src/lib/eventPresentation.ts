@@ -69,7 +69,13 @@ export function eventDescription(
   }
   if (event.type === "game_state_changed") {
     const state = event.state === "SUPERIORITY" ? "Superioridad" : "Portero-jugador";
-    return `${event.active ? "▶" : "■"} ${state}`;
+    return `${event.active ? "▶" : "■"} ${state}${event.state === "FLYING_GOALKEEPER" ? ` ${event.side === "AGAINST" ? "RIV" : "CDA"}` : ""}`;
+  }
+  if (event.type === "restart_recorded") {
+    return `${event.restart === "CORNER" ? "⌜ Córner" : "↥ Banda cercana"} · ${event.side === "FOR" ? "CDA" : "RIV"}`;
+  }
+  if (event.type === "foul_count_adjusted") {
+    return `? Ajuste faltas ${event.side === "FOR" ? "CDA" : "RIV"} ${event.delta > 0 ? "+1" : "−1"}`;
   }
   if (event.type === "foul_recorded") {
     const number = entry?.periodFoulNumber
@@ -97,5 +103,6 @@ export function contextLabel(context: GameContext): string {
   if (context === "SUPERIORITY") return "SUP";
   if (context === "INFERIORITY") return "INF";
   if (context === "FLYING_GOALKEEPER") return "P-J";
+  if (context === "FLYING_GOALKEEPER_AGAINST") return "P-J RIV";
   return "5v5";
 }

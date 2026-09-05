@@ -209,7 +209,22 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
       (value.state === "SUPERIORITY" ||
         value.state === "FLYING_GOALKEEPER") &&
       typeof value.active === "boolean" &&
-      (value.playerId === undefined || typeof value.playerId === "string")
+      (value.playerId === undefined || typeof value.playerId === "string") &&
+      (value.side === undefined || value.side === "FOR" || value.side === "AGAINST")
+    );
+  }
+  if (value.type === "restart_recorded") {
+    return (
+      (value.side === "FOR" || value.side === "AGAINST") &&
+      (value.restart === "CORNER" || value.restart === "DANGEROUS_KICK_IN") &&
+      (value.spatialSide === "TOP" || value.spatialSide === "BOTTOM")
+    );
+  }
+  if (value.type === "foul_count_adjusted") {
+    return (
+      (value.side === "FOR" || value.side === "AGAINST") &&
+      (value.delta === 1 || value.delta === -1) &&
+      value.unresolved === true
     );
   }
   if (value.type === "foul_recorded") {
@@ -249,6 +264,8 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
     (value.sequenceId === undefined || typeof value.sequenceId === "string") &&
     (value.parentEventId === undefined ||
       typeof value.parentEventId === "string") &&
+    (value.restartEventId === undefined ||
+      typeof value.restartEventId === "string") &&
     (value.defensive === undefined || isDefensiveDetail(value.defensive)) &&
     (value.assist === undefined ||
       (isObject(value.assist) &&

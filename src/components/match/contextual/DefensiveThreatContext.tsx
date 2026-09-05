@@ -35,7 +35,7 @@ export function DefensiveThreatContext({
       onCancel={onCancel}
       viewportOnMobile
       wide
-      immersive={threat.step === "GOAL_TARGET" || threat.step === "KEEPER_BODY_PART"}
+      immersive={threat.step === "GOAL_TARGET" || threat.step === "GOAL_RESULT" || threat.step === "PHASE"}
     >
       {threat.step === "GOAL_TARGET" && (
         <div>
@@ -44,32 +44,22 @@ export function DefensiveThreatContext({
         </div>
       )}
       {threat.step === "GOAL_RESULT" && (
-        <div>
-          <StepLabel step="2" label="RESULTADO" />
-          <div className="grid grid-cols-2 gap-3">
-            <button type="button" onClick={() => onDefensiveOutcome("GOL")} className="min-h-24 rounded-2xl border-2 border-rose-300 bg-rose-700 text-xl font-black text-white active:scale-95">⚽ GOL</button>
-            <button type="button" onClick={() => onDefensiveOutcome("PARADA")} className="min-h-24 rounded-2xl border-2 border-sky-300 bg-sky-800 text-xl font-black text-white active:scale-95">🧤 PARADA</button>
+        <div className="grid gap-3 md:grid-cols-[1.25fr_.75fr]">
+          <div>
+            <StepLabel step="2" label="CUERPO OPCIONAL" />
+            <KeeperBodyPicker target={threat.goalTarget} onSelect={onBodyPart} />
+            {threat.keeperBodyPart && <p className="mt-1 text-center text-xs font-black text-cyan-200">✓ CUERPO MARCADO</p>}
           </div>
-        </div>
-      )}
-      {threat.step === "KEEPER_BODY_PART" && (
-        <div>
-          <StepLabel step="3" label="PARTE DEL CUERPO" />
-          <KeeperBodyPicker target={threat.goalTarget} onSelect={onBodyPart} />
-        </div>
-      )}
-      {threat.step === "DETAILS" && (
-        <div>
-          <StepLabel step="4" label="DESENLACE" />
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-1">
+            <button type="button" onClick={() => onDefensiveOutcome("GOL")} className="min-h-20 rounded-2xl border-2 border-rose-300 bg-rose-700 text-xl font-black text-white active:scale-95">⚽ GOL</button>
             <SaveButton icon="⬤" label="BLOCAJE" onClick={() => onSaveOutcome("CATCH")} />
-            <SaveButton icon="↺" label="RECHACE" onClick={() => onSaveOutcome("REBOUND")} />
             <SaveButton icon="↗" label="DESPEJE" onClick={() => onSaveOutcome("CLEARANCE")} />
+            <SaveButton icon="↺" label="RECHACE" onClick={() => onSaveOutcome("REBOUND")} />
           </div>
         </div>
       )}
       {threat.step === "PHASE" && (
-        <PhasePicker onPhase={onPhase} />
+        <PhasePicker onPhase={onPhase} immersive />
       )}
     </ContextualSurface>
   );

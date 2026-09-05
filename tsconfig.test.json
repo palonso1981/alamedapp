@@ -13,6 +13,7 @@
   "include": [
     "src/lib/matchEngine.ts",
     "src/lib/matchEngine.test.ts",
+    "src/lib/captureOrientation.test.ts",
     "src/lib/matchPersistence.ts",
     "src/lib/contextualPlacement.ts",
     "src/lib/courtGeometry.ts",

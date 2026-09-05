@@ -56,7 +56,7 @@ export function MatchRailControl(props: MatchRailControlProps) {
   const stateButtons = (
     <div className="grid min-w-28 grid-cols-2 gap-1.5">
       <button type="button" disabled={props.reviewing} onClick={props.onToggleSuperiority} className={`min-h-14 rounded-xl text-lg font-black shadow-inner disabled:opacity-40 ${props.superiorityActive ? "animate-pulse bg-amber-400 text-slate-950" : "bg-slate-800 text-slate-400"}`} aria-pressed={props.superiorityActive} aria-label="Alternar superioridad">⚡</button>
-      <button type="button" disabled={props.reviewing} onClick={props.onToggleFlyingGoalkeeper} className={`min-h-14 rounded-xl text-base font-black shadow-inner disabled:opacity-40 ${props.flyingGoalkeeperActive ? "bg-rose-600 text-white" : "bg-slate-800 text-slate-400"}`} aria-pressed={props.flyingGoalkeeperActive} aria-label={`Portero-jugador${props.flyingGoalkeeperLabel ? `: ${props.flyingGoalkeeperLabel}` : ""}`}>◇⁺</button>
+      <button type="button" disabled={props.reviewing} onClick={props.onToggleFlyingGoalkeeper} className={`min-h-14 rounded-xl text-[10px] font-black shadow-inner disabled:opacity-40 ${props.flyingGoalkeeperActive ? "bg-rose-600 text-white" : "bg-slate-800 text-slate-400"}`} aria-pressed={props.flyingGoalkeeperActive} aria-label={`Portero-jugador CDA${props.flyingGoalkeeperLabel ? `: ${props.flyingGoalkeeperLabel}` : ""}`}>◇⁺<span className="block">PJ CDA</span></button>
       <span className={`col-span-2 grid min-h-9 place-items-center rounded-lg text-xs font-black ${props.inferiorityActive ? "bg-red-950 text-red-200" : "bg-slate-900 text-slate-400"}`} aria-label={props.inferiorityActive ? "Estado cuatro contra cinco" : "Estado cinco contra cinco"}>{props.inferiorityActive ? "4v5" : "5v5"}</span>
     </div>
   );

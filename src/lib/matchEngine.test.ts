@@ -6,9 +6,11 @@ import {
   appendEvents,
   createCardEvent,
   createFoulEvent,
+  createFoulCountAdjustmentEvent,
   createGameStateEvent,
   createLineupInitializedEvent,
   createLiveThreatEvent,
+  createRestartEvent,
   createSubstitutionEvent,
   deriveGoalkeeperReference,
   deriveGlobalMinute,
@@ -40,7 +42,7 @@ import {
 import { contextualPlacement } from "./contextualPlacement";
 import { courtHeightForWidth, FUTSAL_COURT_ASPECT_RATIO, normalizeCourtPoint } from "./courtGeometry";
 import { CANONICAL_COURT_ORIENTATION, courtOrientationForPeriod } from "./courtGeometry";
-import { classifyGoalTarget, deriveKeeperBodyZone, deriveKeeperBodyZoneFromPart, GOAL_FRAME, isInsideGoalFrame, isOutcomeCompatibleWithGoalTarget, KEEPER_BODY_HITBOXES, KEEPER_BODY_SCREEN_SIDE, KEEPER_BODY_SURFACE, normalizeGoalTargetPoint } from "./goalTarget";
+import { classifyGoalTarget, completesGoalTargetGesture, deriveKeeperBodyZone, deriveKeeperBodyZoneFromPart, GOAL_FRAME, isInsideGoalFrame, isOutcomeCompatibleWithGoalTarget, KEEPER_BODY_HITBOXES, KEEPER_BODY_SCREEN_SIDE, KEEPER_BODY_SURFACE, normalizeGoalTargetPoint } from "./goalTarget";
 import { assistCandidates, filterTimelineEvents } from "./matchReview";
 import { effectiveReviewStatus, reviewEventCounts, targetMinutesComparisons } from "./postMatchReview";
 import { deriveGoalZoneV1, derivePitchZoneV1, PITCH_ZONE_MODEL_VERSION } from "./spatialZones";
@@ -72,6 +74,83 @@ test("la etiqueta visual distingue portero funcional, perfil natural y P-J", () 
   assert.equal(functionalGoalkeeperBadge(field, "field"), "PORTERO · ROL FUNCIONAL");
   assert.equal(functionalGoalkeeperBadge(field, "gk"), null);
   assert.equal(field.position, "JUGADOR", "la etiqueta funcional no convierte por sí sola al jugador en P-J");
+});
+
+test("reinicio standalone enlaza solo la siguiente amenaza compatible del mismo lado", () => {
+  const matchId = "restart-link";
+  const restart = createRestartEvent({ id: "corner-a", matchId, position: { period: 1, minute: 3, order: 1 }, side: "FOR", restart: "CORNER", spatialSide: "TOP", now: 2 });
+  const linked = createLiveThreatEvent({ id: "shot-a", matchId, position: { period: 1, minute: 3, order: 2 }, side: "FOR", playerId: "p1", origin: { x: .8, y: .2 }, outcome: "FUERA", phase: "SET_PIECE_CORNER", restartEventId: restart.id, now: 3 });
+  const replay = replayMatch(players, [...initialLineup(matchId), restart, linked]);
+  assert.equal(replay.issues.length, 0);
+  const wrong = [...initialLineup(matchId), restart, { ...linked, phase: "POSITIONAL" as const }];
+  assert.ok(replayMatch(players, wrong).issues.some((entry) => entry.code === "INVALID_EVENT_LINK"));
+});
+
+test("ajuste de faltas es auditable, no atribuye jugador y la siguiente falta queda como F6", () => {
+  const matchId = "foul-adjustment";
+  let events = initialLineup(matchId);
+  for (let index = 1; index <= 4; index += 1) events = appendEvent(players, events, createFoulEvent({ id: `f${index}`, matchId, position: { period: 1, minute: index, order: 1 }, side: "FOR", playerId: "p1", now: index + 1 }));
+  events = appendEvent(players, events, createFoulCountAdjustmentEvent({ id: "unknown-foul", matchId, position: { period: 1, minute: 5, order: 1 }, side: "FOR", delta: 1, now: 8 }));
+  events = appendEvent(players, events, createFoulEvent({ id: "real-next", matchId, position: { period: 1, minute: 6, order: 1 }, side: "FOR", playerId: "p2", now: 9 }));
+  const replay = replayMatch(players, events);
+  assert.equal(replay.disciplineByPeriod[1].for.fouls, 6);
+  assert.equal(replay.timeline.find((entry) => entry.event.id === "real-next")?.periodFoulNumber, 6);
+  const adjustment = events.find((event) => event.id === "unknown-foul");
+  assert.equal(adjustment?.pendingReview, true);
+  assert.equal(adjustment && "playerId" in adjustment, false);
+});
+
+test("PJ CDA y PJ rival mantienen estados cronológicos independientes", () => {
+  const matchId = "pj-both-sides";
+  const events = [...initialLineup(matchId),
+    createGameStateEvent({ id: "pj-for", matchId, position: { period: 1, minute: 8, order: 1 }, state: "FLYING_GOALKEEPER", active: true, playerId: "p2", side: "FOR", now: 2 }),
+    createGameStateEvent({ id: "pj-against", matchId, position: { period: 1, minute: 9, order: 1 }, state: "FLYING_GOALKEEPER", active: true, side: "AGAINST", now: 3 }),
+    createGameStateEvent({ id: "pj-for-off", matchId, position: { period: 1, minute: 10, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "FOR", now: 4 }),
+  ];
+  const replay = replayMatch(players, events);
+  assert.equal(replay.flyingGoalkeeperActive, false);
+  assert.equal(replay.flyingGoalkeeperAgainstActive, true);
+});
+
+test("blocaje despeje y rechace son válidos sin bodyPart y rechace no crea hijo", () => {
+  for (const saveOutcome of ["CATCH", "CLEARANCE", "REBOUND"] as const) {
+    let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, { type: "COURT_TAPPED", origin: { x: .4, y: .5 }, eventId: `no-body-${saveOutcome}` });
+    transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: GOAL_TARGET_GEOMETRY_VERSION, x: .5, y: .5 } });
+    transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome });
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "PHASE");
+    transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "POSITIONAL" });
+    assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.defensiveCapture?.keeperBodyPart, undefined);
+    assert.equal(transition.effect?.type === "RECORD_THREAT" && transition.effect.defensiveCapture?.saveOutcome, saveOutcome);
+    assert.equal(transition.state.kind, saveOutcome === "REBOUND" ? "SECOND_PLAY_OFFER" : "IDLE");
+  }
+});
+
+test("el gesto de destino se consume y no puede activar el resultado montado después", () => {
+  assert.equal(completesGoalTargetGesture(null, 7), false);
+  assert.equal(completesGoalTargetGesture(7, 8), false);
+  assert.equal(completesGoalTargetGesture(7, 7), true);
+  let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, { type: "COURT_TAPPED", origin: { x: .5, y: .5 }, eventId: "pointer-p0" });
+  transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: GOAL_TARGET_GEOMETRY_VERSION, x: .5, y: .5 } });
+  assert.equal(transition.effect, undefined);
+  assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.step, "GOAL_RESULT");
+});
+
+test("reinicios ajustes y PJ rival sobreviven persistencia local", () => {
+  const matchId = "directo-v2-persist";
+  const session = createSession(matchId);
+  session.events = [
+    ...session.events,
+    createRestartEvent({ id: "restart-persist", matchId, position: { period: 1, minute: 4, order: 1 }, side: "AGAINST", restart: "DANGEROUS_KICK_IN", spatialSide: "BOTTOM" }),
+    createFoulCountAdjustmentEvent({ id: "adjust-persist", matchId, position: { period: 1, minute: 5, order: 1 }, side: "AGAINST", delta: 1 }),
+    createGameStateEvent({ id: "pj-rival-persist", matchId, position: { period: 1, minute: 6, order: 1 }, state: "FLYING_GOALKEEPER", active: true, side: "AGAINST" }),
+  ];
+  const storage = new MemoryStorage();
+  assert.equal(saveMatchSession(session, storage).ok, true);
+  const loaded = loadMatchSession(matchId, storage);
+  assert.equal(loaded?.events.length, session.events.length);
+  const replay = replayMatch(loaded!.players, loaded!.events);
+  assert.equal(replay.discipline.against.fouls, 1);
+  assert.equal(replay.flyingGoalkeeperAgainstActive, true);
 });
 
 function initialLineup(matchId = "match-a"): MatchEvent[] {

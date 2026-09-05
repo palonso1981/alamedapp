@@ -79,6 +79,25 @@ body {
   transform: translate(-50%, -50%);
 }
 
+.directo-capture-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.directo-player-rail {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (min-width: 640px) {
+  .directo-capture-grid {
+    grid-template-columns: 7rem minmax(0, 1fr);
+  }
+
+  .directo-player-rail {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(4, minmax(0, 1fr));
+  }
+}
+
 @media (min-width: 1024px) and (orientation: landscape) {
   .directo-page {
     height: 100dvh;
@@ -113,7 +132,7 @@ body {
   }
 
   .directo-court {
-    width: min(100%, calc((100dvh - 20.5rem) * 2));
+    width: min(100%, calc((100dvh - 13rem) * 2));
     min-height: 0;
   }
 

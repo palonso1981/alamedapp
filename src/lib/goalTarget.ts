@@ -7,6 +7,11 @@ import {
   LiveThreatOutcome,
 } from "../types";
 
+/** Evita que un pointerup distinto o sintético cierre la selección espacial. */
+export function completesGoalTargetGesture(activePointerId: number | null, releasedPointerId: number): boolean {
+  return activePointerId !== null && activePointerId === releasedPointerId;
+}
+
 const LEGACY_GOAL_FRAME = {
   left: 0.12,
   right: 0.88,

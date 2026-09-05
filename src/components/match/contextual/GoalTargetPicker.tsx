@@ -1,9 +1,10 @@
 "use client";
 
-import { PointerEvent } from "react";
+import { PointerEvent, useRef } from "react";
 import {
   KEEPER_BODY_HITBOXES,
   KEEPER_BODY_SURFACE,
+  completesGoalTargetGesture,
   normalizeGoalTargetPoint,
 } from "../../../lib/goalTarget";
 import {
@@ -18,22 +19,38 @@ interface GoalTargetPickerProps {
 }
 
 export function GoalTargetPicker({ value, onSelect, compact = false }: GoalTargetPickerProps) {
-  const select = (event: PointerEvent<HTMLButtonElement>) => {
+  const activePointer = useRef<number | null>(null);
+  const begin = (event: PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
     event.stopPropagation();
+    activePointer.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const select = (event: PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!completesGoalTargetGesture(activePointer.current, event.pointerId)) return;
     const point = normalizeGoalTargetPoint(
       event.clientX,
       event.clientY,
       event.currentTarget.getBoundingClientRect(),
     );
-    onSelect(point);
+    activePointer.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    // Montar la pantalla de resultado después de consumir por completo el gesto.
+    window.setTimeout(() => onSelect(point), 0);
   };
 
   return (
     <div className="relative mx-auto w-full" data-testid="goal-target-picker">
       <button
         type="button"
+        onPointerDown={begin}
         onPointerUp={select}
-        className={`relative block aspect-[25/16] w-full touch-manipulation overflow-hidden rounded-2xl border border-sky-300/30 bg-slate-950 shadow-inner ${compact ? "min-h-44" : ""}`}
+        onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
+        className={`relative block aspect-[25/16] w-full touch-none overflow-hidden rounded-2xl border border-sky-300/30 bg-slate-950 shadow-inner ${compact ? "min-h-44" : ""}`}
         aria-label="Portería CDA vacía: toca el destino del disparo rival"
       >
         <GoalFrameGraphic />

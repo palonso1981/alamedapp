@@ -341,8 +341,8 @@ export function reduceLiveInteraction(
   if (action.type === "KEEPER_BODY_PART_SELECTED") {
     if (
       state.side !== "AGAINST" ||
-      state.step !== "KEEPER_BODY_PART" ||
-      state.outcome !== "PARADA"
+      (state.step !== "GOAL_RESULT" && state.step !== "KEEPER_BODY_PART") ||
+      !state.goalTarget
     ) {
       return { state };
     }
@@ -350,7 +350,7 @@ export function reduceLiveInteraction(
       state: {
         ...state,
         keeperBodyPart: action.keeperBodyPart,
-        step: "DETAILS",
+        step: state.step === "KEEPER_BODY_PART" ? "DETAILS" : "GOAL_RESULT",
       },
     };
   }
@@ -358,14 +358,14 @@ export function reduceLiveInteraction(
   if (action.type === "SAVE_OUTCOME_SELECTED") {
     if (
       state.side !== "AGAINST" ||
-      state.step !== "DETAILS" ||
-      state.outcome !== "PARADA" ||
-      !state.keeperBodyPart
+      (state.step !== "GOAL_RESULT" && state.step !== "DETAILS") ||
+      !state.goalTarget
     ) {
       return { state };
     }
     const detailed: PendingThreat = {
       ...state,
+      outcome: "PARADA",
       saveOutcome: action.saveOutcome,
       step: "PHASE",
     };

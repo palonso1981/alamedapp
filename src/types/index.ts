@@ -254,7 +254,8 @@ export type GameContext =
   | "EVEN"
   | "SUPERIORITY"
   | "INFERIORITY"
-  | "FLYING_GOALKEEPER";
+  | "FLYING_GOALKEEPER"
+  | "FLYING_GOALKEEPER_AGAINST";
 
 export interface GameStateChangedEvent extends MatchEventBase {
   type: "game_state_changed";
@@ -262,6 +263,8 @@ export interface GameStateChangedEvent extends MatchEventBase {
   active: boolean;
   /** Persona que asume funcionalmente la portería cuando se activa P-J. */
   playerId?: string;
+  /** Ausente en eventos V1: equivale a FOR/CDA. */
+  side?: ThreatSide;
 }
 
 export type LiveThreatOutcome = "GOL" | "PARADA" | "FUERA";
@@ -359,6 +362,8 @@ interface ThreatEventData {
   sequenceId?: string;
   /** Amenaza inmediatamente anterior que origina esta continuación. */
   parentEventId?: string;
+  /** Reinicio explícito que originó la amenaza, si el usuario confirmó la misma fase. */
+  restartEventId?: string;
   /** Solo se usa en goles CDA; nunca es una métrica agregada. */
   assist?: GoalAssist;
   /** Detalle espacial defensivo. Ausente únicamente en amenazas legacy. */
@@ -400,13 +405,33 @@ export interface CardRecordedEvent extends MatchEventBase {
   staffId?: string;
 }
 
+export type RestartKind = "CORNER" | "DANGEROUS_KICK_IN";
+export type RestartSpatialSide = "TOP" | "BOTTOM";
+
+export interface RestartRecordedEvent extends MatchEventBase {
+  type: "restart_recorded";
+  side: ThreatSide;
+  restart: RestartKind;
+  spatialSide: RestartSpatialSide;
+}
+
+export interface FoulCountAdjustedEvent extends MatchEventBase {
+  type: "foul_count_adjusted";
+  side: DisciplineSide;
+  delta: 1 | -1;
+  /** El ajuste no inventa instante histórico ni persona. */
+  unresolved: true;
+}
+
 export type MatchEvent =
   | LineupInitializedEvent
   | SubstitutionEvent
   | ThreatRecordedEvent
   | GameStateChangedEvent
   | FoulRecordedEvent
-  | CardRecordedEvent;
+  | CardRecordedEvent
+  | RestartRecordedEvent
+  | FoulCountAdjustedEvent;
 
 export type MatchEventType = MatchEvent["type"];
 
@@ -463,6 +488,7 @@ export interface ReplayResult {
   superiorityActive: boolean;
   flyingGoalkeeperActive: boolean;
   flyingGoalkeeperPlayerId?: string;
+  flyingGoalkeeperAgainstActive: boolean;
   inferiorityActive: boolean;
   lineupValidation: LineupValidation;
   dismissedPlayerIds: string[];
