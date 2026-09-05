@@ -604,6 +604,12 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           toggleGameState(matchId, "FLYING_GOALKEEPER", undefined, "AGAINST");
           setFeedback(activeReplay.flyingGoalkeeperAgainstActive ? "PJ RIVAL OFF" : "PJ RIVAL ON");
         }}
+        onSuperiority={() => {
+          if (captureBlocked || activeReplay.inferiorityActive) return blockedAction();
+          setInteraction(IDLE_LIVE_INTERACTION);
+          toggleGameState(matchId, "SUPERIORITY");
+          setFeedback(activeReplay.superiorityActive ? "5v4 OFF" : "5v4 ON");
+        }}
         onChange={() => { setInteraction(IDLE_LIVE_INTERACTION); setBenchMode("CHANGE_OUT"); }}
         onBench={() => { setInteraction(IDLE_LIVE_INTERACTION); setBenchMode((mode) => mode === "BROWSE" ? "CLOSED" : "BROWSE"); }}
         onFlip={flipCourt}
