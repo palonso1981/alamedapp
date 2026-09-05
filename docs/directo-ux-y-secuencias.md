@@ -441,3 +441,50 @@ la duración reglamentaria configurada. Será orientativo y no bloqueará cambio
 ni captura: el análisis comparará plan frente a minutos reales derivados. Los
 totales de cinco jugadores simultáneos son información de consistencia, no una
 segunda fuente de minutos.
+# Directo V2: cockpit de captura de campo
+
+Directo V2 separa la orientación visual de captura del sistema canónico. La base
+de datos conserva siempre CDA defendiendo la portería izquierda y atacando a la
+derecha. La dirección elegida para P1, su propuesta opuesta para P2 y el botón
+de giro solo transforman `visual ↔ canonical` mediante un helper único; nunca
+reescriben eventos ya registrados.
+
+La superficie normal muestra cuatro jugadores de campo en un rail lateral y al
+portero funcional dentro de la pista. Seleccionar un jugador no abre el banco.
+La sustitución es una intención explícita: `CAMBIO → SALE → ENTRA`, y no altera
+la alineación hasta completar la persona entrante. `BANCO` es una consulta
+separada para suplentes, staff y disciplina.
+
+## Reinicios y relación con amenazas
+
+`restart_recorded` representa de forma autónoma un `CORNER` o una
+`DANGEROUS_KICK_IN`, con equipo y banda espacial. Cuenta aunque no exista tiro.
+Si la siguiente amenaza del mismo lado elige explícitamente la fase compatible,
+guarda `restartEventId`; una fase distinta cierra el contexto sin inventar el
+vínculo. Otro reinicio sustituye el contexto pendiente anterior.
+
+En producto, `DANGEROUS_KICK_IN` se presenta como **BANDA CERCANA**: solo el
+último tramo ofensivo, no todos los saques de banda.
+
+## Portería y ráfagas
+
+Un gesto elige exclusivamente `goalTarget`; se consume antes de montar la
+pantalla siguiente. En un destino interior, una segunda pulsación independiente
+elige GOL o BLOCAJE/DESPEJE/RECHACE. La parte corporal es opcional y, si se
+marca, se hace antes del desenlace. Una parada sin cuerpo sigue computando en
+todos los totales salvo el desglose corporal y puede completarse en Revisión.
+
+RECHACE no crea una amenaza. Solo ofrece armar otra captura; si realmente hay
+otro tiro, este conserva `sequenceId` y `parentEventId` y puede heredar la fase.
+
+## Estados y correcciones auditables
+
+`game_state_changed` admite lado para mantener intervalos independientes de
+PJ CDA y PJ rival. La fase PORTERO-JUGADOR sigue siendo una clasificación de una
+amenaza puntual y no activa por sí sola el estado sostenido.
+
+`foul_count_adjusted` suma o resta una falta oficial conocida sin inventar
+jugador ni instante histórico. Siempre queda `pendingReview` y `unresolved`:
+permite operar con el total correcto en directo y localizar después la acción
+real. Al resolverla se sustituye/corrige el ajuste mediante la cronología; no se
+edita ningún contador agregado.
