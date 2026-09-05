@@ -12,6 +12,7 @@ import {
   buildDashboardAnalytics,
   DashboardMatchRecord,
   filterDashboardMatches,
+  selectSavesWithoutBodyPart,
 } from "./dashboardAnalytics";
 import { MatchEvent, MatchSession, Player } from "../types";
 
@@ -344,4 +345,16 @@ test("disciplina cuenta faltas genéricas y tarjetas sin inventar jugador", () =
     for: { fouls: 1, yellowCards: 1, redCards: 0 },
     against: { fouls: 1, yellowCards: 0, redCards: 1 },
   });
+});
+
+test("selector de paradas sin bodyPart conserva la parada y excluye borrados", () => {
+  const matchId = "missing-body";
+  const withoutBody = defensiveThreat(matchId, "no-body", 2, 1, "PARADA", "gk-a", { saveOutcome: "CATCH" });
+  if (withoutBody.type === "threat_recorded" && withoutBody.defensive?.version === 2) withoutBody.defensive.keeperBodyPart = undefined;
+  const withBody = defensiveThreat(matchId, "with-body", 3, 1, "PARADA", "gk-a", { saveOutcome: "CLEARANCE", bodyPart: "TORSO" });
+  const deleted = { ...defensiveThreat(matchId, "deleted", 4, 1, "PARADA", "gk-a", { saveOutcome: "REBOUND" }), deletedAt: 100 };
+  assert.deepEqual(selectSavesWithoutBodyPart([withoutBody, withBody, deleted]).map((event) => event.id), ["no-body"]);
+  const stats = buildDashboardAnalytics([record(matchId, [lineup(matchId), withoutBody, withBody])], { clubId: "club-a", teamId: "team-a", seasonId: "season-a" });
+  assert.equal(stats.goalkeepers[0].saves, 2);
+  assert.equal(stats.missing.bodyPart, 1);
 });

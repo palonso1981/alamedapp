@@ -34,11 +34,11 @@ export function PitchThreatMap({
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <p className="text-[10px] font-black tracking-[0.16em] text-cyan-300">ORIGEN</p>
-          <h3 className="font-black">{side === "FOR" ? "CDA →" : "← RIV"}</h3>
+          <h3 className="font-black">{side === "FOR" ? "MAPA DE REMATES" : "MAPA DE AMENAZAS"}</h3>
         </div>
         <span className="text-2xl font-black text-slate-500">{visible.length}</span>
       </div>
-      <div className="relative aspect-[2/1] w-full overflow-hidden rounded-2xl bg-gradient-to-br from-sky-800 to-blue-950" aria-label={`Mapa de origen de amenazas ${side === "FOR" ? "CDA" : "RIV"}`}>
+      <div className="relative aspect-[2/1] w-full overflow-hidden rounded-2xl bg-gradient-to-br from-sky-800 to-blue-950" aria-label={side === "FOR" ? "Mapa de remates CDA" : "Mapa de amenazas recibidas"}>
         <FutsalCourtMarkings />
         {visible.map((point) => (
           <span

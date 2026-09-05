@@ -26,19 +26,16 @@ export function PitchZoneGrid({ zones }: { zones: ZoneStats<PitchOriginZone>[] }
     <article className="rounded-3xl border border-slate-700 bg-slate-900 p-4">
       <p className="text-[10px] font-black tracking-[0.16em] text-cyan-300">PERSPECTIVA PORTERO CDA</p>
       <h3 className="mb-3 font-black">ZONAS DE ORIGEN 1–6</h3>
-      <div className="grid grid-cols-2 gap-2" aria-label="Resumen de zonas de origen">
-        <div className="contents">
-          <span className="text-center text-[9px] font-black text-slate-500">CERCA</span>
-          <span className="text-center text-[9px] font-black text-slate-500">LEJOS</span>
-        </div>
-        {[0, 1, 2].map((lane) => [zones[lane], zones[lane + 3]].map((zone) => (
+      <p className="mb-1 text-center text-[9px] font-black tracking-[.3em] text-slate-500">PORTERÍA</p>
+      <div className="grid grid-cols-3 gap-2" aria-label="Z1 Z2 Z3 cercanas; Z4 Z5 Z6 lejanas">
+        {zones.map((zone, index) => (
           <div key={zone.zone} className="rounded-xl border border-slate-700 bg-slate-950 p-3">
-            <div className="flex items-center justify-between"><strong className="text-cyan-300">{zone.zone}</strong><span className="text-[9px] text-slate-500">{lane === 0 ? "DERECHA" : lane === 1 ? "CENTRO" : "IZQUIERDA"}</span></div>
+            <div className="flex items-center justify-between"><strong className="text-cyan-300">{zone.zone}</strong><span className="text-[8px] text-slate-500">{index % 3 === 0 ? "DCHA." : index % 3 === 1 ? "CENTRO" : "IZQ."}</span></div>
             <strong className="mt-1 block text-2xl">{zone.threats}</strong>
             <p className="text-[10px] text-slate-400">{zone.goals} G · {zone.saves} P · {zone.outside} F</p>
             <p className="text-[10px] font-bold text-slate-500">GOL {percentage(zone.goalPercentage)}</p>
           </div>
-        )))}
+        ))}
       </div>
       <p className="mt-3 text-[10px] text-slate-500">Derecha/izquierda son las del portero CDA mirando hacia la pista.</p>
     </article>

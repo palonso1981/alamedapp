@@ -130,6 +130,18 @@ export interface DashboardAnalytics {
   };
 }
 
+/** Paradas válidas que solo necesitan enriquecimiento corporal posterior. */
+export function selectSavesWithoutBodyPart(events: readonly MatchEvent[]): ThreatRecordedEvent[] {
+  return events.filter((event): event is ThreatRecordedEvent =>
+    event.type === "threat_recorded" &&
+    event.deletedAt === null &&
+    event.side === "AGAINST" &&
+    event.outcome === "PARADA" &&
+    event.defensive?.version === 2 &&
+    !event.defensive.keeperBodyPart,
+  );
+}
+
 const PHASES: ThreatPhase[] = [
   "POSITIONAL",
   "TRANSITION",
