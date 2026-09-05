@@ -12,17 +12,11 @@ interface MatchRailControlProps {
   reviewing?: boolean;
   side: ClockSide;
   verticalSlot: ClockVerticalSlot;
-  superiorityActive: boolean;
-  flyingGoalkeeperActive: boolean;
-  inferiorityActive: boolean;
-  flyingGoalkeeperLabel?: string;
   onIncreaseRemaining: () => void;
   onDecreaseRemaining: () => void;
   onFinishPeriod: () => void;
   onStartSecondPeriod: () => void;
   onResumeFirstPeriod: () => void;
-  onToggleSuperiority: () => void;
-  onToggleFlyingGoalkeeper: () => void;
   onSideChange: (side: ClockSide) => void;
   onVerticalSlotChange: (slot: ClockVerticalSlot) => void;
 }
@@ -53,14 +47,6 @@ export function MatchRailControl(props: MatchRailControlProps) {
     setConfirmFinish(false);
   };
 
-  const stateButtons = (
-    <div className="grid min-w-28 grid-cols-2 gap-1.5">
-      <button type="button" disabled={props.reviewing} onClick={props.onToggleSuperiority} className={`min-h-14 rounded-xl text-lg font-black shadow-inner disabled:opacity-40 ${props.superiorityActive ? "animate-pulse bg-amber-400 text-slate-950" : "bg-slate-800 text-slate-400"}`} aria-pressed={props.superiorityActive} aria-label="Alternar superioridad">⚡</button>
-      <button type="button" disabled={props.reviewing} onClick={props.onToggleFlyingGoalkeeper} className={`min-h-14 rounded-xl text-[10px] font-black shadow-inner disabled:opacity-40 ${props.flyingGoalkeeperActive ? "bg-rose-600 text-white" : "bg-slate-800 text-slate-400"}`} aria-pressed={props.flyingGoalkeeperActive} aria-label={`Portero-jugador CDA${props.flyingGoalkeeperLabel ? `: ${props.flyingGoalkeeperLabel}` : ""}`}>◇⁺<span className="block">PJ CDA</span></button>
-      <span className={`col-span-2 grid min-h-9 place-items-center rounded-lg text-xs font-black ${props.inferiorityActive ? "bg-red-950 text-red-200" : "bg-slate-900 text-slate-400"}`} aria-label={props.inferiorityActive ? "Estado cuatro contra cinco" : "Estado cinco contra cinco"}>{props.inferiorityActive ? "4v5" : "5v5"}</span>
-    </div>
-  );
-
   const lifecycle = props.reviewing ? (
     <span className="grid min-h-12 place-items-center rounded-lg border border-cyan-800 bg-slate-900 text-[10px] font-black text-cyan-300">P{props.period} ●</span>
   ) : startSecond ? (
@@ -88,27 +74,26 @@ export function MatchRailControl(props: MatchRailControlProps) {
 
   return (
     <>
-      <aside className={`fixed z-40 hidden w-32 -translate-y-1/2 flex-col gap-1.5 rounded-2xl border border-slate-600/80 bg-slate-950/95 p-1.5 shadow-2xl backdrop-blur sm:flex ${sideClass} ${verticalClass}`} aria-label="Control de partido">
-        <div className="flex items-center justify-between rounded-lg bg-slate-900 px-2 py-1"><strong>P{props.period}</strong><span className="text-[9px] font-black text-slate-500">RESTANTE</span></div>
-        <div className={`grid grid-cols-[3.5rem_1fr] gap-1.5 ${props.side === "right" ? "[direction:rtl]" : ""}`}>
+      <aside className={`fixed z-40 hidden w-36 -translate-y-1/2 flex-col gap-2 rounded-3xl border border-slate-500/80 bg-slate-950/95 p-2 shadow-2xl backdrop-blur sm:flex ${sideClass} ${verticalClass}`} aria-label="Control de partido">
+        <div className="grid min-h-16 place-items-center rounded-2xl bg-cyan-950 text-4xl font-black text-cyan-100"><strong>P{props.period}</strong></div>
+        <div className={`grid grid-cols-[4.25rem_1fr] gap-2 ${props.side === "right" ? "[direction:rtl]" : ""}`}>
           <div className="grid gap-1 [direction:ltr]">
-            <button type="button" onClick={props.onIncreaseRemaining} disabled={remaining >= duration || closed || props.reviewing} className="min-h-16 rounded-xl border border-emerald-200/40 bg-emerald-500 text-2xl font-black text-slate-950 shadow-lg active:scale-95 disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-600" aria-label="Añadir un minuto restante">+1</button>
-            <button type="button" onClick={props.onDecreaseRemaining} disabled={remaining <= 0 || closed || props.reviewing} className="min-h-16 rounded-xl border border-slate-600 bg-slate-800 text-2xl font-black shadow-lg active:scale-95 disabled:opacity-25" aria-label="Restar un minuto restante">−1</button>
+            <button type="button" onClick={props.onIncreaseRemaining} disabled={remaining >= duration || closed || props.reviewing} className="min-h-20 rounded-2xl border border-emerald-200/40 bg-emerald-500 text-3xl font-black text-slate-950 shadow-lg active:scale-95 disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-600" aria-label="Añadir un minuto restante">+1</button>
+            <button type="button" onClick={props.onDecreaseRemaining} disabled={remaining <= 0 || closed || props.reviewing} className="min-h-20 rounded-2xl border border-slate-600 bg-slate-800 text-3xl font-black shadow-lg active:scale-95 disabled:opacity-25" aria-label="Restar un minuto restante">−1</button>
           </div>
-          <output className="grid place-items-center rounded-xl border border-cyan-200/70 bg-cyan-300 font-mono text-4xl font-black text-slate-950 [direction:ltr]" aria-label={`${remaining} minutos restantes`}>{remaining}</output>
+          <output className="grid place-items-center rounded-2xl border border-cyan-200/70 bg-cyan-300 font-mono text-5xl font-black text-slate-950 [direction:ltr]" aria-label={`${remaining} minutos restantes`}>{remaining}</output>
         </div>
-        {stateButtons}
         {lifecycle}
         <div className="grid grid-cols-2 gap-1"><button type="button" onClick={cycleVertical} className="min-h-11 rounded-lg bg-slate-900 text-slate-500" aria-label="Cambiar altura del control">↕</button><button type="button" onClick={toggleSide} className="min-h-11 rounded-lg bg-slate-900 text-slate-500" aria-label="Cambiar lateral del control">⇆</button></div>
       </aside>
 
       <aside className={`fixed bottom-[max(.5rem,env(safe-area-inset-bottom))] z-40 flex max-w-[calc(100vw-1rem)] items-stretch gap-1 rounded-2xl border border-slate-600/80 bg-slate-950/95 p-1.5 shadow-2xl sm:hidden ${sideClass}`} aria-label="Control de partido móvil">
-        <div className="grid min-w-12 place-items-center rounded-xl bg-slate-900 text-sm font-black">P{props.period}</div>
+        <div className="grid min-w-16 place-items-center rounded-xl bg-cyan-950 text-2xl font-black text-cyan-100">P{props.period}</div>
         <button type="button" onClick={props.onIncreaseRemaining} disabled={remaining >= duration || closed || props.reviewing} className="min-h-[3.75rem] min-w-[3.75rem] rounded-xl border border-emerald-200/40 bg-emerald-500 text-2xl font-black text-slate-950 shadow-lg disabled:bg-slate-800 disabled:text-slate-600" aria-label="Añadir un minuto restante">+1</button>
         <output className="grid min-w-16 place-items-center rounded-xl bg-cyan-300 font-mono text-3xl font-black text-slate-950" aria-label={`${remaining} minutos restantes`}>{remaining}</output>
         <button type="button" onClick={props.onDecreaseRemaining} disabled={remaining <= 0 || closed || props.reviewing} className="min-h-[3.75rem] min-w-[3.75rem] rounded-xl border border-slate-600 bg-slate-800 text-2xl font-black shadow-lg disabled:opacity-25" aria-label="Restar un minuto restante">−1</button>
         <button type="button" onClick={toggleSide} className="min-w-11 rounded-xl text-slate-500" aria-label="Cambiar lateral">⇆</button>
-        <div className="absolute bottom-[calc(100%+.35rem)] left-0 flex gap-1 rounded-xl bg-slate-950/95 p-1">{stateButtons}{lifecycle}</div>
+        <div className="absolute bottom-[calc(100%+.35rem)] left-0 rounded-xl bg-slate-950/95 p-1">{lifecycle}</div>
       </aside>
     </>
   );

@@ -44,14 +44,14 @@ export function DefensiveThreatContext({
         </div>
       )}
       {threat.step === "GOAL_RESULT" && (
-        <div className="grid gap-3 md:grid-cols-[1.25fr_.75fr]">
+        <div className="grid gap-4 md:grid-cols-[1.3fr_.7fr]">
           <div>
-            <StepLabel step="2" label="CUERPO OPCIONAL" />
-            <KeeperBodyPicker target={threat.goalTarget} onSelect={onBodyPart} />
-            {threat.keeperBodyPart && <p className="mt-1 text-center text-xs font-black text-cyan-200">✓ CUERPO MARCADO</p>}
+            <StepLabel step="2" label="CUERPO · OPCIONAL" />
+            <KeeperBodyPicker target={threat.goalTarget} selected={threat.keeperBodyPart} onSelect={onBodyPart} />
+            <p className={`mt-2 text-center text-xs font-black ${threat.keeperBodyPart ? "text-cyan-200" : "text-slate-500"}`}>{threat.keeperBodyPart ? "✓ CUERPO MARCADO" : "SIN SELECCIÓN"}</p>
           </div>
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-1">
-            <button type="button" onClick={() => onDefensiveOutcome("GOL")} className="min-h-20 rounded-2xl border-2 border-rose-300 bg-rose-700 text-xl font-black text-white active:scale-95">⚽ GOL</button>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-1">
+            <button type="button" onClick={() => onDefensiveOutcome("GOL")} className="min-h-24 rounded-2xl border-2 border-rose-200 bg-rose-600 text-2xl font-black text-white shadow-lg active:scale-95">⚽ GOL</button>
             <SaveButton icon="⬤" label="BLOCAJE" onClick={() => onSaveOutcome("CATCH")} />
             <SaveButton icon="↗" label="DESPEJE" onClick={() => onSaveOutcome("CLEARANCE")} />
             <SaveButton icon="↺" label="RECHACE" onClick={() => onSaveOutcome("REBOUND")} />
@@ -71,7 +71,7 @@ function StepLabel({ step, label }: { step: string; label: string }) {
 
 function SaveButton({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className="flex min-h-24 flex-col items-center justify-center rounded-xl border-2 border-sky-500 bg-sky-950 font-black text-sky-100">
+    <button type="button" onClick={onClick} className="flex min-h-24 flex-col items-center justify-center rounded-2xl border-2 border-sky-400 bg-sky-950 font-black text-sky-100 shadow-lg active:scale-95">
       <span className="text-3xl" aria-hidden="true">{icon}</span>
       <span className="mt-2 text-[10px]">{label}</span>
     </button>

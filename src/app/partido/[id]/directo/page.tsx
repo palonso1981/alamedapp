@@ -8,7 +8,7 @@ import { BenchPanel } from "../../../../components/match/BenchPanel";
 import { DefensiveThreatContext } from "../../../../components/match/contextual/DefensiveThreatContext";
 import { PlayerContextActions } from "../../../../components/match/contextual/PlayerContextActions";
 import { ThreatContextPicker } from "../../../../components/match/contextual/ThreatContextPicker";
-import { HistoryControls } from "../../../../components/match/HistoryControls";
+import { LivePlayerCard } from "../../../../components/match/LivePlayerCard";
 import { LineupFirewallAlert } from "../../../../components/match/LineupFirewallAlert";
 import {
   ClockSide,
@@ -16,6 +16,7 @@ import {
 } from "../../../../components/match/MatchClockControl";
 import { MatchRailControl } from "../../../../components/match/MatchRailControl";
 import { MatchScoreboard } from "../../../../components/match/MatchScoreboard";
+import { MatchSteamDeck } from "../../../../components/match/MatchSteamDeck";
 import { PeriodReviewBanner } from "../../../../components/match/PeriodReviewBanner";
 import { SecondPeriodLineupDialog } from "../../../../components/match/SecondPeriodLineupDialog";
 import { SyncStatusBadge } from "../../../../components/match/SyncStatusBadge";
@@ -33,7 +34,6 @@ import {
   visualRestartToCanonical,
   visualToCanonicalPoint,
 } from "../../../../lib/captureOrientation";
-import { eventDescription } from "../../../../lib/eventPresentation";
 import { functionalGoalkeeperBadge } from "../../../../lib/goalkeeperPresentation";
 import {
   IDLE_LIVE_INTERACTION,
@@ -44,7 +44,6 @@ import {
 import {
   proposeSecondPeriodLineup,
   replayMatch,
-  sortEvents,
 } from "../../../../lib/matchEngine";
 import { assistCandidates } from "../../../../lib/matchReview";
 import {
@@ -53,7 +52,6 @@ import {
 import {
   INFERIORITY_SLOT_ID,
   CDA_CLUB_ID,
-  MatchEvent,
   Player,
 } from "../../../../types";
 
@@ -87,43 +85,18 @@ function courtPlayerPosition(
   return OUTFIELD_POSITIONS[outfieldIds.indexOf(slotId)] ?? OUTFIELD_POSITIONS[0];
 }
 
-function undoTarget(
-  events: MatchEvent[],
-  previousEvents: MatchEvent[] | undefined,
-): MatchEvent | undefined {
-  if (!previousEvents) return undefined;
-  const previousById = new Map(
-    previousEvents.map((event) => [event.id, event] as const),
-  );
-  const added = sortEvents(
-    events.filter((event) => !previousById.has(event.id)),
-  ).at(-1);
-  if (added) return added;
-
-  const changed = events.find((event) => {
-    const previous = previousById.get(event.id);
-    return previous && JSON.stringify(previous) !== JSON.stringify(event);
-  });
-  if (changed) return changed;
-
-  const currentIds = new Set(events.map((event) => event.id));
-  return sortEvents(
-    previousEvents.filter((event) => !currentIds.has(event.id)),
-  ).at(-1);
-}
-
 function RestartTargets({ onRestart }: { onRestart: (end: "LEFT" | "RIGHT", side: "TOP" | "BOTTOM", kind: "CORNER" | "DANGEROUS_KICK_IN") => void }) {
-  const corner = "absolute z-20 grid h-10 w-10 place-items-center rounded-full border-2 border-amber-200 bg-amber-500 text-lg font-black text-slate-950 shadow-lg active:scale-90";
-  const band = "absolute z-20 grid h-9 w-20 place-items-center rounded-full border border-violet-200 bg-violet-700 text-[9px] font-black text-white shadow-lg active:scale-90";
+  const corner = "absolute z-20 grid h-16 w-16 place-items-center border-2 border-amber-200/80 bg-amber-400/90 text-3xl font-black text-slate-950 shadow-lg active:scale-95 sm:h-20 sm:w-20";
+  const band = "absolute z-20 grid h-12 w-[28%] place-items-center rounded-full border-2 border-violet-200/80 bg-violet-700/90 px-2 text-[9px] font-black text-white shadow-lg active:scale-[.98] sm:h-14 sm:text-[10px]";
   return <>
     <button type="button" onClick={() => onRestart("LEFT", "TOP", "CORNER")} className={`${corner} left-0 top-0`} aria-label="Córner izquierda superior">⌜</button>
     <button type="button" onClick={() => onRestart("RIGHT", "TOP", "CORNER")} className={`${corner} right-0 top-0`} aria-label="Córner derecha superior">⌝</button>
     <button type="button" onClick={() => onRestart("LEFT", "BOTTOM", "CORNER")} className={`${corner} bottom-0 left-0`} aria-label="Córner izquierda inferior">⌞</button>
     <button type="button" onClick={() => onRestart("RIGHT", "BOTTOM", "CORNER")} className={`${corner} bottom-0 right-0`} aria-label="Córner derecha inferior">⌟</button>
-    <button type="button" onClick={() => onRestart("LEFT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} left-12 top-0`} aria-label="Banda cercana izquierda superior">BANDA</button>
-    <button type="button" onClick={() => onRestart("RIGHT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} right-12 top-0`} aria-label="Banda cercana derecha superior">BANDA</button>
-    <button type="button" onClick={() => onRestart("LEFT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 left-12`} aria-label="Banda cercana izquierda inferior">BANDA</button>
-    <button type="button" onClick={() => onRestart("RIGHT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 right-12`} aria-label="Banda cercana derecha inferior">BANDA</button>
+    <button type="button" onClick={() => onRestart("LEFT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} left-20 top-0`} aria-label="Banda cercana izquierda superior">BANDA CERCANA</button>
+    <button type="button" onClick={() => onRestart("RIGHT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} right-20 top-0`} aria-label="Banda cercana derecha superior">BANDA CERCANA</button>
+    <button type="button" onClick={() => onRestart("LEFT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 left-20`} aria-label="Banda cercana izquierda inferior">BANDA CERCANA</button>
+    <button type="button" onClick={() => onRestart("RIGHT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 right-20`} aria-label="Banda cercana derecha inferior">BANDA CERCANA</button>
   </>;
 }
 
@@ -297,15 +270,6 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const pendingEventCount = session.events.filter(
     (event) => event.type !== "lineup_initialized" && event.deletedAt === null && event.pendingReview,
   ).length;
-  const targetForUndo = undoTarget(session.events, session.past.at(-1));
-  const targetUndoEntry = targetForUndo
-    ? chronologyReplay.timeline.find(
-        (entry) => entry.event.id === targetForUndo.id,
-      )
-    : undefined;
-  const undoDescription = targetForUndo
-    ? `${eventDescription(targetForUndo, session.players, targetUndoEntry, session.staff)} ${targetForUndo.minute}'`
-    : "última acción";
   const selectedPlayerId =
     interaction.kind === "PLAYER_SELECTED"
       ? interaction.playerId
@@ -472,7 +436,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   return (
     <div
       className={`directo-page min-h-screen overflow-x-hidden bg-gray-950 p-3 pb-28 font-sans text-white sm:p-4 sm:pb-4 ${
-        clockSide === "left" ? "sm:pl-28" : "sm:pr-28"
+        clockSide === "left" ? "sm:pl-40" : "sm:pr-40"
       }`}
     >
       {!orientationReady && (
@@ -496,10 +460,6 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         onSideChange={updateClockSide}
         verticalSlot={clockVerticalSlot}
         onVerticalSlotChange={updateClockVerticalSlot}
-        superiorityActive={activeReplay.superiorityActive}
-        flyingGoalkeeperActive={activeReplay.flyingGoalkeeperActive}
-        inferiorityActive={activeReplay.inferiorityActive}
-        flyingGoalkeeperLabel={session.players.find((player) => player.id === activeReplay.flyingGoalkeeperPlayerId)?.name}
         onIncreaseRemaining={() => decrementMinute(matchId)}
         onDecreaseRemaining={() => incrementMinute(matchId)}
         onFinishPeriod={() => {
@@ -515,20 +475,6 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           setInteraction(IDLE_LIVE_INTERACTION);
           resumeFirstPeriod(matchId);
           setFeedback("↶ Primera parte reanudada");
-        }}
-        onToggleSuperiority={() => {
-          if (captureBlocked) return blockedAction();
-          setInteraction(IDLE_LIVE_INTERACTION);
-          toggleGameState(matchId, "SUPERIORITY");
-        }}
-        onToggleFlyingGoalkeeper={() => {
-          setInteraction(IDLE_LIVE_INTERACTION);
-          if (replay.flyingGoalkeeperActive) {
-            toggleGameState(matchId, "FLYING_GOALKEEPER");
-            setSelectingFlyingGoalkeeper(false);
-          } else {
-            setSelectingFlyingGoalkeeper((visible) => !visible);
-          }
         }}
       />
       {feedback && (
@@ -571,7 +517,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           </div>
         </div>
 
-        <div className="flex w-full items-center justify-center gap-1.5 sm:w-auto">
+        <div className="flex w-full flex-col items-center justify-center gap-1.5 sm:w-auto sm:flex-row">
           <MatchScoreboard
             score={chronologyReplay.score}
             period={capturePeriod}
@@ -609,14 +555,6 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={() => { setInteraction(IDLE_LIVE_INTERACTION); setBenchMode("CHANGE_OUT"); }} className={`min-h-14 rounded-xl border-2 px-4 text-sm font-black ${benchMode.startsWith("CHANGE") ? "border-amber-200 bg-amber-500 text-slate-950" : "border-amber-500 bg-amber-950 text-amber-100"}`}>⇄ CAMBIO</button>
-          <button type="button" onClick={() => { setInteraction(IDLE_LIVE_INTERACTION); setBenchMode((mode) => mode === "BROWSE" ? "CLOSED" : "BROWSE"); }} className="min-h-14 rounded-xl border border-slate-500 bg-slate-800 px-4 text-sm font-black">▦ BANCO</button>
-          <button type="button" onClick={flipCourt} className="min-h-14 min-w-14 rounded-xl border border-cyan-700 bg-slate-900 text-2xl" aria-label="Girar campo" title="Girar campo">↔</button>
-          <button type="button" onClick={() => {
-            if (captureBlocked) return blockedAction();
-            toggleGameState(matchId, "FLYING_GOALKEEPER", undefined, "AGAINST");
-            setFeedback(activeReplay.flyingGoalkeeperAgainstActive ? "PJ RIVAL OFF" : "PJ RIVAL ON");
-          }} aria-pressed={activeReplay.flyingGoalkeeperAgainstActive} className={`min-h-14 rounded-xl border-2 px-3 text-xs font-black ${activeReplay.flyingGoalkeeperAgainstActive ? "border-rose-200 bg-rose-600 text-white ring-2 ring-rose-200" : "border-slate-600 bg-slate-900 text-slate-300"}`}>PJ RIVAL {activeReplay.flyingGoalkeeperAgainstActive ? "ON" : ""}</button>
           <span
             className={`rounded-lg px-3 py-2 text-xs font-semibold ${
               session.persistenceStatus === "saved"
@@ -633,19 +571,6 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 : "○ Preparando guardado"}
           </span>
           <SyncStatusBadge matchId={matchId} />
-          <HistoryControls
-            canUndo={session.past.length > 0}
-            canRedo={session.future.length > 0}
-            undoDescription={undoDescription}
-            onUndo={() => {
-              setInteraction(IDLE_LIVE_INTERACTION);
-              undo(matchId);
-            }}
-            onRedo={() => {
-              setInteraction(IDLE_LIVE_INTERACTION);
-              redo(matchId);
-            }}
-          />
           <button type="button" onClick={() => { setDisciplineFocus(null); setHistoryOpen(true); }} className="min-h-11 rounded-lg bg-slate-900 px-3 text-xs font-black text-cyan-200" aria-label="Abrir historial completo">HISTORIAL · {activeEventCount}{pendingEventCount > 0 ? ` · ? ${pendingEventCount}` : ""}</button>
           {(matchId === "prueba" || matchId === "prueba-porteria") && (
             <button type="button" onClick={() => {
@@ -657,6 +582,34 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           )}
         </div>
       </header>
+
+      <MatchSteamDeck
+        flyingGoalkeeperFor={activeReplay.flyingGoalkeeperActive}
+        flyingGoalkeeperAgainst={activeReplay.flyingGoalkeeperAgainstActive}
+        superiority={activeReplay.superiorityActive}
+        inferiority={activeReplay.inferiorityActive}
+        changeActive={benchMode.startsWith("CHANGE")}
+        canUndo={session.past.length > 0}
+        canRedo={session.future.length > 0}
+        onFlyingGoalkeeperFor={() => {
+          if (captureBlocked) return blockedAction();
+          setInteraction(IDLE_LIVE_INTERACTION);
+          if (replay.flyingGoalkeeperActive) {
+            toggleGameState(matchId, "FLYING_GOALKEEPER");
+            setSelectingFlyingGoalkeeper(false);
+          } else setSelectingFlyingGoalkeeper((visible) => !visible);
+        }}
+        onFlyingGoalkeeperAgainst={() => {
+          if (captureBlocked) return blockedAction();
+          toggleGameState(matchId, "FLYING_GOALKEEPER", undefined, "AGAINST");
+          setFeedback(activeReplay.flyingGoalkeeperAgainstActive ? "PJ RIVAL OFF" : "PJ RIVAL ON");
+        }}
+        onChange={() => { setInteraction(IDLE_LIVE_INTERACTION); setBenchMode("CHANGE_OUT"); }}
+        onBench={() => { setInteraction(IDLE_LIVE_INTERACTION); setBenchMode((mode) => mode === "BROWSE" ? "CLOSED" : "BROWSE"); }}
+        onFlip={flipCourt}
+        onUndo={() => { setInteraction(IDLE_LIVE_INTERACTION); undo(matchId); }}
+        onRedo={() => { setInteraction(IDLE_LIVE_INTERACTION); redo(matchId); }}
+      />
 
       {session.matchFinished && session.reviewPeriod === undefined && (
         <section className="mx-auto mb-2 flex max-w-4xl items-center justify-between gap-3 rounded-2xl border border-slate-600 bg-slate-900 px-4 py-3">
@@ -767,7 +720,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             )}
           </div>
 
-          <div className="directo-capture-grid grid items-stretch gap-2">
+          <div className={`directo-capture-grid grid items-stretch gap-2 ${selectedCourtPlayerId && selectedCourtPlayerId !== INFERIORITY_SLOT_ID ? "directo-capture-grid--player-actions" : ""}`}>
           <aside className="directo-player-rail grid gap-2" aria-label="Jugadores de campo en pista">
             {replay.onCourtPlayerIds.filter((id) => id !== functionalGoalkeeperId).map((slotId) => {
               if (slotId === INFERIORITY_SLOT_ID) return <button key={slotId} type="button" onClick={() => { applyInteraction({ type: "COURT_PLAYER_TAPPED", playerId: slotId }); if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN"); }} className="min-h-16 rounded-xl border-2 border-dashed border-rose-400 bg-rose-950 text-xs font-black text-rose-100">4v5</button>;
@@ -775,13 +728,17 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               if (!player) return null;
               const minutes = replay.playerMinutes[player.id];
               const selected = selectedPlayerId === player.id;
-              return <button key={player.id} type="button" onClick={() => { applyInteraction({ type: "COURT_PLAYER_TAPPED", playerId: player.id }); if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN"); }} className={`flex min-h-16 flex-col items-center justify-center rounded-xl border-2 px-1 py-1 active:scale-95 ${selected ? "border-amber-200 bg-amber-500 text-slate-950" : "border-cyan-700 bg-slate-900"}`} aria-pressed={selected}>
-                <PlayerAvatar player={player} selected={selected} compact />
-                <span className="mt-1 max-w-full truncate text-[11px] font-black">{player.name}</span>
-                <span className="text-[10px] text-cyan-200">{minutes.currentStintMinutes}&apos; <span className="opacity-60">({minutes.totalMinutes}&apos;)</span></span>
-              </button>;
+              return <div key={player.id} className="relative min-h-0">
+                <button type="button" onClick={() => { applyInteraction({ type: "COURT_PLAYER_TAPPED", playerId: player.id }); if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN"); }} className="h-full w-full min-h-20 active:scale-[.98]" aria-pressed={selected}>
+                  <LivePlayerCard player={player} minutes={minutes} selected={selected} />
+                </button>
+                {selected && <div className="directo-player-popover absolute left-[calc(100%+.5rem)] top-1/2 z-40 hidden w-44 -translate-y-1/2 rounded-2xl border border-amber-300 bg-slate-950 p-2 shadow-2xl sm:block" aria-label="Acciones del jugador seleccionado">
+                  <PlayerContextActions location="COURT" captureBlocked={captureBlocked} redDecision={redDecisionPlayerId === player.id} onFoulCommitted={() => recordPlayerFoul(player.id, false)} onFoulReceived={() => recordPlayerFoul(player.id, true)} onYellow={() => recordPlayerCard(player.id, "YELLOW")} onRed={() => setRedDecisionPlayerId(player.id)} onRedOnly={() => recordPlayerCard(player.id, "RED")} onRedWithInferiority={() => recordPlayerCard(player.id, "RED", true)} onBack={() => setRedDecisionPlayerId(null)} onCancel={() => applyInteraction({ type: "CANCEL" })} />
+                </div>}
+              </div>;
             })}
           </aside>
+          {selectedCourtPlayerId && selectedCourtPlayerId !== INFERIORITY_SLOT_ID && <div className="rounded-2xl border border-amber-300 bg-slate-950 p-2 shadow-2xl sm:hidden" aria-label="Acciones del jugador seleccionado"><PlayerContextActions location="COURT" captureBlocked={captureBlocked} redDecision={redDecisionPlayerId === selectedCourtPlayerId} onFoulCommitted={() => recordPlayerFoul(selectedCourtPlayerId, false)} onFoulReceived={() => recordPlayerFoul(selectedCourtPlayerId, true)} onYellow={() => recordPlayerCard(selectedCourtPlayerId, "YELLOW")} onRed={() => setRedDecisionPlayerId(selectedCourtPlayerId)} onRedOnly={() => recordPlayerCard(selectedCourtPlayerId, "RED")} onRedWithInferiority={() => recordPlayerCard(selectedCourtPlayerId, "RED", true)} onBack={() => setRedDecisionPlayerId(null)} onCancel={() => applyInteraction({ type: "CANCEL" })} /></div>}
           <div className="relative p-3 sm:p-4">
             <RestartTargets onRestart={quickRestart} />
           <div
@@ -847,24 +804,14 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               const goalkeeperBadge = functionalGoalkeeperBadge(player, functionalGoalkeeperId);
               const flyingGoalkeeper = replay.flyingGoalkeeperActive && replay.flyingGoalkeeperPlayerId === player.id;
               return (
-                <button
+                <div
                   key={player.id}
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    applyInteraction({
-                      type: "COURT_PLAYER_TAPPED",
-                      playerId: player.id,
-                    });
-                    if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN");
-                  }}
-                  className={`absolute z-10 flex min-h-16 w-16 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-xl border-2 px-1 py-1 text-center shadow-lg transition-all sm:min-h-20 sm:w-20 lg:w-24 ${
+                  className={`pointer-events-none absolute z-10 flex min-h-16 w-16 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-xl border-2 px-1 py-1 text-center shadow-lg transition-all sm:min-h-20 sm:w-20 lg:w-24 ${
                     selected
                       ? "scale-110 border-yellow-200 bg-yellow-500 text-gray-950 ring-4 ring-yellow-300/30"
                       : "border-white/60 bg-gray-900/90 hover:bg-gray-800"
                   }`}
                   style={{ left: `${canonicalToVisualPoint(position, attackDirection).x * 100}%`, top: `${canonicalToVisualPoint(position, attackDirection).y * 100}%` }}
-                  aria-pressed={selected}
                   aria-label={`${player.name}${goalkeeperBadge ? `, ${goalkeeperBadge}` : ""}${flyingGoalkeeper ? ", portero-jugador" : ""}`}
                 >
                   {goalkeeperBadge && (
@@ -885,28 +832,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                       ({minutes.totalMinutes}&apos;)
                     </span>
                   </span>
-                </button>
+                  <button type="button" onClick={(event) => { event.stopPropagation(); applyInteraction({ type: "COURT_PLAYER_TAPPED", playerId: player.id }); if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN"); }} className="pointer-events-auto absolute -right-4 -top-4 grid h-12 w-12 place-items-center rounded-full border-2 border-white bg-slate-950 text-xl shadow-xl active:scale-95" aria-pressed={selected} aria-label={`Seleccionar ${player.name}`}>◎</button>
+                </div>
               );
             })}
-
-            {selectedCourtPlayerId &&
-              selectedCourtPlayerId !== INFERIORITY_SLOT_ID && (
-                <div className="fixed bottom-3 left-24 z-[75] w-56 rounded-2xl border border-amber-300 bg-slate-950 p-2 shadow-2xl sm:left-32" aria-label="Acciones del jugador seleccionado">
-                  <PlayerContextActions
-                    location="COURT"
-                    captureBlocked={captureBlocked}
-                    redDecision={redDecisionPlayerId === selectedCourtPlayerId}
-                    onFoulCommitted={() => recordPlayerFoul(selectedCourtPlayerId, false)}
-                    onFoulReceived={() => recordPlayerFoul(selectedCourtPlayerId, true)}
-                    onYellow={() => recordPlayerCard(selectedCourtPlayerId, "YELLOW")}
-                    onRed={() => setRedDecisionPlayerId(selectedCourtPlayerId)}
-                    onRedOnly={() => recordPlayerCard(selectedCourtPlayerId, "RED")}
-                    onRedWithInferiority={() => recordPlayerCard(selectedCourtPlayerId, "RED", true)}
-                    onBack={() => setRedDecisionPlayerId(null)}
-                    onCancel={() => applyInteraction({ type: "CANCEL" })}
-                  />
-                </div>
-              )}
 
             {pendingThreat && (
               <div
@@ -972,13 +901,13 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           </div></div>
         </section>
 
-        {benchMode !== "CLOSED" && benchMode !== "CHANGE_OUT" && <div className="fixed inset-0 z-[85] overflow-y-auto bg-slate-950/90 p-3 sm:grid sm:place-items-center">
-        <div className="directo-bench-panel-wrap w-full max-w-5xl min-w-0 rounded-2xl border border-cyan-700 bg-slate-950 p-2">
+        {benchMode !== "CLOSED" && benchMode !== "CHANGE_OUT" && <div className="fixed inset-0 z-[85] overflow-y-auto bg-slate-950/95 p-3 sm:grid sm:place-items-center">
+        <div className="directo-bench-panel-wrap flex min-h-[82dvh] w-full max-w-7xl min-w-0 flex-col rounded-3xl border-2 border-cyan-500 bg-slate-950 p-3 shadow-2xl">
           <div className="mb-2 flex items-center justify-between">
             <p className="text-lg font-black">{benchMode === "CHANGE_IN" ? `SALE ${substitutionSourceLabel ?? "—"} · ELIGE QUIÉN ENTRA` : "BANCO"}</p>
             <button type="button" onClick={() => { setBenchMode("CLOSED"); setSelectedStaffId(null); applyInteraction({ type: "CANCEL" }); }} className="min-h-12 min-w-12 rounded-xl bg-slate-800 text-2xl">×</button>
           </div>
-          <BenchPanel
+          <div className="flex-1"><BenchPanel
             players={bench}
             staff={session.staff}
             playerMinutes={replay.playerMinutes}
@@ -991,7 +920,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             onRed={(playerId) => captureBlocked ? blockedAction() : recordPlayerCard(playerId, "RED")}
             onStaffCard={(staffId, color) => captureBlocked ? blockedAction() : handleStaffCard(staffId, color)}
             onCancel={() => { setSelectedStaffId(null); applyInteraction({ type: "CANCEL" }); }}
-          />
+          /></div>
         </div></div>}
 
         {historyOpen && <div className="directo-timeline-wrap min-w-0">

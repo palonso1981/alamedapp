@@ -1,5 +1,7 @@
 "use client";
 
+import { consumeContextualPointer } from "../../../lib/liveInteraction";
+
 interface PlayerContextActionsProps {
   location: "COURT" | "BENCH";
   redDecision?: boolean;
@@ -53,9 +55,10 @@ export function PlayerContextActions({
   onBack,
   onCancel,
 }: PlayerContextActionsProps) {
+  const consumePointer = (event: React.SyntheticEvent) => consumeContextualPointer(event.nativeEvent);
   if (captureBlocked) {
     return (
-      <div className="rounded-xl border border-red-500/60 bg-red-950/90 p-3 text-center text-xs font-black text-red-100">
+      <div onPointerDown={consumePointer} onPointerUp={consumePointer} onClick={consumePointer} className="rounded-xl border border-red-500/60 bg-red-950/90 p-3 text-center text-xs font-black text-red-100">
         <span className="text-2xl" aria-hidden="true">⇄</span>
         <p>Repara con banquillo o cronología</p>
         <button type="button" onClick={onCancel} className="mt-2 min-h-12 w-full rounded-lg bg-slate-800">×</button>
@@ -64,7 +67,7 @@ export function PlayerContextActions({
   }
   if (redDecision) {
     return (
-      <div className="grid grid-cols-2 gap-2">
+      <div onPointerDown={consumePointer} onPointerUp={consumePointer} onClick={consumePointer} className="grid grid-cols-2 gap-2">
         <button
           type="button"
           onClick={onRedOnly}
@@ -93,7 +96,7 @@ export function PlayerContextActions({
   }
 
   return (
-    <div className="relative">
+    <div onPointerDown={consumePointer} onPointerUp={consumePointer} onClick={consumePointer} className="relative">
       {showCancel && (
         <button
           type="button"

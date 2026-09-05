@@ -54,7 +54,7 @@ export function eventDescription(
       ? event.outcome === "PARADA"
         ? ` · ${event.defensive.version === 1
             ? event.defensive.keeperBodyZone === "UPPER" ? "arriba" : "abajo"
-            : event.defensive.keeperBodyPart?.replaceAll("_", " ").toLowerCase() ?? "zona ?"} · ${
+            : event.defensive.keeperBodyPart?.replaceAll("_", " ").toLowerCase() ?? "SIN INDICAR"} · ${
             event.defensive.saveOutcome === "CATCH"
               ? "blocaje"
               : event.defensive.saveOutcome === "REBOUND"

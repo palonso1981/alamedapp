@@ -128,6 +128,12 @@ export interface LiveInteractionTransition {
 
 export const IDLE_LIVE_INTERACTION: LiveInteractionState = { kind: "IDLE" };
 
+/** Aísla cualquier control superpuesto del gesto espacial de la pista. */
+export function consumeContextualPointer(event: Pick<Event, "preventDefault" | "stopPropagation">): void {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 function interactionId(): string {
   return globalThis.crypto.randomUUID();
 }

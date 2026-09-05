@@ -36,6 +36,7 @@ import {
 } from "./matchPersistence";
 import {
   IDLE_LIVE_INTERACTION,
+  consumeContextualPointer,
   reduceLiveInteraction,
   showsThreatControls,
 } from "./liveInteraction";
@@ -3912,4 +3913,34 @@ test("reinicio seguro solo afecta a los dos partidos demo autorizados", () => {
   useMatchStore.getState().resetDemo("liga-1");
   assert.equal(useMatchStore.getState().matches.prueba.minute, 0);
   assert.equal(useMatchStore.getState().matches["liga-1"].minute, 1);
+});
+
+test("cada amenaza defensiva nace sin cuerpo y permite cerrar la parada sin indicarlo", () => {
+  for (const saveOutcome of ["CATCH", "CLEARANCE", "REBOUND"] as const) {
+    let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, { type: "COURT_TAPPED", origin: { x: 0.4, y: 0.5 }, eventId: `clean-${saveOutcome}` });
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.keeperBodyPart, null);
+    transition = reduceLiveInteraction(transition.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 3, x: 0.5, y: 0.5 } });
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.keeperBodyPart, null);
+    transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome });
+    transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "POSITIONAL" });
+    assert.equal(transition.effect?.type, "RECORD_THREAT");
+    if (transition.effect?.type === "RECORD_THREAT") assert.equal(transition.effect.defensiveCapture?.keeperBodyPart, undefined);
+  }
+});
+
+test("una amenaza nueva no hereda el cuerpo de la intervención anterior", () => {
+  let first = reduceLiveInteraction(IDLE_LIVE_INTERACTION, { type: "COURT_TAPPED", origin: { x: 0.5, y: 0.5 }, eventId: "body-a" });
+  first = reduceLiveInteraction(first.state, { type: "GOAL_TARGET_SELECTED", goalTarget: { geometryVersion: 3, x: 0.5, y: 0.5 } });
+  first = reduceLiveInteraction(first.state, { type: "KEEPER_BODY_PART_SELECTED", keeperBodyPart: "RIGHT_ARM_HAND" });
+  first = reduceLiveInteraction(first.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "CATCH" });
+  first = reduceLiveInteraction(first.state, { type: "PHASE_SELECTED", phase: "TRANSITION" });
+  const second = reduceLiveInteraction(first.state, { type: "COURT_TAPPED", origin: { x: 0.7, y: 0.3 }, eventId: "body-b" });
+  assert.equal(second.state.kind === "THREAT_PENDING" && second.state.keeperBodyPart, null);
+});
+
+test("los controles contextuales consumen el gesto antes de llegar a la pista", () => {
+  let prevented = 0;
+  let stopped = 0;
+  consumeContextualPointer({ preventDefault: () => { prevented += 1; }, stopPropagation: () => { stopped += 1; } });
+  assert.deepEqual({ prevented, stopped }, { prevented: 1, stopped: 1 });
 });

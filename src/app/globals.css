@@ -89,7 +89,11 @@ body {
 
 @media (min-width: 640px) {
   .directo-capture-grid {
-    grid-template-columns: 7rem minmax(0, 1fr);
+    grid-template-columns: 8.25rem minmax(0, 1fr);
+  }
+
+  .directo-capture-grid--player-actions {
+    grid-template-columns: 19rem minmax(0, 1fr);
   }
 
   .directo-player-rail {
@@ -132,8 +136,12 @@ body {
   }
 
   .directo-court {
-    width: min(100%, calc((100dvh - 13rem) * 2));
+    width: min(100%, calc((100dvh - 27rem) * 2));
     min-height: 0;
+  }
+
+  .directo-steam-deck {
+    min-height: 5.25rem;
   }
 
   .directo-page .directo-bench-grid {
@@ -141,7 +149,7 @@ body {
   }
 
   .directo-page .directo-bench-grid > button {
-    min-height: 3.75rem;
+    min-height: 8.5rem;
   }
 
   .directo-page .directo-bench-person:not(.directo-staff-person) + .directo-staff-person {

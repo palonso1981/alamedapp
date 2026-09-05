@@ -140,16 +140,27 @@ export function PhasePicker({
   immersive?: boolean;
 }) {
   if (immersive) {
+    const primary = PHASES.filter((phase) => phase.tier === "PRIMARY");
+    const setPieces = PHASES.filter((phase) => ["SET_PIECE_CORNER", "SET_PIECE_KICK_IN", "SET_PIECE_FREE_KICK"].includes(phase.value));
+    const flying = PHASES.find((phase) => phase.value === "FLYING_GOALKEEPER")!;
+    const rare = PHASES.filter((phase) => phase.tier === "RARE");
     return (
       <div className="mx-auto flex min-h-[70dvh] max-w-5xl flex-col justify-center gap-3 p-2">
         <p className="text-center text-sm font-black uppercase tracking-[.25em] text-cyan-200">FASE</p>
-        <div className="grid flex-1 grid-cols-2 gap-3 md:grid-cols-3">
-          {PHASES.filter((phase) => phase.tier !== "RARE").map((phase) => (
+        <div className="grid grid-cols-2 gap-3">
+          {primary.map((phase) => (
             <PhaseButton key={phase.value} phase={phase} onPhase={onPhase} selected={selected === phase.value} immersive />
           ))}
         </div>
+        <div className="rounded-3xl border border-violet-500/60 bg-violet-950/30 p-3">
+          <p className="mb-2 text-center text-xs font-black tracking-[.3em] text-violet-200">ABP</p>
+          <div className="grid grid-cols-3 gap-3">
+            {setPieces.map((phase) => <PhaseButton key={phase.value} phase={phase} onPhase={onPhase} selected={selected === phase.value} />)}
+          </div>
+        </div>
+        <PhaseButton phase={flying} onPhase={onPhase} selected={selected === flying.value} immersive />
         <div className="grid grid-cols-2 gap-3">
-          {PHASES.filter((phase) => phase.tier === "RARE").map((phase) => (
+          {rare.map((phase) => (
             <PhaseButton key={phase.value} phase={phase} onPhase={onPhase} selected={selected === phase.value} />
           ))}
         </div>
@@ -190,6 +201,16 @@ function PhaseButton({
 }) {
   const primary = phase.tier === "PRIMARY";
   const rare = phase.tier === "RARE";
+  const palette: Record<LiveThreatPhase, string> = {
+    POSITIONAL: "border-cyan-300 bg-cyan-800 text-white",
+    TRANSITION: "border-emerald-300 bg-emerald-800 text-white",
+    SET_PIECE_CORNER: "border-violet-300 bg-violet-900 text-violet-50",
+    SET_PIECE_KICK_IN: "border-fuchsia-300 bg-fuchsia-950 text-fuchsia-50",
+    SET_PIECE_FREE_KICK: "border-orange-300 bg-orange-950 text-orange-50",
+    FLYING_GOALKEEPER: "border-rose-300 bg-rose-900 text-white",
+    PENALTY: "border-amber-300 bg-amber-950 text-amber-50",
+    DOUBLE_PENALTY: "border-yellow-300 bg-yellow-950 text-yellow-50",
+  };
   return (
     <button
       type="button"
@@ -198,12 +219,12 @@ function PhaseButton({
       aria-label={phase.label}
       className={`flex flex-col items-center justify-center rounded-xl border font-black transition-colors active:scale-[.98] ${selected ? "ring-2 ring-white" : ""} ${
         immersive
-          ? "min-h-28 border-cyan-600 bg-slate-900 text-white"
+          ? `min-h-28 border-2 ${palette[phase.value]}`
           : primary
           ? "min-h-16 border-cyan-600 bg-cyan-950/80 text-cyan-100 hover:bg-cyan-800"
           : rare
-            ? "min-h-10 border-amber-900 bg-amber-950/60 px-2 text-amber-200 hover:border-amber-500"
-            : "min-h-12 border-violet-800 bg-violet-950/70 px-1 text-violet-100 hover:border-violet-400"
+            ? `min-h-16 border-2 px-2 ${palette[phase.value]}`
+            : `min-h-20 border-2 px-1 ${palette[phase.value]}`
       }`}
     >
       <span className={immersive ? "text-5xl leading-none" : primary ? "text-2xl leading-none" : "text-base leading-none"} aria-hidden="true">

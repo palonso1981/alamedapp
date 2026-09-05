@@ -72,9 +72,11 @@ const KEEPER_PART_LABELS: Record<KeeperBodyPart, string> = {
 export function KeeperBodyPicker({
   onSelect,
   target,
+  selected,
 }: {
   onSelect: (part: KeeperBodyPart) => void;
   target?: GoalTargetCoordinates | null;
+  selected?: KeeperBodyPart | null;
 }) {
   return (
     <div className="relative mx-auto aspect-[25/16] w-full overflow-hidden rounded-2xl border border-sky-300/30 bg-slate-950 shadow-inner" data-testid="keeper-body-picker">
@@ -100,10 +102,11 @@ export function KeeperBodyPicker({
           type="button"
           onPointerUp={(event) => event.stopPropagation()}
           onClick={(event) => { event.stopPropagation(); onSelect(part as KeeperBodyPart); }}
-          className="absolute rounded-xl border-2 border-transparent bg-cyan-300/[0.03] transition hover:border-white/70 hover:bg-cyan-300/30 active:border-white active:bg-cyan-300/40"
+          className={`absolute rounded-xl border-2 transition hover:border-white/70 hover:bg-cyan-300/25 active:border-white ${selected === part ? "border-cyan-100 bg-cyan-300/35" : "border-transparent bg-transparent"}`}
           style={{ left: `${hitbox.left * 100}%`, top: `${hitbox.top * 100}%`, width: `${hitbox.width * 100}%`, height: `${hitbox.height * 100}%` }}
           aria-label={`Parada con ${KEEPER_PART_LABELS[part as KeeperBodyPart]}`}
           data-body-part={part}
+          aria-pressed={selected === part}
         />
       ))}
       </div>
