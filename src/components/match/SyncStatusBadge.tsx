@@ -9,29 +9,31 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
   const [open, setOpen] = useState(false);
 
   const state = !eligible
-    ? { label: "○ Solo local", tone: "bg-slate-900 text-slate-400" }
+    ? { label: "○", description: "Solo local", tone: "bg-slate-900 text-slate-400" }
     : summary.conflicts > 0
       ? {
           label: `! ${summary.conflicts} conflicto${summary.conflicts === 1 ? "" : "s"}`,
+          description: `${summary.conflicts} conflictos de sincronización`,
           tone: "bg-red-950 text-red-300",
         }
       : summary.errors > 0
-        ? { label: `! ${summary.errors} sin enviar`, tone: "bg-red-950 text-red-300" }
+        ? { label: `! ${summary.errors} sin enviar`, description: `${summary.errors} operaciones sin enviar`, tone: "bg-red-950 text-red-300" }
         : summary.syncing > 0
-          ? { label: `↻ ${summary.syncing}`, tone: "bg-cyan-950 text-cyan-200" }
+          ? { label: `↻ ${summary.syncing}`, description: "Sincronizando", tone: "bg-cyan-950 text-cyan-200" }
           : summary.pending > 0
-            ? { label: `● ${summary.pending} pendientes`, tone: "bg-amber-950 text-amber-300" }
+            ? { label: `● ${summary.pending}`, description: `${summary.pending} operaciones pendientes`, tone: "bg-amber-950 text-amber-300" }
             : config.configured && summary.lastSyncedAt
-              ? { label: "✓ Sincronizado", tone: "bg-emerald-950 text-emerald-300" }
-              : { label: "○ Solo dispositivo", tone: "bg-slate-900 text-slate-400" };
+              ? { label: "☁✓", description: "Sincronizado", tone: "bg-emerald-950 text-emerald-300" }
+              : { label: "○", description: "Solo dispositivo", tone: "bg-slate-900 text-slate-400" };
 
   return (
     <div className="relative">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className={`min-h-10 rounded-lg px-3 text-xs font-semibold ${state.tone}`}
-        aria-label="Ver estado de sincronización remota"
+        className={`min-h-10 min-w-10 rounded-lg px-2 text-xs font-semibold ${state.tone}`}
+        aria-label={`${state.description}. Ver estado de sincronización remota`}
+        title={state.description}
         aria-expanded={open}
       >
         {state.label}

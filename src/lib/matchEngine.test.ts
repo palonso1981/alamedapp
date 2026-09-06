@@ -43,7 +43,7 @@ import {
 import { contextualPlacement } from "./contextualPlacement";
 import { courtHeightForWidth, FUTSAL_COURT_ASPECT_RATIO, normalizeCourtPoint } from "./courtGeometry";
 import { CANONICAL_COURT_ORIENTATION, courtOrientationForPeriod } from "./courtGeometry";
-import { classifyGoalTarget, completesGoalTargetGesture, deriveKeeperBodyZone, deriveKeeperBodyZoneFromPart, GOAL_FRAME, isInsideGoalFrame, isOutcomeCompatibleWithGoalTarget, KEEPER_BODY_HITBOXES, KEEPER_BODY_SCREEN_SIDE, KEEPER_BODY_SURFACE, normalizeGoalTargetPoint } from "./goalTarget";
+import { classifyGoalTarget, completesGoalTargetGesture, completesIndependentPointerGesture, deriveKeeperBodyZone, deriveKeeperBodyZoneFromPart, GOAL_FRAME, isInsideGoalFrame, isOutcomeCompatibleWithGoalTarget, KEEPER_BODY_HITBOXES, KEEPER_BODY_SCREEN_SIDE, KEEPER_BODY_SURFACE, normalizeGoalTargetPoint } from "./goalTarget";
 import { assistCandidates, filterTimelineEvents } from "./matchReview";
 import { effectiveReviewStatus, reviewEventCounts, targetMinutesComparisons } from "./postMatchReview";
 import { deriveGoalZoneV1, derivePitchZoneV1, PITCH_ZONE_MODEL_VERSION } from "./spatialZones";
@@ -3936,6 +3936,45 @@ test("una amenaza nueva no hereda el cuerpo de la intervención anterior", () =>
   first = reduceLiveInteraction(first.state, { type: "PHASE_SELECTED", phase: "TRANSITION" });
   const second = reduceLiveInteraction(first.state, { type: "COURT_TAPPED", origin: { x: 0.7, y: 0.3 }, eventId: "body-b" });
   assert.equal(second.state.kind === "THREAT_PENDING" && second.state.keeperBodyPart, null);
+});
+
+test("la silueta exige un pointerdown propio y rechaza el pointerup del destino", () => {
+  assert.equal(completesIndependentPointerGesture(null, 17), false);
+  assert.equal(completesIndependentPointerGesture(16, 17), false);
+  assert.equal(completesIndependentPointerGesture(17, 17), true);
+});
+
+test("stress: veinte amenazas alternan cuerpo y ausencia sin heredar selección", () => {
+  const targets = [
+    { x: 0.25, y: 0.3 },
+    { x: 0.5, y: 0.5 },
+    { x: 0.75, y: 0.7 },
+  ] as const;
+  for (let index = 0; index < 20; index += 1) {
+    let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
+      type: "COURT_TAPPED",
+      origin: { x: 0.35, y: 0.5 },
+      eventId: `body-stress-${index}`,
+    });
+    transition = reduceLiveInteraction(transition.state, {
+      type: "GOAL_TARGET_SELECTED",
+      goalTarget: { geometryVersion: 3, ...targets[index % targets.length] },
+    });
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.keeperBodyPart, null);
+    assert.equal(transition.state.kind === "THREAT_PENDING" && transition.state.keeperBodyPart, null);
+    if (index % 2 === 0) {
+      transition = reduceLiveInteraction(transition.state, {
+        type: "KEEPER_BODY_PART_SELECTED",
+        keeperBodyPart: index % 4 === 0 ? "RIGHT_ARM_HAND" : "LEFT_LEG_FOOT",
+      });
+    }
+    transition = reduceLiveInteraction(transition.state, { type: "SAVE_OUTCOME_SELECTED", saveOutcome: "CATCH" });
+    transition = reduceLiveInteraction(transition.state, { type: "PHASE_SELECTED", phase: "POSITIONAL" });
+    assert.equal(transition.effect?.type, "RECORD_THREAT");
+    if (transition.effect?.type === "RECORD_THREAT") {
+      assert.equal(Boolean(transition.effect.defensiveCapture?.keeperBodyPart), index % 2 === 0);
+    }
+  }
 });
 
 test("los controles contextuales consumen el gesto antes de llegar a la pista", () => {

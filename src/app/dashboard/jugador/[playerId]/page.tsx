@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AppHeader } from "../../../../components/app/AppHeader";
 import { PitchThreatMap } from "../../../../components/dashboard/ThreatMaps";
-import { PlayerAvatar } from "../../../../components/player/PlayerAvatar";
+import { PlayerPhotoCard } from "../../../../components/player/PlayerPhotoCard";
 import { buildDashboardAnalysis } from "../../../../lib/dashboardAnalysis";
 import { DashboardMatchRecord, DashboardPeriod } from "../../../../lib/dashboardAnalytics";
 import { listMatchCatalog } from "../../../../lib/matchCatalog";
@@ -65,7 +65,7 @@ export default function PlayerDashboardPage({ params, searchParams }: { params: 
       <Link href="/dashboard" className="inline-flex min-h-11 items-center rounded-xl border border-slate-700 px-4 text-xs font-black">← DASHBOARD</Link>
       {!player ? <section className="rounded-3xl border border-dashed border-slate-700 p-10 text-center"><strong>Jugador sin datos en este alcance</strong><p className="mt-2 text-sm text-slate-500">N/D · revisa equipo, temporada o partido.</p></section> : <>
         <header className="flex flex-wrap items-center gap-4 rounded-3xl border border-slate-700 bg-gradient-to-br from-slate-900 to-sky-950 p-5">
-          <PlayerAvatar player={{ id: player.playerId, name: player.name, number: player.number, photoUrl: player.photoUrl, position: player.position, dominantFoot: player.dominantFoot }} />
+          <PlayerPhotoCard player={{ id: player.playerId, name: player.name, number: player.number, photoUrl: player.photoUrl }} className="h-40 w-32 shrink-0" />
           <div className="min-w-0 flex-1"><span className="text-xs font-black text-cyan-300">#{player.number} · {player.position ?? "N/D"}</span><h1 className="truncate text-3xl font-black">{player.name}</h1><p className="text-xs text-slate-400">{teamName} · {seasonName} · Pierna {player.dominantFoot ?? "N/D"}</p></div>
           <div className="text-right"><strong className="block text-4xl">{number(player.minutes)}&apos;</strong><span className="text-[10px] text-slate-500">{player.matches} PJ · {number(player.participationPercentage)}% DISP.</span>{player.lowSample && <span className="mt-1 block rounded-full bg-amber-950 px-2 py-1 text-[9px] font-black text-amber-200">MUESTRA BAJA</span>}</div>
         </header>

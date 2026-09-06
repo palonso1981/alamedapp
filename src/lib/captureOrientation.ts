@@ -23,6 +23,14 @@ export function canonicalToVisualPoint<T extends NormalizedCoordinates>(
   return visualToCanonicalPoint(point, direction);
 }
 
+/**
+ * La miniportería tiene una convención frontal propia: izquierda visual es
+ * siempre izquierda del tirador, con independencia del giro de la pista.
+ */
+export function frontGoalTargetToCanonical<T extends NormalizedCoordinates>(point: T): T {
+  return { ...point, x: clamp(point.x), y: clamp(point.y) } as T;
+}
+
 export function sideAtVisualEnd(
   end: "LEFT" | "RIGHT",
   direction: AttackDirection,

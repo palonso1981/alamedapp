@@ -30,6 +30,7 @@ import { normalizeCourtPoint } from "../../../../lib/courtGeometry";
 import {
   AttackDirection,
   canonicalToVisualPoint,
+  frontGoalTargetToCanonical,
   oppositeDirection,
   visualRestartToCanonical,
   visualToCanonicalPoint,
@@ -86,17 +87,17 @@ function courtPlayerPosition(
 }
 
 function RestartTargets({ onRestart }: { onRestart: (end: "LEFT" | "RIGHT", side: "TOP" | "BOTTOM", kind: "CORNER" | "DANGEROUS_KICK_IN") => void }) {
-  const corner = "absolute z-20 grid h-16 w-16 place-items-center border-2 border-amber-200/80 bg-amber-400/90 text-3xl font-black text-slate-950 shadow-lg active:scale-95 sm:h-20 sm:w-20";
-  const band = "absolute z-20 grid h-12 w-[28%] place-items-center rounded-full border-2 border-violet-200/80 bg-violet-700/90 px-2 text-[9px] font-black text-white shadow-lg active:scale-[.98] sm:h-14 sm:text-[10px]";
+  const corner = "absolute z-20 grid h-14 w-14 place-items-center bg-transparent text-3xl font-black text-amber-100 drop-shadow-lg active:scale-95 sm:h-16 sm:w-16";
+  const band = "absolute z-20 grid h-11 w-[26%] place-items-center bg-transparent px-1 text-[8px] font-black text-violet-100 active:scale-[.98] before:absolute before:inset-x-1 before:h-1 before:rounded-full before:bg-violet-300/80 sm:h-12";
   return <>
     <button type="button" onClick={() => onRestart("LEFT", "TOP", "CORNER")} className={`${corner} left-0 top-0`} aria-label="Córner izquierda superior">⌜</button>
     <button type="button" onClick={() => onRestart("RIGHT", "TOP", "CORNER")} className={`${corner} right-0 top-0`} aria-label="Córner derecha superior">⌝</button>
     <button type="button" onClick={() => onRestart("LEFT", "BOTTOM", "CORNER")} className={`${corner} bottom-0 left-0`} aria-label="Córner izquierda inferior">⌞</button>
     <button type="button" onClick={() => onRestart("RIGHT", "BOTTOM", "CORNER")} className={`${corner} bottom-0 right-0`} aria-label="Córner derecha inferior">⌟</button>
-    <button type="button" onClick={() => onRestart("LEFT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} left-20 top-0`} aria-label="Banda cercana izquierda superior">BANDA CERCANA</button>
-    <button type="button" onClick={() => onRestart("RIGHT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} right-20 top-0`} aria-label="Banda cercana derecha superior">BANDA CERCANA</button>
-    <button type="button" onClick={() => onRestart("LEFT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 left-20`} aria-label="Banda cercana izquierda inferior">BANDA CERCANA</button>
-    <button type="button" onClick={() => onRestart("RIGHT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 right-20`} aria-label="Banda cercana derecha inferior">BANDA CERCANA</button>
+    <button type="button" onClick={() => onRestart("LEFT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} left-[8%] top-0`} aria-label="Banda cercana izquierda superior"><span className="relative z-10 rounded-full bg-violet-950/80 px-2 py-0.5">BANDA</span></button>
+    <button type="button" onClick={() => onRestart("RIGHT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} right-[8%] top-0`} aria-label="Banda cercana derecha superior"><span className="relative z-10 rounded-full bg-violet-950/80 px-2 py-0.5">BANDA</span></button>
+    <button type="button" onClick={() => onRestart("LEFT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 left-[8%]`} aria-label="Banda cercana izquierda inferior"><span className="relative z-10 rounded-full bg-violet-950/80 px-2 py-0.5">BANDA</span></button>
+    <button type="button" onClick={() => onRestart("RIGHT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 right-[8%]`} aria-label="Banda cercana derecha inferior"><span className="relative z-10 rounded-full bg-violet-950/80 px-2 py-0.5">BANDA</span></button>
   </>;
 }
 
@@ -505,15 +506,16 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           }}
         />
       )}
-      <header className="mx-auto mb-2 flex max-w-7xl flex-wrap items-center justify-between gap-2 border-b border-gray-700 pb-2">
+      <section className="directo-cockpit mx-auto mb-2 max-w-7xl rounded-2xl border border-slate-700 bg-slate-900/95 p-1.5 shadow-xl">
+      <header className="flex flex-wrap items-center justify-between gap-1.5">
         <div className="flex min-w-0 items-center gap-2">
           <Link href="/partidos" className="grid min-h-12 min-w-12 shrink-0 place-items-center rounded-xl border border-cyan-700/70 bg-slate-900 text-lg font-black text-cyan-200 active:scale-95" aria-label="Salir del Directo y volver a Partidos" title="Partidos">⌂</Link>
           <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400">
+          <p className="hidden text-[9px] font-semibold uppercase tracking-[0.12em] text-emerald-400 xl:block">
             Partido {matchId}
           </p>
-          <h1 className="text-xl font-bold">Directo: CD Alameda</h1>
-          <ClubContextLabel clubId={session.preparation?.clubId ?? CDA_CLUB_ID} />
+          <h1 className="truncate text-xs font-black">CDA</h1>
+          <div className="hidden xl:block"><ClubContextLabel clubId={session.preparation?.clubId ?? CDA_CLUB_ID} /></div>
           </div>
         </div>
 
@@ -545,18 +547,23 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               setFeedback("✓ Roja RIV");
             }}
           />
-          <div className="grid grid-cols-2 gap-1" aria-label="Ajustar contador de faltas">
+          <details className="relative" aria-label="Ajustar contador de faltas">
+            <summary className="grid min-h-10 min-w-10 cursor-pointer list-none place-items-center rounded-xl bg-slate-900 text-xs font-black text-slate-400" aria-label="Abrir ajustes de faltas">F±</summary>
+            <div className="absolute right-0 top-12 z-50 grid w-48 grid-cols-2 gap-1 rounded-xl border border-slate-600 bg-slate-950 p-2 shadow-2xl">
             {(["FOR", "AGAINST"] as const).map((side) => <div key={side} className="grid grid-cols-2 gap-1 rounded-xl border border-slate-700 bg-slate-900 p-1">
               <span className="col-span-2 text-center text-[9px] font-black text-slate-400">F {side === "FOR" ? "CDA" : "RIV"}</span>
               <button type="button" onClick={() => { adjustFoulCount(matchId, side, -1); setFeedback(`✓ AJUSTE FALTA ${side === "FOR" ? "CDA" : "RIV"} −1`); }} className="min-h-11 min-w-11 rounded-lg bg-slate-700 text-xl font-black" aria-label={`Restar una falta ${side === "FOR" ? "CDA" : "rival"}`}>−</button>
               <button type="button" onClick={() => { adjustFoulCount(matchId, side, 1); setFeedback(`✓ AJUSTE FALTA ${side === "FOR" ? "CDA" : "RIV"} +1`); }} className="min-h-11 min-w-11 rounded-lg bg-amber-600 text-xl font-black text-slate-950" aria-label={`Sumar una falta ${side === "FOR" ? "CDA" : "rival"}`}>+</button>
             </div>)}
-          </div>
+            </div>
+          </details>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <span
-            className={`rounded-lg px-3 py-2 text-xs font-semibold ${
+            title={session.persistenceStatus === "saved" ? "Guardado local" : session.persistenceStatus === "error" ? "Error de guardado local" : "Preparando guardado"}
+            aria-label={session.persistenceStatus === "saved" ? "Guardado local" : session.persistenceStatus === "error" ? "Error de guardado local" : "Preparando guardado"}
+            className={`grid min-h-10 min-w-10 place-items-center rounded-lg text-lg font-black ${
               session.persistenceStatus === "saved"
                 ? "bg-emerald-950 text-emerald-300"
                 : session.persistenceStatus === "error"
@@ -564,14 +571,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   : "bg-gray-900 text-gray-400"
             }`}
           >
-            {session.persistenceStatus === "saved"
-              ? "● Guardado local"
-              : session.persistenceStatus === "error"
-                ? "● Error de guardado"
-                : "○ Preparando guardado"}
+            {session.persistenceStatus === "saved" ? "●" : session.persistenceStatus === "error" ? "!" : "○"}
           </span>
           <SyncStatusBadge matchId={matchId} />
-          <button type="button" onClick={() => { setDisciplineFocus(null); setHistoryOpen(true); }} className="min-h-11 rounded-lg bg-slate-900 px-3 text-xs font-black text-cyan-200" aria-label="Abrir historial completo">HISTORIAL · {activeEventCount}{pendingEventCount > 0 ? ` · ? ${pendingEventCount}` : ""}</button>
+          <button type="button" onClick={() => { setDisciplineFocus(null); setHistoryOpen(true); }} className="min-h-10 rounded-lg bg-slate-950 px-2 text-xs font-black text-cyan-200" aria-label={`Abrir historial completo, ${activeEventCount} eventos`}>≡ {activeEventCount}{pendingEventCount > 0 ? ` · ?${pendingEventCount}` : ""}</button>
           {(matchId === "prueba" || matchId === "prueba-porteria") && (
             <button type="button" onClick={() => {
               if (!window.confirm(`¿Reiniciar solo el demo ${matchId}? Se borrará su captura local.`)) return;
@@ -616,6 +619,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         onUndo={() => { setInteraction(IDLE_LIVE_INTERACTION); undo(matchId); }}
         onRedo={() => { setInteraction(IDLE_LIVE_INTERACTION); redo(matchId); }}
       />
+      </section>
 
       {session.matchFinished && session.reviewPeriod === undefined && (
         <section className="mx-auto mb-2 flex max-w-4xl items-center justify-between gap-3 rounded-2xl border border-slate-600 bg-slate-900 px-4 py-3">
@@ -691,16 +695,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       )}
       <main className="directo-workspace mx-auto grid max-w-screen-2xl gap-2">
         <section className="directo-court-panel relative min-w-0 rounded-2xl bg-gray-900 p-2 shadow-xl sm:p-3">
-          <div className="directo-court-heading mb-2 flex min-h-10 items-center justify-between gap-3">
+          {interaction.kind !== "IDLE" && <div className="directo-court-heading mb-2 flex min-h-10 items-center justify-between gap-3">
             <div className="min-w-0">
-              <h2 className="font-bold">Pista</h2>
-              {interaction.kind === "IDLE" ? (
-                <div className="mt-1 flex gap-3 text-lg text-slate-500" aria-label="Jugador a pista para ataque; jugador a banquillo para cambio; pista directamente para rival">
-                  <span title="Jugador → pista">●→◎</span>
-                  <span title="Jugador → banquillo">●→⇄</span>
-                  <span title="Pista → rival">◎→↓</span>
-                </div>
-              ) : interaction.kind === "PLAYER_SELECTED" && interaction.location === "COURT" ? (
+              {interaction.kind === "PLAYER_SELECTED" && interaction.location === "COURT" ? (
                 <p className="truncate text-sm font-bold text-amber-300">
                   {substitutionSourceLabel} <span aria-hidden="true">→ ◎ / ⇄</span>
                 </p>
@@ -714,8 +711,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 </p>
               )}
             </div>
-            {interaction.kind !== "IDLE" && (
-              <button
+            <button
                 type="button"
                 onClick={() => applyInteraction({ type: "CANCEL" })}
                 className="grid min-h-11 min-w-11 place-items-center rounded-xl bg-slate-800 text-2xl text-slate-300"
@@ -723,8 +719,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               >
                 ×
               </button>
-            )}
-          </div>
+          </div>}
 
           <div className={`directo-capture-grid grid items-stretch gap-2 ${selectedCourtPlayerId && selectedCourtPlayerId !== INFERIORITY_SLOT_ID ? "directo-capture-grid--player-actions" : ""}`}>
           <aside className="directo-player-rail grid gap-2" aria-label="Jugadores de campo en pista">
@@ -745,7 +740,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             })}
           </aside>
           {selectedCourtPlayerId && selectedCourtPlayerId !== INFERIORITY_SLOT_ID && <div className="rounded-2xl border border-amber-300 bg-slate-950 p-2 shadow-2xl sm:hidden" aria-label="Acciones del jugador seleccionado"><PlayerContextActions location="COURT" captureBlocked={captureBlocked} redDecision={redDecisionPlayerId === selectedCourtPlayerId} onFoulCommitted={() => recordPlayerFoul(selectedCourtPlayerId, false)} onFoulReceived={() => recordPlayerFoul(selectedCourtPlayerId, true)} onYellow={() => recordPlayerCard(selectedCourtPlayerId, "YELLOW")} onRed={() => setRedDecisionPlayerId(selectedCourtPlayerId)} onRedOnly={() => recordPlayerCard(selectedCourtPlayerId, "RED")} onRedWithInferiority={() => recordPlayerCard(selectedCourtPlayerId, "RED", true)} onBack={() => setRedDecisionPlayerId(null)} onCancel={() => applyInteraction({ type: "CANCEL" })} /></div>}
-          <div className="relative p-3 sm:p-4">
+          <div className="relative p-2">
             <RestartTargets onRestart={quickRestart} />
           <div
             onClick={handleCourtClick}
@@ -760,7 +755,6 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             aria-label="Pista de fútbol sala. Toca directamente para amenaza rival o selecciona antes un jugador CDA."
           >
             <FutsalCourtMarkings />
-            <span className="pointer-events-none absolute bottom-2 left-1/2 z-[1] -translate-x-1/2 rounded-full bg-slate-950/35 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-white/55" aria-hidden="true">{attackDirection === "RIGHT" ? "CDA →" : "← CDA"}</span>
 
             {replay.onCourtPlayerIds.filter((slotId) => slotId === functionalGoalkeeperId).map((slotId) => {
               const position = courtPlayerPosition(
@@ -812,14 +806,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               return (
                 <div
                   key={player.id}
-                  className={`pointer-events-none absolute z-10 flex min-h-16 w-16 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-xl border-2 px-1 py-1 text-center shadow-lg transition-all sm:min-h-20 sm:w-20 lg:w-24 ${
+                  className={`pointer-events-none absolute z-10 h-20 w-16 -translate-x-1/2 -translate-y-1/2 text-center shadow-lg transition-all sm:h-28 sm:w-24 ${
                     selected
-                      ? "scale-110 border-yellow-200 bg-yellow-500 text-gray-950 ring-4 ring-yellow-300/30"
-                      : "border-white/60 bg-gray-900/90 hover:bg-gray-800"
+                      ? "scale-105 ring-4 ring-yellow-300/50"
+                      : ""
                   }`}
                   style={{ left: `${canonicalToVisualPoint(position, attackDirection).x * 100}%`, top: `${canonicalToVisualPoint(position, attackDirection).y * 100}%` }}
                   aria-label={`${player.name}${goalkeeperBadge ? `, ${goalkeeperBadge}` : ""}${flyingGoalkeeper ? ", portero-jugador" : ""}`}
                 >
+                  <LivePlayerCard player={player} minutes={minutes} selected={selected} />
                   {goalkeeperBadge && (
                     <span className={`absolute -top-2 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[8px] font-black tracking-wide shadow-lg sm:text-[9px] ${goalkeeperBadge === "PORTERO" ? "border-cyan-200 bg-cyan-950 text-cyan-100" : "border-amber-200 bg-amber-950 text-amber-100"}`}>
                       {goalkeeperBadge === "PORTERO" ? goalkeeperBadge : "PORTERO · ROL"}
@@ -828,17 +823,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   {flyingGoalkeeper && (
                     <span className="absolute -bottom-2 left-1/2 z-20 -translate-x-1/2 rounded-full border border-rose-200 bg-rose-700 px-1.5 py-0.5 text-[8px] font-black tracking-wide text-white shadow-lg">P-J</span>
                   )}
-                  <PlayerAvatar player={player} selected={selected} compact />
-                  <span className="mt-1 hidden max-w-full truncate text-xs font-semibold sm:block">{player.name}</span>
-                  <span className="mt-1 flex items-baseline gap-1.5" aria-label={`${minutes.currentStintMinutes} minutos en el tramo actual; ${minutes.totalMinutes} minutos acumulados`}>
-                    <span className={`text-base font-black ${selected ? "text-slate-950" : "text-cyan-300"}`} title="Tramo actual">
-                      {minutes.currentStintMinutes}&apos;
-                    </span>
-                    <span className={`text-[10px] font-semibold ${selected ? "text-slate-700" : "text-slate-400"}`} title="Acumulado">
-                      ({minutes.totalMinutes}&apos;)
-                    </span>
-                  </span>
-                  <button type="button" onClick={(event) => { event.stopPropagation(); applyInteraction({ type: "COURT_PLAYER_TAPPED", playerId: player.id }); if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN"); }} className="pointer-events-auto absolute -right-4 -top-4 grid h-12 w-12 place-items-center rounded-full border-2 border-white bg-slate-950 text-xl shadow-xl active:scale-95" aria-pressed={selected} aria-label={`Seleccionar ${player.name}`}>◎</button>
+                  <button type="button" onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); applyInteraction({ type: "COURT_PLAYER_TAPPED", playerId: player.id }); if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN"); }} className="pointer-events-auto absolute -right-3 -top-3 grid h-11 w-11 place-items-center rounded-full border-2 border-white bg-slate-950 text-lg shadow-xl active:scale-95" aria-pressed={selected} aria-label={`Seleccionar ${player.name}`}>◎</button>
+                  {selected && <div className="pointer-events-auto absolute left-[calc(100%+.5rem)] top-1/2 z-40 w-44 -translate-y-1/2 rounded-2xl border border-amber-300 bg-slate-950 p-2 shadow-2xl" aria-label="Acciones del portero seleccionado">
+                    <PlayerContextActions location="COURT" captureBlocked={captureBlocked} redDecision={redDecisionPlayerId === player.id} onFoulCommitted={() => recordPlayerFoul(player.id, false)} onFoulReceived={() => recordPlayerFoul(player.id, true)} onYellow={() => recordPlayerCard(player.id, "YELLOW")} onRed={() => setRedDecisionPlayerId(player.id)} onRedOnly={() => recordPlayerCard(player.id, "RED")} onRedWithInferiority={() => recordPlayerCard(player.id, "RED", true)} onBack={() => setRedDecisionPlayerId(null)} onCancel={() => applyInteraction({ type: "CANCEL" })} />
+                  </div>}
                 </div>
               );
             })}
@@ -876,7 +864,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                 onTarget={(goalTarget) =>
                   applyInteraction({
                     type: "GOAL_TARGET_SELECTED",
-                    goalTarget: visualToCanonicalPoint(goalTarget, attackDirection),
+                    // La miniportería siempre se interpreta frontalmente como
+                    // la ve el tirador; no comparte el flip visual del campo.
+                    goalTarget: frontGoalTargetToCanonical(goalTarget),
                   })
                 }
                 onDefensiveOutcome={(outcome) =>

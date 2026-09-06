@@ -17,7 +17,6 @@ import {
   goalkeeperAtPosition,
   REGULATION_MATCH_CLOCK,
   replayMatch,
-  sortEvents,
 } from "./matchEngine";
 import {
   matchCatalogClubId,
@@ -64,6 +63,7 @@ export interface DashboardGoalkeeperStats {
   playerId: string;
   name: string;
   number: number;
+  photoUrl?: string;
   minutes: number;
   threatsAgainst: number;
   goalsAgainst: number;
@@ -236,6 +236,7 @@ function playerIdentity(players: Player[], playerId: string) {
   return {
     name: player?.name ?? "Jugador no disponible",
     number: player?.number ?? 0,
+    photoUrl: player?.photoUrl,
   };
 }
 
@@ -245,13 +246,16 @@ function goalkeeperMinutes(
   endClock: { period: number; minute: number },
 ): Map<string, number> {
   const result = new Map<string, number>();
-  const sorted = sortEvents(events);
+  const replay = replayMatch(session.players, events, { currentClock: endClock });
+  const sorted = replay.timeline;
   const end = deriveGlobalMinute(endClock.period, endClock.minute);
-  sorted.forEach((event, index) => {
+  sorted.forEach((entry, index) => {
+    const event = entry.event;
     const start = eventGlobalMinute(event);
     const next = sorted[index + 1];
-    const finish = Math.min(end, next ? eventGlobalMinute(next) : end);
+    const finish = Math.min(end, next ? eventGlobalMinute(next.event) : end);
     if (finish <= start) return;
+    if (entry.gameContexts.includes("FLYING_GOALKEEPER")) return;
     const goalkeeper = goalkeeperAtPosition(session.players, events, event);
     if (goalkeeper.status === "PLAYER") {
       result.set(
@@ -263,10 +267,14 @@ function goalkeeperMinutes(
   return result;
 }
 
-function goalkeeperForThreat(
+export function normalGoalkeeperForThreat(
   session: MatchSession,
   event: ThreatRecordedEvent,
 ): string | null {
+  const entry = replayMatch(session.players, session.events).timeline.find(
+    (candidate) => candidate.event.id === event.id,
+  );
+  if (entry?.gameContexts.includes("FLYING_GOALKEEPER")) return null;
   const goalkeeper = goalkeeperAtPosition(session.players, session.events, event);
   return goalkeeper.status === "PLAYER" ? goalkeeper.playerId : null;
 }
@@ -430,7 +438,7 @@ export function buildDashboardAnalytics(
         } else {
           result.missing.goalTarget += 1;
         }
-        const goalkeeperId = goalkeeperForThreat(session, event);
+        const goalkeeperId = normalGoalkeeperForThreat(session, event);
         if (!goalkeeperId) {
           result.missing.goalkeeper += 1;
         } else {

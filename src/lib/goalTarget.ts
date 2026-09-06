@@ -12,6 +12,19 @@ export function completesGoalTargetGesture(activePointerId: number | null, relea
   return activePointerId !== null && activePointerId === releasedPointerId;
 }
 
+/**
+ * Una zona que aparece después de otro gesto solo puede activarse mediante un
+ * pointer nuevo que haya empezado en ella. Esto descarta el pointerup/click de
+ * compatibilidad que algunos navegadores entregan sobre contenido recién
+ * montado tras seleccionar el destino.
+ */
+export function completesIndependentPointerGesture(
+  activePointerId: number | null,
+  releasedPointerId: number,
+): boolean {
+  return activePointerId !== null && activePointerId === releasedPointerId;
+}
+
 const LEGACY_GOAL_FRAME = {
   left: 0.12,
   right: 0.88,

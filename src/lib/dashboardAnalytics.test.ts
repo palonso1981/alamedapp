@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createCardEvent,
   createFoulEvent,
+  createGameStateEvent,
   createLineupInitializedEvent,
   createLiveThreatEvent,
   createSubstitutionEvent,
@@ -357,4 +358,35 @@ test("selector de paradas sin bodyPart conserva la parada y excluye borrados", (
   const stats = buildDashboardAnalytics([record(matchId, [lineup(matchId), withoutBody, withBody])], { clubId: "club-a", teamId: "team-a", seasonId: "season-a" });
   assert.equal(stats.goalkeepers[0].saves, 2);
   assert.equal(stats.missing.bodyPart, 1);
+});
+
+test("PORTEROS excluye minutos y amenazas del intervalo PORTERO-JUGADOR", () => {
+  const matchId = "keeper-vs-flying";
+  const events: MatchEvent[] = [
+    lineup(matchId),
+    defensiveThreat(matchId, "normal-save", 4, 1, "PARADA", "gk-a"),
+    createGameStateEvent({ id: "pj-on", matchId, position: { period: 1, minute: 5, order: 1 }, state: "FLYING_GOALKEEPER", active: true, playerId: "p2", side: "FOR", now: 51 }),
+    defensiveThreat(matchId, "pj-save", 7, 1, "PARADA", "p2"),
+    defensiveThreat(matchId, "pj-goal", 8, 1, "GOL", "p2"),
+    createGameStateEvent({ id: "pj-off", matchId, position: { period: 1, minute: 10, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "FOR", now: 101 }),
+    defensiveThreat(matchId, "normal-goal", 12, 1, "GOL", "gk-a"),
+  ];
+  const stats = buildDashboardAnalytics([record(matchId, events)], { clubId: "club-a", teamId: "team-a", seasonId: "season-a", matchId, period: 1 });
+  const keeper = stats.goalkeepers.find((candidate) => candidate.playerId === "gk-a");
+  assert.equal(stats.goalkeepers.some((candidate) => candidate.playerId === "p2"), false);
+  assert.deepEqual(keeper && { minutes: keeper.minutes, threats: keeper.threatsAgainst, saves: keeper.saves, goals: keeper.goalsAgainst }, { minutes: 15, threats: 2, saves: 1, goals: 1 });
+  assert.equal(stats.threats.AGAINST.total, 4, "las amenazas de equipo sí se conservan");
+});
+
+test("un portero natural tampoco contamina PORTEROS durante su intervalo PJ", () => {
+  const matchId = "natural-keeper-flying";
+  const events: MatchEvent[] = [
+    lineup(matchId),
+    createGameStateEvent({ id: "pj-on", matchId, position: { period: 1, minute: 3, order: 1 }, state: "FLYING_GOALKEEPER", active: true, playerId: "gk-a", side: "FOR", now: 31 }),
+    defensiveThreat(matchId, "pj-shot", 5, 1, "PARADA", "gk-a"),
+    createGameStateEvent({ id: "pj-off", matchId, position: { period: 1, minute: 8, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "FOR", now: 81 }),
+  ];
+  const stats = buildDashboardAnalytics([record(matchId, events)], { clubId: "club-a", teamId: "team-a", seasonId: "season-a", matchId, period: 1 });
+  const keeper = stats.goalkeepers.find((candidate) => candidate.playerId === "gk-a");
+  assert.deepEqual(keeper && { minutes: keeper.minutes, threats: keeper.threatsAgainst }, { minutes: 15, threats: 0 });
 });

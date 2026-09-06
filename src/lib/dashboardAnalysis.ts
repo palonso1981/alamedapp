@@ -14,10 +14,10 @@ import {
   DashboardPeriod,
   DashboardScope,
   filterDashboardMatches,
+  normalGoalkeeperForThreat,
 } from "./dashboardAnalytics";
 import {
   deriveGlobalMinute,
-  goalkeeperAtPosition,
   REGULATION_MATCH_CLOCK,
   replayMatch,
 } from "./matchEngine";
@@ -108,6 +108,7 @@ export interface GoalkeeperAnalysis {
   playerId: string;
   name: string;
   number: number;
+  photoUrl?: string;
   minutes: number;
   threatsAgainst: number;
   threatsAgainst40: number | null;
@@ -421,8 +422,7 @@ export function buildDashboardAnalysis(
       const record = selected.find((candidate) => candidate.session.matchId === point.matchId);
       const event = record?.session.events.find((candidate): candidate is ThreatRecordedEvent => candidate.id === point.eventId && candidate.type === "threat_recorded");
       if (!record || !event) return false;
-      const goalkeeper = goalkeeperAtPosition(record.session.players, record.session.events, event);
-      return goalkeeper.status === "PLAYER" && goalkeeper.playerId === keeper.playerId;
+      return normalGoalkeeperForThreat(record.session, event) === keeper.playerId;
     }),
   }));
   finishZones(pitchZones);

@@ -488,3 +488,31 @@ jugador ni instante histórico. Siempre queda `pendingReview` y `unresolved`:
 permite operar con el total correcto en directo y localizar después la acción
 real. Al resolverla se sustituye/corrige el ajuste mediante la cronología; no se
 edita ningún contador agregado.
+
+# Directo V2.2: gesto aislado, jerarquía y portero-jugador
+
+La miniportería congela una convención frontal independiente: su izquierda es
+siempre la izquierda visual del tirador. El giro del campo solo transforma el
+origen y los reinicios de pista; nunca transforma `goalTarget`. Las zonas de
+cuerpo exigen un `pointerdown` y `pointerup` propios sobre la misma región, por
+lo que el gesto que eligió destino no puede activar una silueta recién montada.
+Toda amenaza nueva comienza con `keeperBodyPart = null` y una parada puede
+cerrarse sin seleccionar cuerpo.
+
+En tablet horizontal, marcador, disciplina, estado local/nube, historial y
+acciones forman un único cockpit compacto. PJ CDA, PJ rival, Cambio y Banco
+conservan la mayor superficie; igualdad numérica, giro y undo/redo quedan como
+indicadores/utilidades secundarios. El espacio recuperado pertenece a la pista
+2:1 y al rail de cuatro jugadores. Córners y bandas separan su hitbox generoso
+de una marca visual fina alineada con el lateral.
+
+Las fichas visuales de jugador siguen un patrón de cromo reutilizable: la foto
+ocupa la superficie, con dorsal/nombre/datos superpuestos y fallback sin foto.
+El portero conserva una tarjeta compacta dentro de la pista; foto y tarjeta
+dejan pasar el gesto espacial, mientras un handle explícito abre su disciplina.
+
+El Dashboard `PORTEROS` solo consume intervalos de portero funcional normal.
+Los minutos y amenazas ocurridos durante `FLYING_GOALKEEPER` CDA quedan fuera,
+incluso si la persona es portero natural; las métricas de equipo sí conservan
+esas acciones. El análisis específico futuro de PJ separará duración, remates,
+amenazas, GF y GC tanto cuando CDA lo usa como cuando lo emplea el rival.

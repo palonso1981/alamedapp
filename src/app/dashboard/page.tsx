@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { AppHeader } from "../../components/app/AppHeader";
+import { PlayerPhotoCard } from "../../components/player/PlayerPhotoCard";
 import {
   GoalThreatMap,
   PitchThreatMap,
@@ -333,6 +334,9 @@ export default function DashboardPage() {
 
           {area === "PORTEROS" && <section>
             <SectionTitle eyebrow="ROL FUNCIONAL EN EL INSTANTE">PORTEROS</SectionTitle>
+            <div className="mb-3 flex flex-wrap gap-3">
+              {analysis.goalkeepers.map((keeper) => <div key={`photo-${keeper.playerId}`} className="w-28"><PlayerPhotoCard player={{ id: keeper.playerId, name: keeper.name, number: keeper.number, photoUrl: keeper.photoUrl }} className="h-36 w-28" /><p className="mt-1 truncate text-center text-xs font-black">#{keeper.number} {keeper.name}</p></div>)}
+            </div>
             {analysis.goalkeepers.length > 1 && <div className="mb-3 grid grid-cols-2 gap-2"><select aria-label="Portero A" value={keeperA?.playerId ?? ""} onChange={(event) => setKeeperAId(event.target.value)} className="min-h-11 rounded-xl bg-slate-800 px-3 text-xs font-black">{analysis.goalkeepers.map((keeper) => <option key={keeper.playerId} value={keeper.playerId}>A · #{keeper.number} {keeper.name}</option>)}</select><select aria-label="Portero B" value={keeperB?.playerId ?? ""} onChange={(event) => setKeeperBId(event.target.value)} className="min-h-11 rounded-xl bg-slate-800 px-3 text-xs font-black">{analysis.goalkeepers.map((keeper) => <option key={keeper.playerId} value={keeper.playerId}>B · #{keeper.number} {keeper.name}</option>)}</select></div>}
             <div className="grid gap-3 lg:grid-cols-2">
               {[keeperA, keeperB].filter((keeper, index, all) => keeper && all.findIndex((item) => item?.playerId === keeper.playerId) === index).map((keeper) => keeper && <article key={keeper.playerId} className="rounded-3xl border border-slate-700 bg-slate-900 p-4"><div className="flex items-center justify-between"><div><span className="text-xs font-black text-cyan-300">#{keeper.number}</span><h3 className="text-xl font-black">{keeper.name}</h3></div><strong className="text-3xl">{keeper.savePercentage === null ? "N/D" : `${keeper.savePercentage.toFixed(0)}%`}</strong></div><p className="mt-1 text-[10px] text-slate-500">% parada = PARADAS / (PARADAS + GOLES). FUERA no entra.</p><div className="mt-4 grid grid-cols-3 gap-2 text-center sm:grid-cols-6"><div><strong className="block text-xl">{number(keeper.minutes)}&apos;</strong><span className="text-[9px] text-slate-500">PORTERO</span></div><div><strong className="block text-xl">{keeper.threatsAgainst}</strong><span className="text-[9px] text-slate-500">AMEN.</span></div><div><strong className="block text-xl">{number(keeper.threatsAgainst40)}</strong><span className="text-[9px] text-slate-500">AMEN./40</span></div><div><strong className="block text-xl">{keeper.interiorThreats}</strong><span className="text-[9px] text-slate-500">INTERIOR</span></div><div><strong className="block text-xl text-emerald-300">{keeper.saves}</strong><span className="text-[9px] text-slate-500">PARADAS</span></div><div><strong className="block text-xl text-rose-300">{keeper.goalsAgainst} · {number(keeper.goalsAgainst40)}</strong><span className="text-[9px] text-slate-500">GC · /40</span></div></div><div className="mt-4"><SaveOutcomeSummary keeper={keeper} /></div></article>)}
