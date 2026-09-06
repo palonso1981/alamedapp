@@ -1,7 +1,8 @@
 import { DashboardGoalPoint, DashboardMatchRecord, DashboardThreatPoint } from "./dashboardAnalytics";
 import { ThreatRecordedEvent } from "../types";
 
-export type DashboardTraceablePoint = DashboardThreatPoint | DashboardGoalPoint;
+export type IndividualEventPoint = DashboardThreatPoint | DashboardGoalPoint;
+export type DashboardTraceablePoint = IndividualEventPoint;
 
 /**
  * La identidad trazable de un punto es siempre partido + evento. Las coordenadas
@@ -23,12 +24,17 @@ export function dashboardMapPointTitle(records: readonly DashboardMatchRecord[],
   if (!resolved) return `${point.outcome} · evento ${point.eventId}`;
   const { record, event } = resolved;
   const player = event.playerId ? record.session.players.find((item) => item.id === event.playerId)?.name : undefined;
+  const target = event.defensive?.goalTarget;
   return [
     event.outcome,
     `P${event.period} · min ${event.minute}`,
     record.catalog.opponent,
     event.phase.replaceAll("_", " "),
     player,
-    `X ${Math.round(event.origin.x * 100)} · Y ${Math.round(event.origin.y * 100)}`,
+    target
+      ? `Destino X ${Math.round(target.x * 100)} · Y ${Math.round(target.y * 100)}`
+      : `Origen X ${Math.round(event.origin.x * 100)} · Y ${Math.round(event.origin.y * 100)}`,
+    event.defensive?.version === 2 ? event.defensive.keeperBodyPart : undefined,
+    event.defensive?.saveOutcome,
   ].filter(Boolean).join(" · ");
 }

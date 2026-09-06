@@ -13,6 +13,8 @@ import { ComparisonHeader } from "./ComparisonHeader";
 import { EvolutionChart } from "./EvolutionChart";
 import { MetricHelp } from "./MetricHelp";
 import { PlayerComparisonPanel } from "./PlayerComparisonPanel";
+import { EventTracePanel, TraceablePoint } from "./EventTracePanel";
+import { dashboardMapPointTitle } from "../../lib/dashboardTrace";
 
 const format = (value: number | null, suffix = "") => value === null ? "N/D" : `${Number.isInteger(value) ? value : value.toFixed(1).replace(".", ",")}${suffix}`;
 function Kpi({ label, value }: { label: string; value: string | number }) { return <div className="rounded-2xl border border-slate-700 bg-slate-900 p-3"><span className="text-[9px] font-black text-slate-500">{label}</span><strong className="mt-1 block text-2xl">{value}</strong></div>; }
@@ -22,14 +24,15 @@ export function PlayerDashboardV2Page({ playerId }: { playerId: string }) {
   const data = useDashboardProfileData(path);
   const [shotFilter, setShotFilter] = useState<"ALL" | Exclude<ThreatOutcome, "BLOQUEADO">>("ALL");
   const [compareId, setCompareId] = useState("");
+  const [selectedPoint, setSelectedPoint] = useState<TraceablePoint | null>(null);
   const [trendMetric, setTrendMetric] = useState<"minutes" | "minutesPerMatch" | "goals" | "assists" | "threats" | "threats40" | "goalsForOnCourt" | "goalsAgainstOnCourt" | "goalDifference" | "pointsOnCourt" | "keyMinutes" | "goldMinutes">("minutes");
   const player = data.analysis.players.find((candidate) => candidate.playerId === decodeURIComponent(playerId));
   const referencePlayer = data.reference.players.find((candidate) => candidate.playerId === decodeURIComponent(playerId));
   const comparison = compareId === "__REFERENCE__" ? referencePlayer : data.analysis.players.find((candidate) => candidate.playerId === compareId);
   const score = useMemo(() => buildPlayerScores(data.analysis.players).find((item) => item.playerId === player?.playerId), [data.analysis.players, player?.playerId]);
-  const points = player?.ownShotPoints.filter((point) => shotFilter === "ALL" || point.outcome === shotFilter).map((point) => ({ ...point, matchId: "player", side: "FOR" as const })) ?? [];
+  const points = player?.ownShotPoints.filter((point) => shotFilter === "ALL" || point.outcome === shotFilter) ?? [];
   const metric = (key: "goals" | "assists" | "threats" | "points") => player ? playerMetricValue(player, key, data.mode) : null;
-  return <div className="min-h-screen overflow-x-hidden bg-slate-950 text-white"><AppHeader title="Jugador · Dashboard" clubId={data.fixture ? undefined : data.currentClubId}/><main className="mx-auto max-w-7xl space-y-5 p-3 pb-16 sm:p-5">
+  return <div className="min-h-screen overflow-x-clip bg-slate-950 text-white"><div className="sticky top-0 z-40"><AppHeader title="Jugador · Dashboard" clubId={data.fixture ? undefined : data.currentClubId}/></div><main className="mx-auto max-w-7xl space-y-5 p-3 pb-16 sm:p-5">
     <DashboardFilterBar clubName={data.workspace?.club.name ?? "Club"} clubs={data.clubs} onClub={data.setCurrentClub} scope={data.scope} teams={data.teams} seasons={data.seasons} matches={data.matches} rivals={data.rivals} players={data.analysis.players} goalkeepers={data.analysis.goalkeepers} referencePreset={data.referencePreset} mode={data.mode} onScope={data.setScope} onReferencePreset={data.setReferencePreset} onMode={data.setMode} onRefresh={data.refresh} fixture={data.fixture}/>
     <Link href={`/dashboard?${data.query}`} className="inline-flex min-h-10 items-center rounded-xl border border-slate-700 px-4 text-[10px] font-black">← DASHBOARD</Link>
     <ComparisonHeader left={player?.name.toUpperCase() ?? "JUGADOR"} right={comparison?.name.toUpperCase() ?? (compareId === "__REFERENCE__" ? "MISMO JUGADOR · REFERENCIA" : "MEDIA PLANTILLA")} scope={data.scope}/>
@@ -39,8 +42,8 @@ export function PlayerDashboardV2Page({ playerId }: { playerId: string }) {
       <div className="flex justify-end"><select aria-label="Comparar jugador" value={compareId} onChange={(event) => setCompareId(event.target.value)} className="min-h-11 rounded-xl bg-slate-800 px-3 text-xs font-black"><option value="">Media plantilla</option><option value="__REFERENCE__">Mismo jugador · referencia global</option>{data.analysis.players.filter((candidate) => candidate.playerId !== player.playerId).map((candidate) => <option key={candidate.playerId} value={candidate.playerId}>{candidate.name}</option>)}</select></div>
       <PlayerComparisonPanel player={player} opponent={comparison} population={data.analysis.players} opponentLabel={compareId === "__REFERENCE__" ? "MISMO JUGADOR · REFERENCIA" : "MEDIA PLANTILLA"}/>
       <section><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h2 className="font-black">EVOLUCIÓN</h2><select aria-label="Métrica de evolución del jugador" value={trendMetric} onChange={(event) => setTrendMetric(event.target.value as typeof trendMetric)} className="min-h-11 rounded-xl bg-slate-800 px-3 text-xs font-black"><option value="minutes">MINUTOS</option><option value="minutesPerMatch">MIN/PARTIDO</option><option value="goals">GOLES</option><option value="assists">ASISTENCIAS</option><option value="threats">REMATES</option><option value="threats40">REMATES /40</option><option value="goalsForOnCourt">GF EN PISTA</option><option value="goalsAgainstOnCourt">GC EN PISTA</option><option value="goalDifference">DIF. GOLES</option><option value="pointsOnCourt">PTS EN PISTA</option><option value="keyMinutes">MIN. CLAVE</option><option value="goldMinutes">MIN. ORO</option></select></div><EvolutionChart points={player.trend.filter((item) => item.minutes > 0).map((item) => ({ id: item.matchId, label: item.opponent, detail: item.date, value: trendMetric === "goalDifference" ? item.goalsForOnCourt - item.goalsAgainstOnCourt : trendMetric === "minutesPerMatch" ? item.minutes : trendMetric === "threats40" ? item.minutes > 0 ? item.threats * 40 / item.minutes : null : item[trendMetric] }))} reference={null} referenceLabel="MEDIA"/></section>
-      <div><div className="mb-2 flex gap-2 overflow-x-auto">{(["ALL", "GOL", "PARADA", "FUERA"] as const).map((item) => <button key={item} type="button" onClick={() => setShotFilter(item)} className={`min-h-10 shrink-0 rounded-xl px-3 text-[10px] font-black ${shotFilter === item ? "bg-cyan-300 text-slate-950" : "bg-slate-800"}`}>{item === "ALL" ? "TODOS" : item}</button>)}</div><PitchThreatMap points={points} side="FOR"/></div>
+      <div><div className="mb-2 flex gap-2 overflow-x-auto">{(["ALL", "GOL", "PARADA", "FUERA"] as const).map((item) => <button key={item} type="button" onClick={() => setShotFilter(item)} className={`min-h-10 shrink-0 rounded-xl px-3 text-[10px] font-black ${shotFilter === item ? "bg-cyan-300 text-slate-950" : "bg-slate-800"}`}>{item === "ALL" ? "TODOS" : item}</button>)}</div><PitchThreatMap points={points} side="FOR" onSelect={setSelectedPoint} pointTitle={(point) => dashboardMapPointTitle(data.analysis.records, point)}/></div>
       <p className="rounded-2xl border border-slate-800 bg-slate-900 p-3 text-[10px] text-slate-500">Solo cuentan asistencias confirmadas. No existe coordenada del pase y no se inventa. PTS EN PISTA usa el parcial de cada partido durante sus minutos.</p>
     </>}
-  </main></div>;
+  </main>{selectedPoint && <EventTracePanel records={data.analysis.records} point={selectedPoint} onClose={() => setSelectedPoint(null)}/>}</div>;
 }

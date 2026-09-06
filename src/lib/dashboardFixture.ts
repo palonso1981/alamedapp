@@ -81,6 +81,7 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
   const matchId = `dashboard-fixture-${index + 1}`;
   const home = index % 2 === 0;
   const startingGoalkeeper = index === 3 ? "fx-gk-2" : "fx-gk-1";
+  const secondHalfGoalkeeper = index === 7 ? startingGoalkeeper : "fx-gk-2";
   const starters = [startingGoalkeeper, "fx-p-2", "fx-p-4", "fx-p-5", "fx-p-7"];
   const events: MatchEvent[] = [
     createLineupInitializedEvent({ id: `${matchId}-p1`, matchId, position: { period: 1, minute: 0, order: 1 }, squadPlayerIds: fixturePlayers.map((player) => player.id), onCourtPlayerIds: starters, goalkeeperPlayerId: startingGoalkeeper, now: index * 1000 + 1 }),
@@ -90,13 +91,21 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
     createSubstitutionEvent({ id: `${matchId}-sub-1`, matchId, position: { period: 1, minute: 8, order: 1 }, playerOutId: "fx-p-2", playerInId: "fx-p-8", now: index * 1000 + 8 }),
     threat(matchId, `${matchId}-for-2`, 1, 12, 1, "FOR", "FUERA", phases[(index + 2) % phases.length], "fx-p-8", startingGoalkeeper),
     createCardEvent({ id: `${matchId}-card`, matchId, position: { period: 1, minute: 15, order: 1 }, side: "FOR", color: "YELLOW", playerId: "fx-p-8", now: index * 1000 + 15 }),
-    createLineupInitializedEvent({ id: `${matchId}-p2`, matchId, position: { period: 2, minute: 0, order: 1 }, squadPlayerIds: fixturePlayers.map((player) => player.id), onCourtPlayerIds: ["fx-gk-2", "fx-p-5", "fx-p-7", "fx-p-9", "fx-p-10"], goalkeeperPlayerId: "fx-gk-2", now: index * 1000 + 20 }),
-    threat(matchId, `${matchId}-against-2`, 2, 3, 1, "AGAINST", "PARADA", phases[(index + 3) % phases.length], undefined, "fx-gk-2"),
-    threat(matchId, `${matchId}-for-3`, 2, 7, 1, "FOR", index % 2 ? "GOL" : "PARADA", phases[(index + 4) % phases.length], "fx-p-9", "fx-gk-2"),
+    createLineupInitializedEvent({ id: `${matchId}-p2`, matchId, position: { period: 2, minute: 0, order: 1 }, squadPlayerIds: fixturePlayers.map((player) => player.id), onCourtPlayerIds: [secondHalfGoalkeeper, "fx-p-5", "fx-p-7", "fx-p-9", "fx-p-10"], goalkeeperPlayerId: secondHalfGoalkeeper, now: index * 1000 + 20 }),
+    threat(matchId, `${matchId}-against-2`, 2, 3, 1, "AGAINST", "PARADA", phases[(index + 3) % phases.length], undefined, secondHalfGoalkeeper),
+    threat(matchId, `${matchId}-for-3`, 2, 7, 1, "FOR", index % 2 ? "GOL" : "PARADA", phases[(index + 4) % phases.length], "fx-p-9", secondHalfGoalkeeper),
     createFoulEvent({ id: `${matchId}-f2`, matchId, position: { period: 2, minute: 10, order: 1 }, side: "AGAINST", playerId: "fx-p-7", now: index * 1000 + 30 }),
   ];
   for (let foul = 2; foul <= 5; foul += 1) {
     events.push(createFoulEvent({ id: `${matchId}-critical-${foul}`, matchId, position: { period: 2, minute: 10 + foul, order: 1 }, side: "FOR", playerId: foul === 5 ? "fx-p-5" : null, now: index * 1000 + 30 + foul }));
+  }
+  if (index === 7) {
+    events.push(
+      threat(matchId, `${matchId}-context-2-1`, 2, 10, 2, "FOR", "GOL", "POSITIONAL", "fx-p-10", secondHalfGoalkeeper),
+      threat(matchId, `${matchId}-context-3-1`, 2, 12, 2, "FOR", "GOL", "TRANSITION", "fx-p-9", secondHalfGoalkeeper),
+      threat(matchId, `${matchId}-context-3-2`, 2, 16, 1, "AGAINST", "GOL", "TRANSITION", undefined, secondHalfGoalkeeper),
+      threat(matchId, `${matchId}-context-gold`, 2, 17, 1, "AGAINST", "PARADA", "POSITIONAL", undefined, secondHalfGoalkeeper),
+    );
   }
   if (index === 4) {
     events.push(

@@ -4,11 +4,12 @@ import test from "node:test";
 import { MatchEvent } from "../types";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
 import { PitchOriginZone } from "./dashboardAnalysis";
-import { competitiveEventIds, deriveCompetitiveMinutes, isCompetitiveMoment } from "./dashboardCompetitiveContext";
+import { competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, isCompetitiveMoment } from "./dashboardCompetitiveContext";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "./dashboardFixture";
 import { compareMetricValues, METRIC_DEFINITIONS } from "./dashboardMetricDefinitions";
 import { dashboardMapPointTitle, resolveDashboardMapPoint } from "./dashboardTrace";
-import { createLineupInitializedEvent, createLiveThreatEvent, editEvent } from "./matchEngine";
+import { formatFutsalPosition } from "./positionFormat";
+import { createLineupInitializedEvent, createLiveThreatEvent, createSubstitutionEvent, editEvent } from "./matchEngine";
 import {
   buildDashboardV2,
   buildPlayerScores,
@@ -156,6 +157,11 @@ test("fixture poblado cubre temporada, sedes, resultados, jugadores, porteros, f
   assert.ok(analysis.flyingGoalkeeper.for.minutes > 0);
   assert.ok(analysis.analytics.threats.FOR.total > 0 && analysis.analytics.threats.AGAINST.total > 0);
   assert.ok(Object.values(analysis.analytics.phases).filter((phase) => phase.FOR + phase.AGAINST > 0).length >= 6);
+  const contextMatch = records.find((record) => record.catalog.matchId === "dashboard-fixture-8")!;
+  const allContext = buildDashboardV2(records, { ...baseScope(), matchIds: [contextMatch.catalog.matchId] });
+  const keyContext = buildDashboardV2(records, { ...baseScope(), matchIds: [contextMatch.catalog.matchId], competitiveContext: "KEY" });
+  assert.equal(allContext.goalkeepers.find((keeper) => keeper.playerId === "fx-gk-1")?.minutes, 40);
+  assert.equal(keyContext.goalkeepers.find((keeper) => keeper.playerId === "fx-gk-1")?.minutes, 36);
 });
 
 test("definiciones centrales mantienen fórmulas, denominadores y dirección semántica", () => {
@@ -166,6 +172,19 @@ test("definiciones centrales mantienen fórmulas, denominadores y dirección sem
   assert.equal(compareMetricValues("SAVE_PERCENTAGE", 70, 60), "LEFT");
   assert.equal(compareMetricValues("THREATS_AGAINST_40", 7, 9), "LEFT");
   assert.equal(compareMetricValues("MINUTES", 20, 10), "NONE");
+});
+
+test("posiciones actuales y legacy se presentan siempre en castellano", () => {
+  assert.equal(formatFutsalPosition("GOALKEEPER"), "PORTERO");
+  assert.equal(formatFutsalPosition("PORTERO"), "PORTERO");
+  assert.equal(formatFutsalPosition("FIXO"), "CIERRE");
+  assert.equal(formatFutsalPosition("CIERRE"), "CIERRE");
+  assert.equal(formatFutsalPosition("WINGER"), "ALA");
+  assert.equal(formatFutsalPosition("ALA"), "ALA");
+  assert.equal(formatFutsalPosition("PIVOT"), "PÍVOT");
+  assert.equal(formatFutsalPosition("PÍVOT"), "PÍVOT");
+  assert.equal(formatFutsalPosition("UNIVERSAL"), "UNIVERSAL");
+  assert.equal(formatFutsalPosition("OTRA"), "OTRA");
 });
 
 test("A PUERTA y CERCANAS son derivaciones objetivas e intersectables", () => {
@@ -195,6 +214,68 @@ test("contexto clave y oro usa marcador cronológico y solo minuto deportivo cap
   assert.ok(Array.from(competitiveEventIds(session, "ALL", "GOLD")).every((id) => session.events.some((event) => event.id === id)));
 });
 
+function competitiveFortyMinuteRecord(): DashboardMatchRecord {
+  const source = buildDashboardFixture()[0];
+  const matchId = "competitive-40";
+  const squad = source.session.players.map((player) => player.id);
+  const lineup = ["fx-gk-1", "fx-p-2", "fx-p-4", "fx-p-5", "fx-p-7"];
+  const events: MatchEvent[] = [
+    createLineupInitializedEvent({ id: "c40-p1", matchId, position: { period: 1, minute: 0, order: 1 }, squadPlayerIds: squad, onCourtPlayerIds: lineup, goalkeeperPlayerId: "fx-gk-1", now: 1 }),
+    createLiveThreatEvent({ id: "c40-1-0", matchId, position: { period: 1, minute: 8, order: 1 }, side: "FOR", playerId: "fx-p-4", origin: { x: .1, y: .5 }, outcome: "GOL", phase: "POSITIONAL", assist: { status: "NONE" }, now: 2 }),
+    createLiveThreatEvent({ id: "c40-2-0", matchId, position: { period: 1, minute: 13, order: 1 }, side: "FOR", playerId: "fx-p-4", origin: { x: .1, y: .5 }, outcome: "GOL", phase: "POSITIONAL", assist: { status: "NONE" }, now: 3 }),
+    createLineupInitializedEvent({ id: "c40-p2", matchId, position: { period: 2, minute: 0, order: 1 }, squadPlayerIds: squad, onCourtPlayerIds: lineup, goalkeeperPlayerId: "fx-gk-1", now: 4 }),
+    createLiveThreatEvent({ id: "c40-2-1", matchId, position: { period: 2, minute: 0, order: 2 }, side: "AGAINST", origin: { x: .6, y: .5 }, outcome: "GOL", phase: "TRANSITION", defensive: { version: 2, goalTarget: { x: .5, y: .5, geometryVersion: 3 }, goalkeeper: { status: "PLAYER", playerId: "fx-gk-1" } }, now: 5 }),
+    createLiveThreatEvent({ id: "c40-close-save", matchId, position: { period: 2, minute: 5, order: 1 }, side: "AGAINST", origin: { x: .6, y: .5 }, outcome: "PARADA", phase: "POSITIONAL", defensive: { version: 2, goalTarget: { x: .5, y: .5, geometryVersion: 3 }, goalkeeper: { status: "PLAYER", playerId: "fx-gk-1" }, saveOutcome: "CATCH" }, now: 6 }),
+    createLiveThreatEvent({ id: "c40-3-1", matchId, position: { period: 2, minute: 10, order: 1 }, side: "FOR", playerId: "fx-p-4", origin: { x: .1, y: .5 }, outcome: "GOL", phase: "POSITIONAL", assist: { status: "NONE" }, now: 7 }),
+    createLiveThreatEvent({ id: "c40-wide-save", matchId, position: { period: 2, minute: 12, order: 1 }, side: "AGAINST", origin: { x: .6, y: .5 }, outcome: "PARADA", phase: "POSITIONAL", defensive: { version: 2, goalTarget: { x: .5, y: .5, geometryVersion: 3 }, goalkeeper: { status: "PLAYER", playerId: "fx-gk-1" }, saveOutcome: "REBOUND" }, now: 8 }),
+    createLiveThreatEvent({ id: "c40-3-2", matchId, position: { period: 2, minute: 14, order: 1 }, side: "AGAINST", origin: { x: .6, y: .5 }, outcome: "GOL", phase: "TRANSITION", defensive: { version: 2, goalTarget: { x: .5, y: .5, geometryVersion: 3 }, goalkeeper: { status: "PLAYER", playerId: "fx-gk-1" } }, now: 9 }),
+    createLiveThreatEvent({ id: "c40-gold-save", matchId, position: { period: 2, minute: 17, order: 1 }, side: "AGAINST", origin: { x: .6, y: .5 }, outcome: "PARADA", phase: "POSITIONAL", defensive: { version: 2, goalTarget: { x: .5, y: .5, geometryVersion: 3 }, goalkeeper: { status: "PLAYER", playerId: "fx-gk-1" }, saveOutcome: "CLEARANCE" }, now: 10 }),
+  ];
+  return { catalog: { ...source.catalog, matchId, opponent: "Contexto FC" }, session: { ...source.session, matchId, events } };
+}
+
+test("portero de 40 minutos tiene 29 clave e intersecta stats sin contar el tramo +2", () => {
+  const record = competitiveFortyMinuteRecord();
+  const key = deriveCompetitiveMinutes(record.session, "ALL", "KEY");
+  assert.equal(key.byPlayer["fx-gk-1"], 29);
+  assert.equal(key.byGoalkeeper["fx-gk-1"], 29);
+  const projection = deriveCompetitiveProjection(record.session, "ALL", "KEY");
+  assert.equal(projection.eventIds.has("c40-wide-save"), false);
+  assert.equal(projection.eventIds.has("c40-close-save"), true);
+  assert.equal(projection.eventIds.has("c40-gold-save"), true);
+  const analysis = buildDashboardV2([record], { ...baseScope(), competitiveContext: "KEY" });
+  const goalkeeper = analysis.goalkeepers.find((item) => item.playerId === "fx-gk-1")!;
+  assert.equal(goalkeeper.minutes, 29);
+  assert.equal(goalkeeper.saves, 2);
+  assert.equal(goalkeeper.saveOutcomes.REBOUND, 0);
+});
+
+test("ventana Oro empieza en P2 min 15 aunque no exista evento en ese borde", () => {
+  const record = competitiveFortyMinuteRecord();
+  const gold = deriveCompetitiveMinutes(record.session, "ALL", "GOLD");
+  assert.equal(gold.observed, 5);
+  assert.equal(gold.byPlayer["fx-gk-1"], 5);
+  const ids = competitiveEventIds(record.session, "ALL", "GOLD");
+  assert.equal(ids.has("c40-3-2"), false);
+  assert.equal(ids.has("c40-gold-save"), true);
+});
+
+test("minutos clave intersectan entradas y salidas múltiples sin regalar el tramo ausente", () => {
+  const record = competitiveFortyMinuteRecord();
+  const p2 = record.session.events.find((event) => event.id === "c40-p2");
+  assert.ok(p2?.type === "lineup_initialized");
+  const events: MatchEvent[] = [
+    ...record.session.events.filter((event) => event.id !== "c40-p2"),
+    createSubstitutionEvent({ id: "c40-sub-out", matchId: record.catalog.matchId, position: { period: 1, minute: 10, order: 1 }, playerOutId: "fx-p-2", playerInId: "fx-p-8", now: 11 }),
+    { ...p2, onCourtPlayerIds: p2.onCourtPlayerIds.map((id) => id === "fx-p-2" ? "fx-p-8" : id) },
+  ];
+  const session = { ...record.session, events };
+  const key = deriveCompetitiveMinutes(session, "ALL", "KEY");
+  assert.equal(key.byPlayer["fx-p-2"], 10);
+  assert.equal(key.byPlayer["fx-p-8"], 19);
+  assert.equal((key.byPlayer["fx-p-2"] ?? 0) + (key.byPlayer["fx-p-8"] ?? 0), 29);
+});
+
 test("trazabilidad resuelve coordenadas duplicadas únicamente por matchId + eventId", () => {
   const record = buildDashboardFixture()[0];
   const threats = record.session.events.filter((event) => event.type === "threat_recorded");
@@ -205,6 +286,21 @@ test("trazabilidad resuelve coordenadas duplicadas únicamente por matchId + eve
   assert.equal(resolved?.event.id, wanted.id);
   assert.match(dashboardMapPointTitle([record], point), new RegExp(`P${wanted.period} · min ${wanted.minute}`));
   assert.doesNotMatch(dashboardMapPointTitle([record], point), /\d{1,2}:\d{2}/);
+});
+
+test("mapas general, jugador y portero conservan identidad exacta aunque compartan coordenadas", () => {
+  const record = buildDashboardFixture()[0];
+  const analysis = buildDashboardV2([record], baseScope());
+  const general = analysis.analytics.pitchPoints.find((point) => point.side === "FOR");
+  const player = analysis.players.flatMap((item) => item.ownShotPoints).find(Boolean);
+  const goalkeeper = analysis.goalkeepers.flatMap((item) => item.goalPoints).find(Boolean);
+  assert.ok(general && player && goalkeeper);
+  const duplicatedGeneral = { ...general, x: .5, y: .5 };
+  const duplicatedPlayer = { ...player, x: .5, y: .5 };
+  const duplicatedGoalkeeper = { ...goalkeeper, target: { ...goalkeeper.target, x: .5, y: .5 } };
+  assert.equal(resolveDashboardMapPoint([record], duplicatedGeneral)?.event.id, general.eventId);
+  assert.equal(resolveDashboardMapPoint([record], duplicatedPlayer)?.event.id, player.eventId);
+  assert.equal(resolveDashboardMapPoint([record], duplicatedGoalkeeper)?.event.id, goalkeeper.eventId);
 });
 
 test("editar un evento conserva la hora real original de captura", () => {

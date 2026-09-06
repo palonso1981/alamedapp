@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import { PlayerAnalysis } from "../../lib/dashboardAnalysis";
 import { DashboardValueMode, PlayerScore, playerMetricValue, SortDirection, stableSortByMetric } from "../../lib/dashboardV2";
 import { PlayerPhotoCard } from "../player/PlayerPhotoCard";
+import { formatFutsalPosition } from "../../lib/positionFormat";
 
 type View = "GENERAL" | "ON_COURT" | "DISCIPLINE";
 type Column = "matches" | "minutes" | "avgMinutes" | "goals" | "assists" | "threats" | "points" | "plusMinus" | "goalsFor" | "goalsAgainst" | "threatsFor" | "threatsAgainst" | "keyMinutes" | "goldMinutes" | "foulsCommitted" | "foulsReceived" | "criticalCommitted" | "criticalReceived" | "score";
@@ -51,7 +52,7 @@ export function PlayerTableV2({ players, scores, mode, detailQuery }: { players:
       <div style={{ minWidth: `${300 + shown.length * 82}px` }}>
         <div className="grid items-center gap-3 border-b border-slate-700 px-4 py-1" style={{ gridTemplateColumns: `minmax(15rem,1fr) repeat(${shown.length},minmax(4.5rem,auto))` }}><span className="text-[9px] font-black text-slate-500">JUGADOR</span>{shown.map((id) => <Header key={id} id={id} label={labels[id]} column={column} direction={direction} onSort={sort} />)}</div>
         {sorted.map((player) => <Link key={player.playerId} href={`/dashboard/jugador/${encodeURIComponent(player.playerId)}?${detailQuery}`} className="grid min-h-16 items-center gap-3 border-b border-slate-800 px-4 py-2 last:border-0 hover:bg-slate-800/70" style={{ gridTemplateColumns: `minmax(15rem,1fr) repeat(${shown.length},minmax(4.5rem,auto))` }}>
-          <span className="flex min-w-0 items-center gap-3"><PlayerPhotoCard player={{ id: player.playerId, name: player.name, number: player.number, photoUrl: player.photoUrl }} className="h-11 w-11 shrink-0 rounded-full"/><span className="min-w-0"><strong className="block truncate">#{player.number} · {player.name}</strong><small className="text-[9px] text-slate-500">{player.position ?? "N/D"}{player.lowSample ? " · MUESTRA BAJA" : ""}</small></span></span>
+          <span className="flex min-w-0 items-center gap-3"><PlayerPhotoCard player={{ id: player.playerId, name: player.name, number: player.number, photoUrl: player.photoUrl }} className="h-11 w-11 shrink-0 rounded-full"/><span className="min-w-0"><strong className="block truncate">#{player.number} · {player.name}</strong><small className="text-[9px] text-slate-500">{formatFutsalPosition(player.position, "N/D")}{player.lowSample ? " · MUESTRA BAJA" : ""}</small></span></span>
           {shown.map((id) => <span key={id} className="text-right text-sm font-black">{format(id === "score" ? scoreMap.get(player.playerId)?.score ?? null : metricForColumn(player, id, mode))}</span>)}
         </Link>)}
       </div>

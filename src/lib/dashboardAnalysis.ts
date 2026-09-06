@@ -23,6 +23,7 @@ import {
 } from "./matchEngine";
 import { deriveGoalZoneV1, GoalZoneV1 } from "./spatialZones";
 import { GOAL_FRAME } from "./goalTarget";
+import { formatFutsalPosition } from "./positionFormat";
 
 export type VenueFilter = "ALL" | "HOME" | "AWAY";
 export type ResultFilter = "ALL" | "WIN" | "DRAW" | "LOSS";
@@ -117,7 +118,7 @@ export interface PlayerAnalysis {
   ownNear: number;
   ownNearPercentage: number | null;
   ownOutcomes: Record<ThreatOutcome, number>;
-  ownShotPoints: Array<{ eventId: string; x: number; y: number; outcome: ThreatOutcome }>;
+  ownShotPoints: Array<{ eventId: string; matchId: string; side: "FOR"; x: number; y: number; outcome: ThreatOutcome }>;
   foulsCommitted: number;
   foulsReceived: number;
   criticalFoulsCommitted: number;
@@ -328,7 +329,7 @@ function createPlayer(player: Player): PlayerAnalysis {
     playerId: player.id,
     name: player.name,
     number: player.number,
-    position: player.naturalPosition ?? player.position,
+    position: formatFutsalPosition(player.naturalPosition ?? player.position, "N/D"),
     photoUrl: player.photoUrl,
     dominantFoot: player.dominantFoot,
     matches: 0,
@@ -493,7 +494,7 @@ export function buildDashboardAnalysis(
           const trend = player.trend.find((item) => item.matchId === session.matchId);
           if (trend) trend.threats += 1;
           player.ownOutcomes[event.outcome] += 1;
-          player.ownShotPoints.push({ eventId: event.id, x: event.origin.x, y: event.origin.y, outcome: event.outcome });
+          player.ownShotPoints.push({ eventId: event.id, matchId: session.matchId, side: "FOR", x: event.origin.x, y: event.origin.y, outcome: event.outcome });
           if (event.outcome === "GOL") { player.goals += 1; if (trend) trend.goals += 1; }
         }
       }

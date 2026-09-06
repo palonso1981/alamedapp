@@ -14,5 +14,5 @@ export function comparisonRightLabel(scope: DashboardScopeV2, reference: Dashboa
 }
 
 export function ComparisonHeader({ left = "CDA", right, scope }: { left?: string; right: string; scope: DashboardScopeV2 }) {
-  return <div className="sticky top-28 z-20 rounded-2xl border border-slate-700 bg-slate-950/95 px-4 py-2 shadow-xl backdrop-blur sm:top-24"><div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-xs font-black"><span className="truncate text-cyan-300">{left}</span><span className="text-[9px] text-slate-600">VS</span><span className="truncate text-right text-amber-200">{right}</span></div><p className="mt-0.5 text-center text-[9px] text-slate-500">{scopeLabel(scope)}</p></div>;
+  return <div data-dashboard-comparison="sticky" className="sticky top-16 z-30 rounded-2xl border border-slate-700 bg-slate-950/95 px-4 py-2 shadow-xl backdrop-blur"><div className="relative grid grid-cols-2 items-center text-xs font-black"><span className="truncate pr-5 text-cyan-300">{left}</span><span className="truncate border-l border-slate-700 pl-5 text-right text-amber-200">{right}</span><span className="absolute left-1/2 -translate-x-1/2 rounded bg-slate-950 px-1 text-[9px] text-slate-600">VS</span></div><p className="mt-0.5 text-center text-[9px] text-slate-500">{scopeLabel(scope)}</p></div>;
 }

@@ -11,6 +11,7 @@ import { availableTeams, calculateDeletionImpact, impactSummary } from "../../li
 import { listMatchCatalog } from "../../lib/matchCatalog";
 import { playerSnapshot, staffRoleLabel, staffSnapshot } from "../../lib/rosterDomain";
 import { currentSeason, rosterForSeason } from "../../lib/seasonDomain";
+import { formatFutsalPosition } from "../../lib/positionFormat";
 import { useTeamStore } from "../../store/useTeamStore";
 import { DominantFoot, FutsalPosition, MasterPlayer, MasterPlayerRole, MasterStaffMember, MasterStaffRole } from "../../types";
 
@@ -137,7 +138,7 @@ export default function RosterPage() {
       {error && <div role="alert" className="mt-4 rounded-xl border border-red-800 bg-red-950 p-3 text-red-200">{error}</div>}
       {tab === "PLAYERS" ? <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         {players.map((player) => <button key={player.playerId} type="button" onClick={() => setEditor({ kind: "PLAYER", value: player })} className={`flex min-h-28 items-center gap-3 rounded-2xl border p-3 text-left ${player.active ? "border-slate-700 bg-slate-800" : "border-slate-800 bg-slate-950 opacity-55"}`}>
-          <PlayerAvatar player={playerSnapshot(player)} /><span className="min-w-0"><span className="block text-xl font-black">#{player.number}</span><span className="block truncate font-bold">{player.displayName}</span><span className="block truncate text-xs text-slate-400">{scope === "CLUB" ? affiliations.get(player.playerId) : player.primaryPosition ? player.primaryPosition.replace("GOALKEEPER", "PORTERO").replace("FIXO", "CIERRE").replace("WINGER", "ALA").replace("PIVOT", "PÍVOT") : "SIN POSICIÓN"}{scope !== "CLUB" && (player.canPlayGoalkeeper ?? player.role === "GOALKEEPER") ? " · ◉" : ""}</span></span>
+          <PlayerAvatar player={playerSnapshot(player)} /><span className="min-w-0"><span className="block text-xl font-black">#{player.number}</span><span className="block truncate font-bold">{player.displayName}</span><span className="block truncate text-xs text-slate-400">{scope === "CLUB" ? affiliations.get(player.playerId) : formatFutsalPosition(player.primaryPosition)}{scope !== "CLUB" && (player.canPlayGoalkeeper ?? player.role === "GOALKEEPER") ? " · ◉" : ""}</span></span>
         </button>)}
         {players.length === 0 && <p className="col-span-full rounded-2xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Añade el primer jugador de la plantilla.</p>}
       </section> : <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">

@@ -36,6 +36,7 @@
     "src/lib/dashboardCompetitiveContext.ts",
     "src/lib/dashboardMetricDefinitions.ts",
     "src/lib/dashboardTrace.ts",
+    "src/lib/positionFormat.ts",
     "src/lib/dashboardFixture.ts",
     "src/lib/sync/teamSyncTypes.ts",
     "src/lib/sync/localTeamRepository.ts",

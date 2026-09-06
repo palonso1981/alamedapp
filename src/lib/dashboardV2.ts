@@ -277,6 +277,7 @@ export function buildDashboardV2(
   const keyByPlayer: Record<string, number> = {};
   const goldByPlayer: Record<string, number> = {};
   const contextByPlayer: Record<string, number> = {};
+  const contextByGoalkeeper: Record<string, number> = {};
   let contextObserved = 0;
   for (const record of originals) {
     const key = deriveCompetitiveMinutes(record.session, scope.period, "KEY");
@@ -286,6 +287,7 @@ export function buildDashboardV2(
     for (const [id, value] of Object.entries(key.byPlayer)) keyByPlayer[id] = (keyByPlayer[id] ?? 0) + value;
     for (const [id, value] of Object.entries(gold.byPlayer)) goldByPlayer[id] = (goldByPlayer[id] ?? 0) + value;
     for (const [id, value] of Object.entries(current.byPlayer)) contextByPlayer[id] = (contextByPlayer[id] ?? 0) + value;
+    for (const [id, value] of Object.entries(current.byGoalkeeper)) contextByGoalkeeper[id] = (contextByGoalkeeper[id] ?? 0) + value;
     for (const player of analysis.players) {
       const trend = player.trend.find((item) => item.matchId === record.catalog.matchId);
       if (trend) { trend.keyMinutes = key.byPlayer[player.playerId] ?? 0; trend.goldMinutes = gold.byPlayer[player.playerId] ?? 0; }
@@ -307,6 +309,11 @@ export function buildDashboardV2(
     }
   }
   if (scope.competitiveContext !== "ALL") {
+    for (const goalkeeper of analysis.goalkeepers) {
+      goalkeeper.minutes = contextByGoalkeeper[goalkeeper.playerId] ?? 0;
+      goalkeeper.threatsAgainst40 = per40(goalkeeper.threatsAgainst, goalkeeper.minutes);
+      goalkeeper.goalsAgainst40 = per40(goalkeeper.goalsAgainst, goalkeeper.minutes);
+    }
     analysis.rates.observedMinutes = contextObserved;
     analysis.rates.threatsFor40 = per40(analysis.analytics.threats.FOR.total, contextObserved);
     analysis.rates.threatsAgainst40 = per40(analysis.analytics.threats.AGAINST.total, contextObserved);
