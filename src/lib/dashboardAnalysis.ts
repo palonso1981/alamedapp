@@ -72,6 +72,14 @@ export interface PlayerMatchTrend {
   opponent: string;
   date: string;
   minutes: number;
+  goals: number;
+  assists: number;
+  threats: number;
+  goalsForOnCourt: number;
+  goalsAgainstOnCourt: number;
+  pointsOnCourt: number;
+  keyMinutes: number;
+  goldMinutes: number;
 }
 
 export interface PlayerAnalysis {
@@ -86,6 +94,10 @@ export interface PlayerAnalysis {
   availableMinutes: number;
   participationPercentage: number | null;
   averageMinutes: number | null;
+  keyMinutes: number;
+  keyMinutesPerMatch: number | null;
+  goldMinutes: number;
+  goldMinutesPerMatch: number | null;
   targetMinutes?: number;
   goals: number;
   goalsPerMatch: number | null;
@@ -145,6 +157,13 @@ export interface TrendPoint {
   threatsAgainst: number;
   goalsFor: number;
   goalsAgainst: number;
+  venue: "HOME" | "AWAY";
+  result: "WIN" | "DRAW" | "LOSS" | null;
+  shotsOnTarget: number;
+  threatsOnTarget: number;
+  shotsNear: number;
+  threatsNear: number;
+  savePercentage: number | null;
 }
 
 export interface ZoneStats<T extends string> {
@@ -263,6 +282,8 @@ function addOnCourtEvent(player: PlayerAnalysis, event: MatchEvent): void {
 function finalizePlayer(player: PlayerAnalysis): void {
   player.participationPercentage = player.availableMinutes > 0 ? player.minutes / player.availableMinutes * 100 : null;
   player.averageMinutes = player.matches > 0 ? player.minutes / player.matches : null;
+  player.keyMinutesPerMatch = player.matches > 0 ? player.keyMinutes / player.matches : null;
+  player.goldMinutesPerMatch = player.matches > 0 ? player.goldMinutes / player.matches : null;
   player.goalsPerMatch = player.matches > 0 ? player.goals / player.matches : null;
   player.goals40 = per40(player.goals, player.minutes);
   player.assistsPerMatch = player.matches > 0 ? player.assists / player.matches : null;
@@ -303,6 +324,10 @@ function createPlayer(player: Player): PlayerAnalysis {
     availableMinutes: 0,
     participationPercentage: null,
     averageMinutes: null,
+    keyMinutes: 0,
+    keyMinutesPerMatch: null,
+    goldMinutes: 0,
+    goldMinutesPerMatch: null,
     targetMinutes: undefined,
     goals: 0,
     goalsPerMatch: null,
@@ -381,7 +406,14 @@ export function buildDashboardAnalysis(
 
   const trends = selected.map((record) => {
     const one = buildDashboardAnalytics([record], { ...dashboardScope, matchId: record.catalog.matchId });
-    return { matchId: record.catalog.matchId, opponent: record.catalog.opponent, date: record.catalog.date, threatsFor: one.threats.FOR.total, threatsAgainst: one.threats.AGAINST.total, goalsFor: one.goalsFor, goalsAgainst: one.goalsAgainst };
+    const threats = record.session.events.filter((event): event is ThreatRecordedEvent => event.type === "threat_recorded" && event.deletedAt === null && (period === "ALL" || event.period === period));
+    const shotsOnTarget = threats.filter((event) => event.side === "FOR" && (event.outcome === "GOL" || event.outcome === "PARADA")).length;
+    const threatsOnTarget = threats.filter((event) => event.side === "AGAINST" && (event.outcome === "GOL" || event.outcome === "PARADA")).length;
+    const shotsNear = threats.filter((event) => event.side === "FOR" && ["Z1", "Z2", "Z3"].includes(derivePitchOriginZone(event.origin))).length;
+    const threatsNear = threats.filter((event) => event.side === "AGAINST" && ["Z1", "Z2", "Z3"].includes(derivePitchOriginZone(event.origin))).length;
+    const saves = one.threats.AGAINST.PARADA;
+    const goals = one.threats.AGAINST.GOL;
+    return { matchId: record.catalog.matchId, opponent: record.catalog.opponent, date: record.catalog.date, venue: record.catalog.venue, result: resultFor(record), threatsFor: one.threats.FOR.total, threatsAgainst: one.threats.AGAINST.total, goalsFor: one.goalsFor, goalsAgainst: one.goalsAgainst, shotsOnTarget, threatsOnTarget, shotsNear, threatsNear, savePercentage: saves + goals > 0 ? saves / (saves + goals) * 100 : null };
   }).sort((a, b) => a.date.localeCompare(b.date));
 
   for (const record of selected) {
@@ -420,7 +452,7 @@ export function buildDashboardAnalysis(
       if (squad.has(snapshot.id)) player.availableMinutes += matchObserved;
       const target = session.preparation?.targetMinutes[snapshot.id];
       if (target !== undefined) player.targetMinutes = (player.targetMinutes ?? 0) + target;
-      player.trend.push({ matchId: session.matchId, opponent: record.catalog.opponent, date: record.catalog.date, minutes });
+      player.trend.push({ matchId: session.matchId, opponent: record.catalog.opponent, date: record.catalog.date, minutes, goals: 0, assists: 0, threats: 0, goalsForOnCourt: 0, goalsAgainstOnCourt: 0, pointsOnCourt: 0, keyMinutes: 0, goldMinutes: 0 });
       playerMap.set(snapshot.id, player);
     }
     for (const entry of replay.timeline) {
@@ -439,14 +471,16 @@ export function buildDashboardAnalysis(
         const player = playerMap.get(event.playerId);
         if (player) {
           player.ownThreats += 1;
+          const trend = player.trend.find((item) => item.matchId === session.matchId);
+          if (trend) trend.threats += 1;
           player.ownOutcomes[event.outcome] += 1;
           player.ownShotPoints.push({ eventId: event.id, x: event.origin.x, y: event.origin.y, outcome: event.outcome });
-          if (event.outcome === "GOL") player.goals += 1;
+          if (event.outcome === "GOL") { player.goals += 1; if (trend) trend.goals += 1; }
         }
       }
       if (event.type === "threat_recorded" && event.side === "FOR" && event.outcome === "GOL" && event.assist?.status === "PLAYER") {
         const assistant = playerMap.get(event.assist.playerId);
-        if (assistant) assistant.assists += 1;
+        if (assistant) { assistant.assists += 1; const trend = assistant.trend.find((item) => item.matchId === session.matchId); if (trend) trend.assists += 1; }
       }
       if (event.type === "foul_recorded") {
         const critical = (entry.periodFoulNumber ?? 0) >= 5;
@@ -493,11 +527,15 @@ export function buildDashboardAnalysis(
       const player = playerMap.get(playerId);
       if (!player || (replay.playerMinutes[playerId]?.totalMinutes ?? 0) <= 0) continue;
       player.onCourtPoints += score.goalsFor > score.goalsAgainst ? 3 : score.goalsFor === score.goalsAgainst ? 1 : 0;
+      const trend = player.trend.find((item) => item.matchId === session.matchId);
+      if (trend) { trend.goalsForOnCourt = score.goalsFor; trend.goalsAgainstOnCourt = score.goalsAgainst; trend.pointsOnCourt = score.goalsFor > score.goalsAgainst ? 3 : score.goalsFor === score.goalsAgainst ? 1 : 0; }
     }
     for (const snapshot of session.players) {
       const player = playerMap.get(snapshot.id);
       if (!player || (replay.playerMinutes[snapshot.id]?.totalMinutes ?? 0) <= 0 || matchOnCourtScore.has(snapshot.id)) continue;
       player.onCourtPoints += 1;
+      const trend = player.trend.find((item) => item.matchId === session.matchId);
+      if (trend) trend.pointsOnCourt = 1;
     }
   }
 

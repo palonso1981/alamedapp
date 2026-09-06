@@ -16,12 +16,14 @@ import {
   DashboardAnalysis,
   PitchOriginZone,
   PlayerAnalysis,
+  per40,
   ResultFilter,
   VenueFilter,
 } from "./dashboardAnalysis";
 import { effectiveThreatPhase, replayMatch } from "./matchEngine";
 import { deriveGoalZoneV1, GoalZoneV1 } from "./spatialZones";
 import { GOAL_FRAME } from "./goalTarget";
+import { CompetitiveContext, competitiveEventIds, deriveCompetitiveMinutes } from "./dashboardCompetitiveContext";
 
 export type DashboardValueMode = "TOTALS" | "PER_MATCH" | "PER_40";
 export type DashboardArea = "SUMMARY" | "TEAM" | "PLAYERS" | "GOALKEEPERS" | "MAPS";
@@ -52,6 +54,9 @@ export interface DashboardScopeV2 {
   originZones: PitchOriginZone[];
   targetZones: GoalZoneV1[];
   outcomes: ThreatOutcome[];
+  outcomeGroup: "ALL" | "ON_TARGET";
+  originDistance: "ALL" | "NEAR" | "FAR";
+  competitiveContext: CompetitiveContext;
   includeArchived: boolean;
 }
 
@@ -67,6 +72,21 @@ export interface OutcomeDistributionItem {
   outcome: ThreatOutcome;
   count: number;
   percentage: number | null;
+}
+
+export interface DerivedThreatSummary {
+  total: number;
+  onTarget: number;
+  onTargetPercentage: number | null;
+  near: number;
+  nearPercentage: number | null;
+}
+
+export function derivedThreatSummary(events: readonly MatchEvent[], side: "FOR" | "AGAINST"): DerivedThreatSummary {
+  const threats = events.filter((event): event is ThreatRecordedEvent => event.type === "threat_recorded" && event.deletedAt === null && event.side === side);
+  const onTarget = threats.filter((event) => event.outcome === "GOL" || event.outcome === "PARADA").length;
+  const near = threats.filter((event) => ["Z1", "Z2", "Z3"].includes(originZone(event))).length;
+  return { total: threats.length, onTarget, onTargetPercentage: threats.length ? onTarget / threats.length * 100 : null, near, nearPercentage: threats.length ? near / threats.length * 100 : null };
 }
 
 export interface PlayerScore {
@@ -107,6 +127,9 @@ export function emptyDashboardScope(
     originZones: [],
     targetZones: [],
     outcomes: [],
+    outcomeGroup: "ALL",
+    originDistance: "ALL",
+    competitiveContext: "ALL",
     includeArchived: false,
   };
 }
@@ -159,6 +182,11 @@ function threatMatches(
 ): boolean {
   if (!phaseMatches(scope.phases, effectiveThreatPhase(record.session.events, event))) return false;
   if (scope.outcomes.length > 0 && !scope.outcomes.includes(event.outcome)) return false;
+  if (scope.outcomeGroup === "ON_TARGET" && event.outcome !== "GOL" && event.outcome !== "PARADA") return false;
+  if (scope.originDistance !== "ALL") {
+    const near = ["Z1", "Z2", "Z3"].includes(originZone(event));
+    if ((scope.originDistance === "NEAR") !== near) return false;
+  }
   if (scope.originZones.length > 0 && !scope.originZones.includes(originZone(event))) return false;
   if (scope.targetZones.length > 0) {
     if (!event.defensive || event.outcome === "FUERA") return false;
@@ -213,18 +241,22 @@ export function filterDashboardDataset(
     .filter((record) => scope.rivals.length === 0 || scope.rivals.includes(record.catalog.opponent))
     .filter((record) => scope.venues.length === 0 || scope.venues.includes(record.catalog.venue))
     .filter((record) => scope.results.length === 0 || Boolean(matchResult(record) && scope.results.includes(matchResult(record)!)))
-    .map((record) => ({
-      catalog: record.catalog,
-      session: {
-        ...record.session,
-        events: record.session.events.filter((event) => {
+    .map((record) => {
+      const contextIds = competitiveEventIds(record.session, scope.period, scope.competitiveContext);
+      return {
+        catalog: record.catalog,
+        session: {
+          ...record.session,
+          events: record.session.events.filter((event) => {
           if (event.type === "lineup_initialized" || event.type === "substitution" || event.type === "game_state_changed") {
             return scope.period === "ALL" || event.period === scope.period;
           }
+          if (!contextIds.has(event.id)) return false;
           return eventMatches(event, record, scope);
-        }),
-      },
-    }));
+          }),
+        },
+      };
+    });
 }
 
 export function buildDashboardV2(
@@ -239,7 +271,49 @@ export function buildDashboardV2(
     period: scope.period,
     includeArchived: scope.includeArchived,
   };
-  return buildDashboardAnalysis(filtered, analysisScope);
+  const analysis = buildDashboardAnalysis(filtered, analysisScope);
+  const selectedIds = new Set(filtered.map((record) => record.catalog.matchId));
+  const originals = records.filter((record) => selectedIds.has(record.catalog.matchId));
+  const keyByPlayer: Record<string, number> = {};
+  const goldByPlayer: Record<string, number> = {};
+  const contextByPlayer: Record<string, number> = {};
+  let contextObserved = 0;
+  for (const record of originals) {
+    const key = deriveCompetitiveMinutes(record.session, scope.period, "KEY");
+    const gold = deriveCompetitiveMinutes(record.session, scope.period, "GOLD");
+    const current = deriveCompetitiveMinutes(record.session, scope.period, scope.competitiveContext);
+    contextObserved += current.observed;
+    for (const [id, value] of Object.entries(key.byPlayer)) keyByPlayer[id] = (keyByPlayer[id] ?? 0) + value;
+    for (const [id, value] of Object.entries(gold.byPlayer)) goldByPlayer[id] = (goldByPlayer[id] ?? 0) + value;
+    for (const [id, value] of Object.entries(current.byPlayer)) contextByPlayer[id] = (contextByPlayer[id] ?? 0) + value;
+    for (const player of analysis.players) {
+      const trend = player.trend.find((item) => item.matchId === record.catalog.matchId);
+      if (trend) { trend.keyMinutes = key.byPlayer[player.playerId] ?? 0; trend.goldMinutes = gold.byPlayer[player.playerId] ?? 0; }
+    }
+  }
+  for (const player of analysis.players) {
+    player.keyMinutes = keyByPlayer[player.playerId] ?? 0;
+    player.goldMinutes = goldByPlayer[player.playerId] ?? 0;
+    player.keyMinutesPerMatch = player.matches > 0 ? player.keyMinutes / player.matches : null;
+    player.goldMinutesPerMatch = player.matches > 0 ? player.goldMinutes / player.matches : null;
+    if (scope.competitiveContext !== "ALL") {
+      player.minutes = contextByPlayer[player.playerId] ?? 0;
+      player.averageMinutes = player.matches > 0 ? player.minutes / player.matches : null;
+      player.goals40 = per40(player.goals, player.minutes);
+      player.assists40 = per40(player.assists, player.minutes);
+      player.ownThreats40 = per40(player.ownThreats, player.minutes);
+      player.onCourt.threatsFor40 = per40(player.onCourt.threatsFor, player.minutes);
+      player.onCourt.threatsAgainst40 = per40(player.onCourt.threatsAgainst, player.minutes);
+    }
+  }
+  if (scope.competitiveContext !== "ALL") {
+    analysis.rates.observedMinutes = contextObserved;
+    analysis.rates.threatsFor40 = per40(analysis.analytics.threats.FOR.total, contextObserved);
+    analysis.rates.threatsAgainst40 = per40(analysis.analytics.threats.AGAINST.total, contextObserved);
+    analysis.rates.goalsFor40 = per40(analysis.analytics.goalsFor, contextObserved);
+    analysis.rates.goalsAgainst40 = per40(analysis.analytics.goalsAgainst, contextObserved);
+  }
+  return analysis;
 }
 
 export function outcomeDistribution(
@@ -383,6 +457,9 @@ export function scopeToSearchParams(scope: DashboardScopeV2, prefix: "a" | "r"):
   params.set(`${prefix}Season`, scope.seasonId);
   if (scope.period !== "ALL") params.set(`${prefix}Period`, String(scope.period));
   if (scope.includeArchived) params.set(`${prefix}Archived`, "1");
+  if (scope.outcomeGroup !== "ALL") params.set(`${prefix}OutcomeGroup`, scope.outcomeGroup);
+  if (scope.originDistance !== "ALL") params.set(`${prefix}Distance`, scope.originDistance);
+  if (scope.competitiveContext !== "ALL") params.set(`${prefix}Context`, scope.competitiveContext);
   for (const key of LIST_KEYS) if (scope[key].length > 0) params.set(`${prefix}${key}`, scope[key].join("~"));
   return params;
 }
@@ -402,6 +479,9 @@ export function scopeFromSearchParams(
     seasonId: params.get(`${prefix}Season`) ?? fallback.seasonId,
     period: period === "1" ? 1 : period === "2" ? 2 : fallback.period,
     includeArchived: params.get(`${prefix}Archived`) === "1" || fallback.includeArchived,
+    outcomeGroup: params.get(`${prefix}OutcomeGroup`) === "ON_TARGET" ? "ON_TARGET" : fallback.outcomeGroup,
+    originDistance: params.get(`${prefix}Distance`) === "NEAR" ? "NEAR" : params.get(`${prefix}Distance`) === "FAR" ? "FAR" : fallback.originDistance,
+    competitiveContext: params.get(`${prefix}Context`) === "KEY" ? "KEY" : params.get(`${prefix}Context`) === "GOLD" ? "GOLD" : fallback.competitiveContext,
     matchIds: read<string>("matchIds"),
     venues: read<Exclude<VenueFilter, "ALL">>("venues"),
     results: read<Exclude<ResultFilter, "ALL">>("results"),

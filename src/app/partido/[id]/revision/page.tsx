@@ -44,6 +44,7 @@ export default function MatchReviewPage() {
 
   useEffect(() => { ensureRegistry(); ensureMatch(matchId); }, [ensureMatch, ensureRegistry, matchId]);
   useEffect(() => ensureTeam(matchClubId), [ensureTeam, matchClubId]);
+  useEffect(() => { if (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("eventId")) setHistoryOpen(true); }, []);
   const replay = useMemo(
     () => session
       ? replayMatch(session.players, session.events, { currentClock: { period: 2, minute: 20 } })

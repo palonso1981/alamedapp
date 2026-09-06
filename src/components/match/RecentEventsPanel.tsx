@@ -27,6 +27,7 @@ interface RecentEventsPanelProps {
   onStartPeriodReview: (period: number) => void;
   onClose: () => void;
   initialFilter?: TimelineFilter;
+  focusEventId?: string;
 }
 
 export interface DisciplineFocusRequest {
@@ -36,7 +37,7 @@ export interface DisciplineFocusRequest {
   period: number;
 }
 
-export function RecentEventsPanel({ events, timeline, players, staff, onDelete, onRestore, onPendingReview, onSave, onMoveWithinMinute, errorMessage, onDismissError, disciplineFocusRequest, activePeriod, matchFinished = false, closedPeriods, reviewPeriod, onStartPeriodReview, onClose, initialFilter = "ACTIVE" }: RecentEventsPanelProps) {
+export function RecentEventsPanel({ events, timeline, players, staff, onDelete, onRestore, onPendingReview, onSave, onMoveWithinMinute, errorMessage, onDismissError, disciplineFocusRequest, activePeriod, matchFinished = false, closedPeriods, reviewPeriod, onStartPeriodReview, onClose, initialFilter = "ACTIVE", focusEventId }: RecentEventsPanelProps) {
   const [filter, setFilter] = useState<TimelineFilter>(initialFilter);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -50,6 +51,10 @@ export function RecentEventsPanel({ events, timeline, players, staff, onDelete, 
     setFilter("ACTIVE");
   }, [disciplineFocusRequest]);
   useEffect(() => setFilter(initialFilter), [initialFilter]);
+  useEffect(() => {
+    const requested = focusEventId ?? (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("eventId") ?? undefined : undefined);
+    if (requested && events.some((event) => event.id === requested)) setEditingId(requested);
+  }, [events, focusEventId]);
   const filtered = disciplineFocus
     ? filterTimelineEvents(events, "ACTIVE").filter((event) =>
         disciplineFocus.kind === "FOUL"

@@ -24,9 +24,11 @@ function Legend() {
 export function PitchThreatMap({
   points,
   side,
+  onSelect,
 }: {
   points: DashboardThreatPoint[];
   side: "FOR" | "AGAINST";
+  onSelect?: (point: DashboardThreatPoint) => void;
 }) {
   const visible = points.filter((point) => point.side === side);
   return (
@@ -41,10 +43,12 @@ export function PitchThreatMap({
       <div className="relative aspect-[2/1] w-full overflow-hidden rounded-2xl bg-gradient-to-br from-sky-800 to-blue-950" aria-label={side === "FOR" ? "Mapa de remates CDA" : "Mapa de amenazas recibidas"}>
         <FutsalCourtMarkings />
         {visible.map((point) => (
-          <span
+          <button type="button"
             key={`${point.matchId}:${point.eventId}`}
-            title={`${point.outcome} · ${Math.round(point.x * 100)}, ${Math.round(point.y * 100)}`}
-            className={`absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/80 shadow ${OUTCOME_COLOR[point.outcome]}`}
+            onClick={() => onSelect?.(point)}
+            aria-label={`${point.outcome} · abrir evento ${point.eventId}`}
+            title={`${point.outcome} · X ${Math.round(point.x * 100)} · Y ${Math.round(point.y * 100)}`}
+            className={`absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/80 shadow focus:ring-4 focus:ring-white/50 ${OUTCOME_COLOR[point.outcome]}`}
             style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%` }}
           />
         ))}
@@ -53,7 +57,7 @@ export function PitchThreatMap({
   );
 }
 
-export function GoalThreatMap({ points }: { points: DashboardGoalPoint[] }) {
+export function GoalThreatMap({ points, onSelect }: { points: DashboardGoalPoint[]; onSelect?: (point: DashboardGoalPoint) => void }) {
   return (
     <article className="rounded-3xl border border-slate-700 bg-slate-900 p-3 sm:p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -73,10 +77,12 @@ export function GoalThreatMap({ points }: { points: DashboardGoalPoint[] }) {
           </g>
         </svg>
         {points.map((point) => (
-          <span
+          <button type="button"
             key={`${point.matchId}:${point.eventId}`}
+            onClick={() => onSelect?.(point)}
+            aria-label={`${point.outcome} · abrir evento ${point.eventId}`}
             title={`${point.outcome} · geometría V${point.target.geometryVersion}`}
-            className={`absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow ${OUTCOME_COLOR[point.outcome]}`}
+            className={`absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow focus:ring-4 focus:ring-white/50 ${OUTCOME_COLOR[point.outcome]}`}
             style={{ left: `${point.target.x * 100}%`, top: `${point.target.y * 100}%` }}
           />
         ))}
