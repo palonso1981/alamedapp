@@ -119,3 +119,53 @@ Porteros usa el rol funcional reconstruido, muestra cantidad y porcentaje de
 blocaje/despeje/rechace, y excluye los intervalos de Portero-Jugador. P-J dispone de resumen
 separado (minutos, remates, amenazas, GF y GC) cuando lo utiliza CDA o el rival, sin
 contaminar estadísticas de portero normal.
+
+## Dashboard V2.1 — comprensión, contexto y trazabilidad
+
+V2.1 mantiene el motor V2 y centraliza la explicación de métricas en `MetricDefinition`:
+nombre, abreviatura, descripción, fórmula, denominador, unidad, formato y dirección
+semántica. Las comparaciones pueden indicar una ventaja solo cuando el significado es
+inequívoco; minutos y otras métricas neutrales no declaran un ganador. La referencia se
+muestra con valor numérico y toda ayuda importante se abre también por tap.
+
+`A PUERTA` se deriva como `GOL + PARADA`; FUERA queda excluido. `CERCANAS` agrupa
+objetivamente Z1+Z2+Z3 y `LEJANAS` Z4+Z5+Z6. No existe una métrica de “alto peligro”:
+la combinación cercana+a puerta se obtiene cruzando ambos filtros. Cantidades y porcentajes
+se recalculan desde los eventos, nunca se persisten.
+
+### Minutos de contexto competitivo
+
+`MINUTOS CLAVE` son los intervalos en los que el jugador está en pista y
+`abs(GF-GC) <= 1`. `MINUTOS DE ORO` aplica la misma condición desde P2 minuto 15 hasta el
+final reglamentario. Se reconstruyen con cronología, marcador y alineaciones, y se pueden
+combinar con sede, periodo, rival, fase, zona y resultado. No forman parte de SCORE ALAM
+en V2.1.
+
+AlamedAPP solo captura el minuto entero del reloj deportivo. Por tanto el Dashboard muestra
+`P2 · min 16` y nunca inventa segundos deportivos. Cada evento sí conserva `createdAt`, un
+timestamp real de creación en milisegundos que el motor no modifica al editar (la edición
+actualiza `updatedAt`). Cuando es válido se presenta aparte como `Registrado a las HH:mm:ss`:
+es una referencia de captura útil para localizar vídeo futuro, no el reloj del partido.
+
+### Evolución y comparación
+
+Equipo, jugador y portero ofrecen gráficos anchos, ordenados por fecha y compatibles con el
+scope activo. No se interpolan partidos ausentes de un jugador: su evolución solo incluye
+partidos con participación. Los comparadores mantienen visibles muestra, minutos y
+denominadores; SCORE ALAM conserva exactamente la fórmula experimental V2 y muestra la
+fiabilidad derivada de los minutos.
+
+### Punto a evento
+
+Las coordenadas de pista son `(x,y)` normalizadas en `[0,1]`: `x` recorre longitudinalmente
+la pista canónica desde la portería CDA izquierda hacia la rival derecha, e `y` recorre de
+arriba abajo en pantalla. El destino de portería conserva su propio `goalTarget.x/y` y la
+versión de geometría. Ni los valores mostrados `X 40 · Y 64` ni las zonas se usan como
+identidad.
+
+Cada punto se resuelve exclusivamente mediante `matchId + eventId`, incluso si dos acciones
+tienen coordenadas idénticas. El tap abre detalle estable y `VER EVENTO` navega a Revisión
+con el `eventId`, donde se selecciona ese evento concreto. El scope del Dashboard permanece
+en la URL para volver al mismo análisis. En el futuro este detalle podrá ofrecer `VER VÍDEO`
+usando matchId, eventId, periodo/minuto y, como ayuda secundaria, el `createdAt` real; no se
+deducirá nunca una posición de vídeo a partir de segundos deportivos inexistentes.
