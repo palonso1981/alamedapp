@@ -1,5 +1,7 @@
 "use client";
 
+import { PlayerDashboardV2Page } from "../../../../components/dashboard/PlayerDashboardV2Page";
+
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -33,7 +35,7 @@ function MinuteTrend({ values }: { values: Array<{ opponent: string; minutes: nu
   return <article className="rounded-3xl border border-slate-700 bg-slate-900 p-4"><h2 className="font-black">EVOLUCIÓN DE MINUTOS</h2><div className="mt-4 flex h-36 items-end gap-2 border-b border-slate-700">{values.map((value, index) => <div key={`${value.opponent}-${index}`} className="group relative flex h-full flex-1 items-end"><span className="w-full rounded-t bg-cyan-400" style={{ height: `${Math.max(3, value.minutes / max * 100)}%` }} /><span className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[9px] font-black text-slate-950">{number(value.minutes)}</span><span className="absolute -bottom-6 left-1/2 w-16 -translate-x-1/2 truncate text-center text-[8px] text-slate-500">{value.opponent}</span></div>)}</div><p className="mt-8 text-[10px] text-slate-500">Participación partido a partido; no implica valoración deportiva.</p></article>;
 }
 
-export default function PlayerDashboardPage({ params, searchParams }: { params: { playerId: string }; searchParams: { team?: string; season?: string; match?: string; period?: string } }) {
+function PlayerDashboardPageLegacy({ params, searchParams }: { params: { playerId: string }; searchParams: { team?: string; season?: string; match?: string; period?: string } }) {
   const ensureRegistry = useTeamStore((state) => state.ensureRegistry);
   const ensureTeam = useTeamStore((state) => state.ensureTeam);
   const registryReady = useTeamStore((state) => state.registryReady);
@@ -76,4 +78,10 @@ export default function PlayerDashboardPage({ params, searchParams }: { params: 
       </>}
     </main>
   </div>;
+}
+
+void PlayerDashboardPageLegacy;
+
+export default function PlayerDashboardPage({ params }: { params: { playerId: string } }) {
+  return <PlayerDashboardV2Page playerId={params.playerId} />;
 }

@@ -1,9 +1,9 @@
 "use client";
 
-export { DashboardV2Page as default } from "../../components/dashboard/DashboardV2Page";
-
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+
+import { DashboardV2Page } from "../../components/dashboard/DashboardV2Page";
 
 import { AppHeader } from "../../components/app/AppHeader";
 import { PlayerPhotoCard } from "../../components/player/PlayerPhotoCard";
@@ -363,4 +363,10 @@ function DashboardPageLegacy() {
       </main>
     </div>
   );
+}
+
+void DashboardPageLegacy;
+
+export default function DashboardPage() {
+  return <Suspense fallback={<div className="min-h-screen bg-slate-950 p-10 text-center text-slate-500">Preparando Dashboard…</div>}><DashboardV2Page /></Suspense>;
 }

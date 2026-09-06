@@ -12,12 +12,14 @@ import { MatchEvent, MatchSession, Player, ThreatPhase } from "../types";
 export const DASHBOARD_FIXTURE_CLUB_ID = "dashboard-fixture-club";
 export const DASHBOARD_FIXTURE_TEAM_ID = "dashboard-fixture-team";
 export const DASHBOARD_FIXTURE_SEASON_ID = "dashboard-fixture-season";
+const PHOTO_BLUE = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 220'%3E%3Crect width='160' height='220' fill='%230c4a6e'/%3E%3Ccircle cx='80' cy='72' r='40' fill='%23f1c27d'/%3E%3Cpath d='M30 220c0-62 22-92 50-92s50 30 50 92' fill='%2306b6d4'/%3E%3C/svg%3E";
+const PHOTO_AMBER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 220'%3E%3Crect width='160' height='220' fill='%237c2d12'/%3E%3Ccircle cx='80' cy='72' r='40' fill='%23d6a06f'/%3E%3Cpath d='M30 220c0-62 22-92 50-92s50 30 50 92' fill='%23f59e0b'/%3E%3C/svg%3E";
 
 const fixturePlayers: Player[] = [
-  { id: "fx-gk-1", name: "Leo Ramos", number: 1, position: "PORTERO", naturalPosition: "GOALKEEPER", goalkeeperCapable: true, photoUrl: "https://images.unsplash.com/photo-1560272564-c83b66b1ad12?auto=format&fit=crop&w=400&q=70" },
+  { id: "fx-gk-1", name: "Leo Ramos", number: 1, position: "PORTERO", naturalPosition: "GOALKEEPER", goalkeeperCapable: true, photoUrl: PHOTO_BLUE },
   { id: "fx-gk-2", name: "Dani Cruz", number: 13, position: "PORTERO", naturalPosition: "GOALKEEPER", goalkeeperCapable: true },
   { id: "fx-p-2", name: "Álex", number: 2, position: "CIERRE", naturalPosition: "FIXO" },
-  { id: "fx-p-4", name: "Mario", number: 4, position: "ALA", naturalPosition: "WINGER", photoUrl: "https://images.unsplash.com/photo-1543326727-cf6c39e8f84c?auto=format&fit=crop&w=400&q=70" },
+  { id: "fx-p-4", name: "Mario", number: 4, position: "ALA", naturalPosition: "WINGER", photoUrl: PHOTO_AMBER },
   { id: "fx-p-5", name: "Pablo", number: 5, position: "ALA", naturalPosition: "WINGER" },
   { id: "fx-p-7", name: "Hugo", number: 7, position: "PÍVOT", naturalPosition: "PIVOT" },
   { id: "fx-p-8", name: "Nico", number: 8, position: "UNIVERSAL", naturalPosition: "UNIVERSAL" },
@@ -82,7 +84,7 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
   const starters = [startingGoalkeeper, "fx-p-2", "fx-p-4", "fx-p-5", "fx-p-7"];
   const events: MatchEvent[] = [
     createLineupInitializedEvent({ id: `${matchId}-p1`, matchId, position: { period: 1, minute: 0, order: 1 }, squadPlayerIds: fixturePlayers.map((player) => player.id), onCourtPlayerIds: starters, goalkeeperPlayerId: startingGoalkeeper, now: index * 1000 + 1 }),
-    threat(matchId, `${matchId}-for-1`, 1, 2, 1, "FOR", index % 3 === 0 ? "GOL" : "PARADA", phases[index % phases.length], "fx-p-4", startingGoalkeeper),
+    threat(matchId, `${matchId}-for-${index === 0 ? "0" : "1"}`, 1, 2, 1, "FOR", index % 3 === 0 ? "GOL" : "PARADA", phases[index % phases.length], "fx-p-4", startingGoalkeeper),
     threat(matchId, `${matchId}-against-1`, 1, 4, 1, "AGAINST", index % 2 === 0 ? "PARADA" : "GOL", phases[(index + 1) % phases.length], undefined, startingGoalkeeper),
     createFoulEvent({ id: `${matchId}-f1`, matchId, position: { period: 1, minute: 6, order: 1 }, side: "FOR", playerId: "fx-p-2", now: index * 1000 + 6 }),
     createSubstitutionEvent({ id: `${matchId}-sub-1`, matchId, position: { period: 1, minute: 8, order: 1 }, playerOutId: "fx-p-2", playerInId: "fx-p-8", now: index * 1000 + 8 }),

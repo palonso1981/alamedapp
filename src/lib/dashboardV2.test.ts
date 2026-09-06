@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { MatchEvent } from "../types";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
+import { PitchOriginZone } from "./dashboardAnalysis";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "./dashboardFixture";
 import { createLineupInitializedEvent, createLiveThreatEvent } from "./matchEngine";
 import {
@@ -13,6 +14,7 @@ import {
   mergeDashboardSearchParams,
   outcomeDistribution,
   playerMetricValue,
+  referenceScopeForPreset,
   scopeFromSearchParams,
   stableSortByMetric,
   teamMetricValue,
@@ -62,6 +64,17 @@ test("scope y referencia viajan separados por URL y sobreviven reload", () => {
   assert.deepEqual(scopeFromSearchParams(params, "r", baseScope()), reference);
   assert.equal(params.get("mode"), "PER_40");
   assert.equal(params.get("area"), "PLAYERS");
+});
+
+test("cambiar referencia no modifica analysisScope", () => {
+  const analysis = { ...baseScope(), rivals: ["Racing Norte"], period: 2 as const, phases: ["SET_PIECE_CORNER" as const] };
+  const snapshot = structuredClone(analysis);
+  const reference = referenceScopeForPreset(analysis, "AWAY");
+  assert.deepEqual(analysis, snapshot);
+  assert.deepEqual(reference.venues, ["AWAY"]);
+  assert.deepEqual(reference.rivals, []);
+  assert.equal(reference.period, 2);
+  assert.deepEqual(reference.phases, ["SET_PIECE_CORNER"]);
 });
 
 function pointsRecord(id: string, goalsFor: number, goalsAgainst: number): DashboardMatchRecord {
@@ -124,4 +137,34 @@ test("ordenación cuantitativa deja N/D al final y conserva empates", () => {
   const rows = [{ id: "a", value: 2 }, { id: "b", value: null }, { id: "c", value: 2 }, { id: "d", value: 1 }];
   assert.deepEqual(stableSortByMetric(rows, (row) => row.value, "asc").map((row) => row.id), ["d", "a", "c", "b"]);
   assert.deepEqual(stableSortByMetric(rows, (row) => row.value, "desc").map((row) => row.id), ["a", "c", "d", "b"]);
+});
+
+test("fixture poblado cubre temporada, sedes, resultados, jugadores, porteros, fases y P-J sin persistir", () => {
+  const records = buildDashboardFixture();
+  const analysis = buildDashboardV2(records, baseScope());
+  assert.equal(records.length, 5);
+  assert.ok(records.some((record) => record.catalog.venue === "HOME"));
+  assert.ok(records.some((record) => record.catalog.venue === "AWAY"));
+  assert.ok(analysis.players.length >= 8);
+  assert.ok(analysis.goalkeepers.length >= 2);
+  assert.ok(analysis.players.some((player) => Boolean(player.photoUrl)));
+  assert.ok(analysis.players.some((player) => !player.photoUrl));
+  assert.ok(analysis.flyingGoalkeeper.for.minutes > 0);
+  assert.ok(analysis.analytics.threats.FOR.total > 0 && analysis.analytics.threats.AGAINST.total > 0);
+  assert.ok(Object.values(analysis.analytics.phases).filter((phase) => phase.FOR + phase.AGAINST > 0).length >= 6);
+});
+
+test("filtro de zona, fase y rival conserva la intersección y el click no borra filtros previos", () => {
+  const records = buildDashboardFixture();
+  const candidate = records.flatMap((record) => record.session.events.map((event) => ({ record, event }))).find(({ event }) => event.type === "threat_recorded" && event.side === "AGAINST" && event.outcome !== "FUERA");
+  assert.ok(candidate && candidate.event.type === "threat_recorded");
+  if (!candidate || candidate.event.type !== "threat_recorded") return;
+  const phase = candidate.event.phase;
+  const zone: PitchOriginZone = candidate.event.origin.x >= .25 ? (candidate.event.origin.y >= 2 / 3 ? "Z4" : candidate.event.origin.y <= 1 / 3 ? "Z6" : "Z5") : (candidate.event.origin.y >= 2 / 3 ? "Z1" : candidate.event.origin.y <= 1 / 3 ? "Z3" : "Z2");
+  const scope = { ...baseScope(), rivals: [candidate.record.catalog.opponent], phases: [phase], originZones: [zone] };
+  const filtered = filterDashboardDataset(records, scope);
+  const threats = filtered.flatMap((record) => record.session.events).filter((event) => event.type === "threat_recorded");
+  assert.ok(threats.length > 0);
+  assert.ok(filtered.every((record) => record.catalog.opponent === candidate.record.catalog.opponent));
+  assert.ok(threats.every((event) => event.phase === phase));
 });

@@ -88,5 +88,6 @@ export function KeeperBodySummary({ keeper }: { keeper: GoalkeeperAnalysis }) {
 }
 
 export function SaveOutcomeSummary({ keeper }: { keeper: GoalkeeperAnalysis }) {
-  return <div className="grid grid-cols-3 gap-2">{(Object.keys(SAVE_LABEL) as SaveOutcome[]).map((key) => <div key={key} className="rounded-xl bg-slate-950 p-2 text-center"><strong className="block text-xl">{keeper.saveOutcomes[key]}</strong><span className="text-[9px] font-black text-slate-500">{SAVE_LABEL[key]}</span></div>)}</div>;
+  const documented = Object.values(keeper.saveOutcomes).reduce((sum, value) => sum + value, 0);
+  return <div className="grid grid-cols-3 gap-2">{(Object.keys(SAVE_LABEL) as SaveOutcome[]).map((key) => <div key={key} className="rounded-xl bg-slate-950 p-2 text-center"><strong className="block text-xl">{keeper.saveOutcomes[key]}</strong><span className="text-[9px] font-black text-slate-500">{SAVE_LABEL[key]}</span><span className="block text-[9px] text-cyan-300">{documented > 0 ? `${(keeper.saveOutcomes[key] / documented * 100).toFixed(1).replace(".", ",")}%` : "N/D"}</span></div>)}</div>;
 }

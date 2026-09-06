@@ -71,3 +71,51 @@ Una falta crítica es F5 o cualquier falta posterior del mismo equipo en ese per
 - Almacenamiento real de fotografías y coordenada del pase de asistencia.
 
 Dashboard V1.1 no importa ni modifica `dashboard-historico/` ni el XLSX histórico.
+
+## Dashboard V2 — scope analítico persistente
+
+Dashboard V2 sigue derivando todo desde el event log local y los catálogos. No persiste
+medias, porcentajes, rankings, zonas ni scores. El fixture `?fixture=1` vive solo en memoria
+y permite validar una temporada poblada sin escribir en Firebase ni localStorage.
+
+`DashboardScopeV2` centraliza club, equipo, temporada, partidos, periodo, sede, resultado,
+rivales, fases, jugadores, porteros, zonas de origen, zonas de portería y desenlaces. Las
+selecciones son OR dentro de una dimensión y AND entre dimensiones. Los scopes de análisis
+(`a*`) y referencia (`r*`) se serializan por separado en la URL junto con sección y modo;
+Resumen, Equipo, Jugadores, Porteros, Mapas y fichas conservan contexto al navegar o recargar.
+La referencia por defecto es la media de temporada homogénea con el periodo y filtros de
+evento. Los presets de sede, resultado, P1/P2 y selección filtrada no cambian el análisis.
+
+### Denominadores
+
+- `TOTALES`: suma de eventos válidos.
+- `POR PARTIDO`: equipo entre partidos observados; jugador solo entre partidos con minutos.
+- `POR 40`: equipo entre minutos observados × 40; jugador entre sus minutos reales × 40.
+- Sin denominador se muestra N/D.
+- Un total multip partido nunca se compara contra un bruto de media: la referencia se
+  normaliza por partido. Las diferencias porcentuales se expresan en puntos porcentuales.
+
+### Jugadores, PTS EN PISTA y SCORE
+
+Las asistencias cuentan solo con estado `PLAYER`. Las métricas `EQUIPO CON ÉL EN PISTA`
+recorren todos los intervalos reales y no afirman causalidad. `PTS EN PISTA` se calcula por
+partido con el parcial durante sus minutos: victoria 3, empate 1 y derrota 0; convive con
+GF, GC y +/-.
+
+`SCORE ALAM` es experimental. Producción promedia percentiles de goles/40, asistencias/40 y
+remates/40. En pista promedia remates del equipo/40, inverso de amenazas/40 y PTS EN PISTA
+por partido. Ambos bloques pesan 50%. El raw se contrae hacia 50 con
+`reliability = min(1, minutos / 80)`; 80 está centralizado y es configurable. Con menos de
+tres jugadores comparables o sin denominadores el score es N/D. La interfaz expone
+subscores, minutos y fiabilidad.
+
+### Mapas, porteros y P-J
+
+Los mapas mantienen los puntos exactos y añaden zonas clicables. Z1–Z6 conservan la
+perspectiva del portero CDA; la matriz 3×2 de destino en portería es un sistema distinto.
+`BLOQUEADO` solo aparece si existe en eventos legacy.
+
+Porteros usa el rol funcional reconstruido, muestra cantidad y porcentaje de
+blocaje/despeje/rechace, y excluye los intervalos de Portero-Jugador. P-J dispone de resumen
+separado (minutos, remates, amenazas, GF y GC) cuando lo utiliza CDA o el rival, sin
+contaminar estadísticas de portero normal.

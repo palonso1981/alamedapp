@@ -25,9 +25,10 @@ export function FacedMetricRow({ label, own, rival, ownReference, rivalReference
 }
 
 export function TeamComparison({ analysis, reference, mode }: { analysis: DashboardAnalysis; reference: DashboardAnalysis; mode: DashboardValueMode }) {
-  const pair = (own: TeamMetricKey, rival: TeamMetricKey) => ({ own: teamMetricValue(analysis, own, mode), rival: teamMetricValue(analysis, rival, mode), ownReference: teamMetricValue(reference, own, mode === "TOTALS" ? "PER_MATCH" : mode), rivalReference: teamMetricValue(reference, rival, mode === "TOTALS" ? "PER_MATCH" : mode) });
+  const comparisonMode = mode === "TOTALS" ? "PER_MATCH" : mode;
+  const pair = (own: TeamMetricKey, rival: TeamMetricKey) => ({ own: teamMetricValue(analysis, own, comparisonMode), rival: teamMetricValue(analysis, rival, comparisonMode), ownReference: teamMetricValue(reference, own, comparisonMode), rivalReference: teamMetricValue(reference, rival, comparisonMode) });
   return <article className="space-y-4 rounded-3xl border border-slate-700 bg-slate-900 p-4">
-    <div className="flex justify-between text-[9px] font-black"><span className="text-cyan-300">CDA</span><span className="text-slate-500">CENTRO COMÚN · MARCA = REFERENCIA</span><span className="text-rose-300">RIVAL</span></div>
+    <div className="flex justify-between text-[9px] font-black"><span className="text-cyan-300">CDA</span><span className="text-slate-500">{comparisonMode === "PER_MATCH" ? "POR PARTIDO" : "POR 40"} · MARCA = REFERENCIA</span><span className="text-rose-300">RIVAL</span></div>
     <FacedMetricRow label="REMATES" {...pair("threatsFor", "threatsAgainst")} semantics="higher" />
     <FacedMetricRow label="GOLES" {...pair("goalsFor", "goalsAgainst")} semantics="higher" />
     <FacedMetricRow label="FALTAS" {...pair("foulsFor", "foulsAgainst")} semantics="neutral" />

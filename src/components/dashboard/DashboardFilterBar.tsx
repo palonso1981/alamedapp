@@ -27,11 +27,15 @@ function MultiButton({ active, children, onClick }: { active: boolean; children:
 
 export interface DashboardFilterBarProps {
   clubName: string;
+  clubs?: Array<{ clubId: string; name: string }>;
+  onClub?: (clubId: string) => void;
   scope: DashboardScopeV2;
   teams: TeamProfile[];
   seasons: Season[];
   matches: MatchCatalogEntry[];
   rivals: string[];
+  players?: Array<{ playerId: string; name: string }>;
+  goalkeepers?: Array<{ playerId: string; name: string }>;
   referencePreset: DashboardReferencePreset;
   mode: DashboardValueMode;
   onScope: (scope: DashboardScopeV2) => void;
@@ -41,7 +45,7 @@ export interface DashboardFilterBarProps {
   fixture?: boolean;
 }
 
-export function DashboardFilterBar({ clubName, scope, teams, seasons, matches, rivals, referencePreset, mode, onScope, onReferencePreset, onMode, onRefresh, fixture }: DashboardFilterBarProps) {
+export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams, seasons, matches, rivals, players = [], goalkeepers = [], referencePreset, mode, onScope, onReferencePreset, onMode, onRefresh, fixture }: DashboardFilterBarProps) {
   const patch = (changes: Partial<DashboardScopeV2>) => onScope({ ...scope, ...changes });
   const chips: Array<{ key: string; label: string; clear: () => void }> = [];
   if (scope.period !== "ALL") chips.push({ key: "period", label: `P${scope.period}`, clear: () => patch({ period: "ALL" }) });
@@ -51,18 +55,21 @@ export function DashboardFilterBar({ clubName, scope, teams, seasons, matches, r
   scope.results.forEach((result) => chips.push({ key: result, label: result === "WIN" ? "Victoria" : result === "DRAW" ? "Empate" : "Derrota", clear: () => patch({ results: scope.results.filter((item) => item !== result) }) }));
   scope.phases.forEach((phase) => chips.push({ key: phase, label: PHASES.find(([key]) => key === phase)?.[1] ?? phase, clear: () => patch({ phases: scope.phases.filter((item) => item !== phase) }) }));
   scope.originZones.forEach((zone) => chips.push({ key: zone, label: zone, clear: () => patch({ originZones: scope.originZones.filter((item) => item !== zone) }) }));
+  scope.targetZones.forEach((zone) => chips.push({ key: `target-${zone}`, label: `Portería ${zone.replaceAll("_", " ")}`, clear: () => patch({ targetZones: scope.targetZones.filter((item) => item !== zone) }) }));
   scope.outcomes.forEach((outcome) => chips.push({ key: outcome, label: outcome, clear: () => patch({ outcomes: scope.outcomes.filter((item) => item !== outcome) }) }));
+  scope.playerIds.forEach((id) => chips.push({ key: `player-${id}`, label: players.find((player) => player.playerId === id)?.name ?? id, clear: () => patch({ playerIds: scope.playerIds.filter((item) => item !== id) }) }));
+  scope.goalkeeperIds.forEach((id) => chips.push({ key: `keeper-${id}`, label: `Portero ${goalkeepers.find((keeper) => keeper.playerId === id)?.name ?? id}`, clear: () => patch({ goalkeeperIds: scope.goalkeeperIds.filter((item) => item !== id) }) }));
   const clearAll = () => patch({ matchIds: [], period: "ALL", venues: [], results: [], rivals: [], phases: [], playerIds: [], goalkeeperIds: [], originZones: [], targetZones: [], outcomes: [] });
 
   return <section className="sticky top-0 z-30 rounded-b-3xl border border-t-0 border-slate-700 bg-slate-950/95 p-3 shadow-2xl backdrop-blur sm:top-2 sm:rounded-3xl sm:border-t">
     <div className="flex items-center gap-2 overflow-x-auto pb-1">
-      <span className="shrink-0 rounded-xl bg-cyan-950 px-3 py-2 text-[10px] font-black text-cyan-200">{fixture ? "FIXTURE LOCAL" : clubName}</span>
-      <select aria-label="Equipo" value={scope.teamId} onChange={(event) => patch({ teamId: event.target.value, seasonId: "", matchIds: [] })} className="min-h-10 min-w-36 rounded-xl bg-slate-800 px-3 text-xs font-black">
-        {teams.map((team) => <option key={team.teamId} value={team.teamId}>{team.name}</option>)}
+      {fixture || !onClub ? <span className="shrink-0 rounded-xl bg-cyan-950 px-3 py-2 text-[10px] font-black text-cyan-200">{fixture ? "FIXTURE LOCAL" : clubName}</span> : <select aria-label="Club" value={scope.clubId} onChange={(event) => onClub(event.target.value)} className="min-h-10 min-w-36 rounded-xl bg-cyan-950 px-3 text-[10px] font-black text-cyan-100">{clubs.map((club) => <option key={club.clubId} value={club.clubId}>{club.name}</option>)}</select>}
+      <select aria-label="Equipo" value={scope.teamId} onChange={(event) => { const teamId = event.target.value; patch({ teamId, seasonId: seasons.find((season) => season.teamId === teamId && season.current)?.seasonId ?? seasons.find((season) => season.teamId === teamId)?.seasonId ?? "", matchIds: [] }); }} className="min-h-10 min-w-36 rounded-xl bg-slate-800 px-3 text-xs font-black">
+        {!fixture && teams.map((team) => <option key={team.teamId} value={team.teamId}>{team.name}</option>)}
         {fixture && <option value={scope.teamId}>Senior A · Fixture</option>}
       </select>
       <select aria-label="Temporada" value={scope.seasonId} onChange={(event) => patch({ seasonId: event.target.value, matchIds: [] })} className="min-h-10 min-w-32 rounded-xl bg-slate-800 px-3 text-xs font-black">
-        {seasons.filter((season) => season.teamId === scope.teamId).map((season) => <option key={season.seasonId} value={season.seasonId}>{season.label}</option>)}
+        {!fixture && seasons.filter((season) => season.teamId === scope.teamId).map((season) => <option key={season.seasonId} value={season.seasonId}>{season.label}</option>)}
         {fixture && <option value={scope.seasonId}>2026-27</option>}
       </select>
       <select aria-label="Partido" value={scope.matchIds.length === 1 ? scope.matchIds[0] : "ALL"} onChange={(event) => patch({ matchIds: event.target.value === "ALL" ? [] : [event.target.value] })} className="min-h-10 min-w-44 rounded-xl bg-slate-800 px-3 text-xs font-black">
@@ -91,8 +98,10 @@ export function DashboardFilterBar({ clubName, scope, teams, seasons, matches, r
       <div className="mt-3 space-y-3">
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">SEDE · RESULTADO</span>{(["HOME", "AWAY"] as const).map((value) => <MultiButton key={value} active={scope.venues.includes(value)} onClick={() => patch({ venues: toggle(scope.venues, value) })}>{value === "HOME" ? "LOCAL" : "VISITANTE"}</MultiButton>)}{(["WIN", "DRAW", "LOSS"] as const).map((value) => <MultiButton key={value} active={scope.results.includes(value)} onClick={() => patch({ results: toggle(scope.results, value) })}>{value === "WIN" ? "VICTORIA" : value === "DRAW" ? "EMPATE" : "DERROTA"}</MultiButton>)}</div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">RIVALES · OR DENTRO DE LA DIMENSIÓN</span>{rivals.map((rival) => <MultiButton key={rival} active={scope.rivals.includes(rival)} onClick={() => patch({ rivals: toggle(scope.rivals, rival) })}>{rival}</MultiButton>)}</div>
+        <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">PARTIDOS · SELECCIÓN MÚLTIPLE</span>{matches.map((match) => <MultiButton key={match.matchId} active={scope.matchIds.includes(match.matchId)} onClick={() => patch({ matchIds: toggle(scope.matchIds, match.matchId) })}>{match.date.slice(5)} · {match.opponent}</MultiButton>)}</div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">FASE</span>{PHASES.map(([value, label]) => <MultiButton key={value} active={scope.phases.includes(value)} onClick={() => patch({ phases: toggle(scope.phases, value) })}>{label}</MultiButton>)}</div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">ORIGEN · RESULTADO</span>{ZONES.map((value) => <MultiButton key={value} active={scope.originZones.includes(value)} onClick={() => patch({ originZones: toggle(scope.originZones, value) })}>{value}</MultiButton>)}{(["GOL", "PARADA", "FUERA"] as ThreatOutcome[]).map((value) => <MultiButton key={value} active={scope.outcomes.includes(value)} onClick={() => patch({ outcomes: toggle(scope.outcomes, value) })}>{value}</MultiButton>)}</div>
+        {(players.length > 0 || goalkeepers.length > 0) && <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">JUGADOR / PORTERO · CUANDO LA MÉTRICA ES COMPATIBLE</span>{players.map((player) => <MultiButton key={player.playerId} active={scope.playerIds.includes(player.playerId)} onClick={() => patch({ playerIds: toggle(scope.playerIds, player.playerId) })}>{player.name}</MultiButton>)}{goalkeepers.map((keeper) => <MultiButton key={`gk-${keeper.playerId}`} active={scope.goalkeeperIds.includes(keeper.playerId)} onClick={() => patch({ goalkeeperIds: toggle(scope.goalkeeperIds, keeper.playerId) })}>🥅 {keeper.name}</MultiButton>)}</div>}
       </div>
     </details>
   </section>;

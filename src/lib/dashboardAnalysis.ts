@@ -168,6 +168,10 @@ export interface DashboardAnalysis {
   pitchZones: ZoneStats<PitchOriginZone>[];
   goalZones: ZoneStats<GoalZoneV1>[];
   criticalFouls: { for: number; against: number };
+  flyingGoalkeeper: {
+    for: { minutes: number; threatsFor: number; threatsAgainst: number; goalsFor: number; goalsAgainst: number };
+    against: { minutes: number; threatsFor: number; threatsAgainst: number; goalsFor: number; goalsAgainst: number };
+  };
 }
 
 export const LOW_SAMPLE_MINUTES = 20;
@@ -370,6 +374,10 @@ export function buildDashboardAnalysis(
   const criticalFouls = { for: 0, against: 0 };
   const pitchZones = zoneCollection(["Z1", "Z2", "Z3", "Z4", "Z5", "Z6"] as const);
   const goalZones = zoneCollection(["LEFT_HIGH", "CENTER_HIGH", "RIGHT_HIGH", "LEFT_LOW", "CENTER_LOW", "RIGHT_LOW"] as const);
+  const flyingGoalkeeper = {
+    for: { minutes: 0, threatsFor: 0, threatsAgainst: 0, goalsFor: 0, goalsAgainst: 0 },
+    against: { minutes: 0, threatsFor: 0, threatsAgainst: 0, goalsFor: 0, goalsAgainst: 0 },
+  };
 
   const trends = selected.map((record) => {
     const one = buildDashboardAnalytics([record], { ...dashboardScope, matchId: record.catalog.matchId });
@@ -383,6 +391,27 @@ export function buildDashboardAnalysis(
     const matchObserved = observedMinutes(session, period);
     const squad = new Set(events.filter((event) => event.type === "lineup_initialized").flatMap((event) => event.type === "lineup_initialized" ? event.squadPlayerIds : []));
     const matchOnCourtScore = new Map<string, { goalsFor: number; goalsAgainst: number }>();
+    const matchEnd = deriveGlobalMinute(endClock(session, period).period, endClock(session, period).minute);
+    replay.timeline.forEach((entry, index) => {
+      const start = deriveGlobalMinute(entry.event.period, entry.event.minute);
+      const next = replay.timeline[index + 1];
+      const finish = Math.min(matchEnd, next ? deriveGlobalMinute(next.event.period, next.event.minute) : matchEnd);
+      const targets = [
+        ...(entry.gameContexts.includes("FLYING_GOALKEEPER") ? [flyingGoalkeeper.for] : []),
+        ...(entry.gameContexts.includes("FLYING_GOALKEEPER_AGAINST") ? [flyingGoalkeeper.against] : []),
+      ];
+      for (const target of targets) {
+        if (finish > start) target.minutes += finish - start;
+        if (entry.event.type === "threat_recorded") {
+          if (entry.event.side === "FOR") target.threatsFor += 1;
+          else target.threatsAgainst += 1;
+          if (entry.event.outcome === "GOL") {
+            if (entry.event.side === "FOR") target.goalsFor += 1;
+            else target.goalsAgainst += 1;
+          }
+        }
+      }
+    });
     for (const snapshot of session.players) {
       const player = playerMap.get(snapshot.id) ?? createPlayer(snapshot);
       const minutes = replay.playerMinutes[snapshot.id]?.totalMinutes ?? 0;
@@ -507,6 +536,7 @@ export function buildDashboardAnalysis(
     pitchZones,
     goalZones,
     criticalFouls,
+    flyingGoalkeeper,
   };
 }
 
