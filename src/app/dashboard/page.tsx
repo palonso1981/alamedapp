@@ -1,5 +1,7 @@
 "use client";
 
+export { DashboardV2Page as default } from "../../components/dashboard/DashboardV2Page";
+
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -119,7 +121,7 @@ const AREAS = ["RESUMEN", "EQUIPO", "JUGADORES", "PORTEROS", "MAPAS / ZONAS"] as
 type DashboardArea = typeof AREAS[number];
 type ReferenceMode = "SEASON" | "HOME" | "AWAY" | "WIN" | "DRAW" | "LOSS" | "OTHER_PERIOD";
 
-export default function DashboardPage() {
+function DashboardPageLegacy() {
   const ensureRegistry = useTeamStore((state) => state.ensureRegistry);
   const ensureTeam = useTeamStore((state) => state.ensureTeam);
   const registryReady = useTeamStore((state) => state.registryReady);

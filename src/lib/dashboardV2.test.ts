@@ -1,0 +1,127 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { MatchEvent } from "../types";
+import { DashboardMatchRecord } from "./dashboardAnalytics";
+import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "./dashboardFixture";
+import { createLineupInitializedEvent, createLiveThreatEvent } from "./matchEngine";
+import {
+  buildDashboardV2,
+  buildPlayerScores,
+  emptyDashboardScope,
+  filterDashboardDataset,
+  mergeDashboardSearchParams,
+  outcomeDistribution,
+  playerMetricValue,
+  scopeFromSearchParams,
+  stableSortByMetric,
+  teamMetricValue,
+} from "./dashboardV2";
+
+const baseScope = () => emptyDashboardScope(
+  DASHBOARD_FIXTURE_CLUB_ID,
+  DASHBOARD_FIXTURE_TEAM_ID,
+  DASHBOARD_FIXTURE_SEASON_ID,
+);
+
+test("scope acumulativo aplica OR dentro de dimensión y AND entre dimensiones", () => {
+  const records = buildDashboardFixture();
+  const scope = {
+    ...baseScope(),
+    rivals: ["Racing Norte", "Sala Centro"],
+    venues: ["AWAY" as const],
+    period: 2 as const,
+    phases: ["SET_PIECE_CORNER" as const, "SET_PIECE_KICK_IN" as const],
+    originZones: ["Z2" as const, "Z5" as const],
+  };
+  const filtered = filterDashboardDataset(records, scope);
+  assert.ok(filtered.every((record) => scope.rivals.includes(record.catalog.opponent)));
+  assert.ok(filtered.every((record) => record.catalog.venue === "AWAY"));
+  for (const record of filtered) {
+    const threats = record.session.events.filter((event) => event.type === "threat_recorded");
+    assert.ok(threats.every((event) => event.period === 2));
+    assert.ok(threats.every((event) => scope.phases.includes(event.phase as typeof scope.phases[number])));
+  }
+});
+
+test("ABP agrega córner, banda y falta sin incluir fases abiertas", () => {
+  const filtered = filterDashboardDataset(buildDashboardFixture(), { ...baseScope(), phases: ["SET_PIECE"] });
+  const phases = filtered.flatMap((record) => record.session.events)
+    .filter((event) => event.type === "threat_recorded")
+    .map((event) => event.phase);
+  assert.ok(phases.length > 0);
+  assert.ok(phases.every((phase) => ["SET_PIECE_CORNER", "SET_PIECE_KICK_IN", "SET_PIECE_FREE_KICK"].includes(phase)));
+});
+
+test("scope y referencia viajan separados por URL y sobreviven reload", () => {
+  const analysis = { ...baseScope(), rivals: ["Racing Norte", "Sala Centro"], originZones: ["Z2" as const], period: 2 as const };
+  const reference = { ...baseScope(), venues: ["AWAY" as const], period: 2 as const };
+  const query = mergeDashboardSearchParams({ analysis, reference, referencePreset: "AWAY", mode: "PER_40", area: "PLAYERS" });
+  const params = new URLSearchParams(query);
+  assert.deepEqual(scopeFromSearchParams(params, "a", baseScope()), analysis);
+  assert.deepEqual(scopeFromSearchParams(params, "r", baseScope()), reference);
+  assert.equal(params.get("mode"), "PER_40");
+  assert.equal(params.get("area"), "PLAYERS");
+});
+
+function pointsRecord(id: string, goalsFor: number, goalsAgainst: number): DashboardMatchRecord {
+  const source = buildDashboardFixture()[0];
+  const lineup = createLineupInitializedEvent({
+    id: `${id}-lineup`, matchId: id, position: { period: 1, minute: 0, order: 1 },
+    squadPlayerIds: source.session.players.map((player) => player.id),
+    onCourtPlayerIds: ["fx-gk-1", "fx-p-2", "fx-p-4", "fx-p-5", "fx-p-7"],
+    goalkeeperPlayerId: "fx-gk-1", now: 1,
+  });
+  const events: MatchEvent[] = [lineup];
+  for (let index = 0; index < goalsFor; index += 1) events.push(createLiveThreatEvent({ id: `${id}-gf-${index}`, matchId: id, position: { period: 1, minute: index + 1, order: 1 }, side: "FOR", playerId: "fx-p-4", origin: { x: .5, y: .5 }, outcome: "GOL", phase: "POSITIONAL", assist: { status: "NONE" }, now: index + 2 }));
+  for (let index = 0; index < goalsAgainst; index += 1) events.push(createLiveThreatEvent({ id: `${id}-gc-${index}`, matchId: id, position: { period: 1, minute: index + 10, order: 1 }, side: "AGAINST", origin: { x: .5, y: .5 }, outcome: "GOL", phase: "POSITIONAL", defensive: { version: 2, goalTarget: { x: .5, y: .5, geometryVersion: 3 }, goalkeeper: { status: "PLAYER", playerId: "fx-gk-1" } }, now: index + 20 }));
+  return {
+    catalog: { ...source.catalog, matchId: id, opponent: id, venue: "HOME", date: `2026-08-${id.endsWith("a") ? "01" : id.endsWith("b") ? "02" : "03"}` },
+    session: { ...source.session, matchId: id, preparation: { ...source.session.preparation!, opponent: id }, events },
+  };
+}
+
+test("PTS EN PISTA usa el parcial de cada jugador, no el resultado final agregado", () => {
+  const records = [pointsRecord("points-a", 2, 1), pointsRecord("points-b", 0, 0), pointsRecord("points-c", 1, 3)];
+  const analysis = buildDashboardV2(records, baseScope());
+  const player = analysis.players.find((candidate) => candidate.playerId === "fx-p-4")!;
+  assert.equal(player.onCourtPoints, 4);
+  assert.equal(player.onCourtPointsPerMatch, 4 / 3);
+});
+
+test("modos usan denominadores compatibles y N/D sin minutos", () => {
+  const analysis = buildDashboardV2(buildDashboardFixture(), baseScope());
+  assert.equal(teamMetricValue(analysis, "threatsFor", "TOTALS"), analysis.analytics.threats.FOR.total);
+  assert.equal(teamMetricValue(analysis, "threatsFor", "PER_MATCH"), analysis.analytics.threats.FOR.total / analysis.samples);
+  assert.equal(teamMetricValue(analysis, "threatsFor", "PER_40"), analysis.rates.threatsFor40);
+  const player = analysis.players[0];
+  assert.equal(playerMetricValue(player, "goals", "PER_MATCH"), player.goals / player.matches);
+  assert.equal(playerMetricValue(player, "points", "PER_40"), null);
+});
+
+test("distribución conserva cantidades y porcentajes suma 100", () => {
+  const distribution = outcomeDistribution({ total: 10, GOL: 2, PARADA: 5, FUERA: 3, BLOQUEADO: 0 });
+  assert.deepEqual(distribution.map((item) => item.count), [2, 5, 3]);
+  assert.equal(distribution.reduce((sum, item) => sum + (item.percentage ?? 0), 0), 100);
+});
+
+test("SCORE ALAM aplica percentiles, inversión, reliability y protege muestras pequeñas", () => {
+  const analysis = buildDashboardV2(buildDashboardFixture(), baseScope());
+  const scores = buildPlayerScores(analysis.players);
+  assert.ok(scores.filter((score) => score.score !== null).length >= 3);
+  assert.ok(scores.every((score) => score.score === null || (score.score >= 0 && score.score <= 100)));
+  const player = analysis.players[0];
+  const low = buildPlayerScores([
+    { ...player, playerId: "low", minutes: 4, goals: 1, goals40: 10 },
+    { ...player, playerId: "two", minutes: 80, goals40: 0 },
+    { ...player, playerId: "three", minutes: 80, goals40: 0 },
+  ]).find((score) => score.playerId === "low")!;
+  assert.ok(low.score !== null && Math.abs(low.score - 50) < 5, "4 minutos deben contraer el score hacia 50");
+  assert.equal(buildPlayerScores([player, { ...player, playerId: "two" }]).every((score) => score.score === null), true);
+});
+
+test("ordenación cuantitativa deja N/D al final y conserva empates", () => {
+  const rows = [{ id: "a", value: 2 }, { id: "b", value: null }, { id: "c", value: 2 }, { id: "d", value: 1 }];
+  assert.deepEqual(stableSortByMetric(rows, (row) => row.value, "asc").map((row) => row.id), ["d", "a", "c", "b"]);
+  assert.deepEqual(stableSortByMetric(rows, (row) => row.value, "desc").map((row) => row.id), ["a", "c", "d", "b"]);
+});

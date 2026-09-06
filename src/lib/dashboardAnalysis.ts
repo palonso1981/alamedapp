@@ -88,8 +88,13 @@ export interface PlayerAnalysis {
   averageMinutes: number | null;
   targetMinutes?: number;
   goals: number;
+  goalsPerMatch: number | null;
+  goals40: number | null;
   assists: number;
+  assistsPerMatch: number | null;
+  assists40: number | null;
   ownThreats: number;
+  ownThreatsPerMatch: number | null;
   ownThreats40: number | null;
   ownOutcomes: Record<ThreatOutcome, number>;
   ownShotPoints: Array<{ eventId: string; x: number; y: number; outcome: ThreatOutcome }>;
@@ -97,8 +102,18 @@ export interface PlayerAnalysis {
   foulsReceived: number;
   criticalFoulsCommitted: number;
   criticalFoulsReceived: number;
+  foulsCommittedPerMatch: number | null;
+  foulsCommitted40: number | null;
+  foulsReceivedPerMatch: number | null;
+  foulsReceived40: number | null;
+  criticalFoulsCommittedPerMatch: number | null;
+  criticalFoulsCommitted40: number | null;
+  criticalFoulsReceivedPerMatch: number | null;
+  criticalFoulsReceived40: number | null;
   yellowCards: number;
   redCards: number;
+  onCourtPoints: number;
+  onCourtPointsPerMatch: number | null;
   onCourt: PlayerOnCourtStats;
   lowSample: boolean;
   trend: PlayerMatchTrend[];
@@ -244,7 +259,21 @@ function addOnCourtEvent(player: PlayerAnalysis, event: MatchEvent): void {
 function finalizePlayer(player: PlayerAnalysis): void {
   player.participationPercentage = player.availableMinutes > 0 ? player.minutes / player.availableMinutes * 100 : null;
   player.averageMinutes = player.matches > 0 ? player.minutes / player.matches : null;
+  player.goalsPerMatch = player.matches > 0 ? player.goals / player.matches : null;
+  player.goals40 = per40(player.goals, player.minutes);
+  player.assistsPerMatch = player.matches > 0 ? player.assists / player.matches : null;
+  player.assists40 = per40(player.assists, player.minutes);
+  player.ownThreatsPerMatch = player.matches > 0 ? player.ownThreats / player.matches : null;
   player.ownThreats40 = per40(player.ownThreats, player.minutes);
+  player.foulsCommittedPerMatch = player.matches > 0 ? player.foulsCommitted / player.matches : null;
+  player.foulsCommitted40 = per40(player.foulsCommitted, player.minutes);
+  player.foulsReceivedPerMatch = player.matches > 0 ? player.foulsReceived / player.matches : null;
+  player.foulsReceived40 = per40(player.foulsReceived, player.minutes);
+  player.criticalFoulsCommittedPerMatch = player.matches > 0 ? player.criticalFoulsCommitted / player.matches : null;
+  player.criticalFoulsCommitted40 = per40(player.criticalFoulsCommitted, player.minutes);
+  player.criticalFoulsReceivedPerMatch = player.matches > 0 ? player.criticalFoulsReceived / player.matches : null;
+  player.criticalFoulsReceived40 = per40(player.criticalFoulsReceived, player.minutes);
+  player.onCourtPointsPerMatch = player.matches > 0 ? player.onCourtPoints / player.matches : null;
   player.onCourt.goalDifference = player.onCourt.goalsFor - player.onCourt.goalsAgainst;
   player.onCourt.threatsFor40 = per40(player.onCourt.threatsFor, player.minutes);
   player.onCourt.threatsAgainst40 = per40(player.onCourt.threatsAgainst, player.minutes);
@@ -272,8 +301,13 @@ function createPlayer(player: Player): PlayerAnalysis {
     averageMinutes: null,
     targetMinutes: undefined,
     goals: 0,
+    goalsPerMatch: null,
+    goals40: null,
     assists: 0,
+    assistsPerMatch: null,
+    assists40: null,
     ownThreats: 0,
+    ownThreatsPerMatch: null,
     ownThreats40: null,
     ownOutcomes: emptyOutcomes(),
     ownShotPoints: [],
@@ -281,8 +315,18 @@ function createPlayer(player: Player): PlayerAnalysis {
     foulsReceived: 0,
     criticalFoulsCommitted: 0,
     criticalFoulsReceived: 0,
+    foulsCommittedPerMatch: null,
+    foulsCommitted40: null,
+    foulsReceivedPerMatch: null,
+    foulsReceived40: null,
+    criticalFoulsCommittedPerMatch: null,
+    criticalFoulsCommitted40: null,
+    criticalFoulsReceivedPerMatch: null,
+    criticalFoulsReceived40: null,
     yellowCards: 0,
     redCards: 0,
+    onCourtPoints: 0,
+    onCourtPointsPerMatch: null,
     onCourt: {
       threatsFor: 0, threatsAgainst: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0,
       foulsFor: 0, foulsAgainst: 0, threatsFor40: null, threatsAgainst40: null,
@@ -338,6 +382,7 @@ export function buildDashboardAnalysis(
     const replay = replayMatch(session.players, events, { currentClock: endClock(session, period) });
     const matchObserved = observedMinutes(session, period);
     const squad = new Set(events.filter((event) => event.type === "lineup_initialized").flatMap((event) => event.type === "lineup_initialized" ? event.squadPlayerIds : []));
+    const matchOnCourtScore = new Map<string, { goalsFor: number; goalsAgainst: number }>();
     for (const snapshot of session.players) {
       const player = playerMap.get(snapshot.id) ?? createPlayer(snapshot);
       const minutes = replay.playerMinutes[snapshot.id]?.totalMinutes ?? 0;
@@ -354,6 +399,12 @@ export function buildDashboardAnalysis(
       for (const playerId of entry.lineupPlayerIds) {
         const player = playerMap.get(playerId);
         if (player) addOnCourtEvent(player, event);
+        if (event.type === "threat_recorded" && event.outcome === "GOL") {
+          const score = matchOnCourtScore.get(playerId) ?? { goalsFor: 0, goalsAgainst: 0 };
+          if (event.side === "FOR") score.goalsFor += 1;
+          else score.goalsAgainst += 1;
+          matchOnCourtScore.set(playerId, score);
+        }
       }
       if (event.type === "threat_recorded" && event.side === "FOR" && event.playerId) {
         const player = playerMap.get(event.playerId);
@@ -408,6 +459,16 @@ export function buildDashboardAnalysis(
           }
         }
       }
+    }
+    for (const [playerId, score] of Array.from(matchOnCourtScore.entries())) {
+      const player = playerMap.get(playerId);
+      if (!player || (replay.playerMinutes[playerId]?.totalMinutes ?? 0) <= 0) continue;
+      player.onCourtPoints += score.goalsFor > score.goalsAgainst ? 3 : score.goalsFor === score.goalsAgainst ? 1 : 0;
+    }
+    for (const snapshot of session.players) {
+      const player = playerMap.get(snapshot.id);
+      if (!player || (replay.playerMinutes[snapshot.id]?.totalMinutes ?? 0) <= 0 || matchOnCourtScore.has(snapshot.id)) continue;
+      player.onCourtPoints += 1;
     }
   }
 
