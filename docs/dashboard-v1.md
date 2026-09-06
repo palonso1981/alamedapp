@@ -169,3 +169,30 @@ con el `eventId`, donde se selecciona ese evento concreto. El scope del Dashboar
 en la URL para volver al mismo análisis. En el futuro este detalle podrá ofrecer `VER VÍDEO`
 usando matchId, eventId, periodo/minuto y, como ayuda secundaria, el `createdAt` real; no se
 deducirá nunca una posición de vídeo a partir de segundos deportivos inexistentes.
+
+## Dashboard V2.2 — intervalos competitivos y trazabilidad común
+
+Clave y Oro se derivan con una única proyección cronológica reutilizable. El motor cruza los
+intervalos de marcador con los intervalos de alineación y de portero funcional. Clave incluye
+solo los tramos con `abs(GF-GC) <= 1`; Oro añade la intersección con `[P2 min 15, P2 min 20]`.
+La ventana empieza en el minuto global 35 aunque no exista un evento exactamente en ese borde.
+Un portero que juega 40 minutos puede, por tanto, acumular menos minutos competitivos.
+
+La granularidad sigue siendo el minuto deportivo entero. Un evento se clasifica con el marcador
+inmediatamente anterior; si es gol, el marcador resultante rige desde ese mismo minuto hasta el
+siguiente evento. No se inventan segundos ni fracciones. Bajo Clave/Oro, las métricas de eventos
+y los ratios por 40 se recalculan sobre la proyección filtrada. `PTS EN PISTA` representa el
+parcial de los intervalos compatibles, mientras partidos y muestras continúan siendo magnitudes
+de partido y no se convierten en duraciones.
+
+Las posiciones visibles pasan por un formatter de presentación central que normaliza aliases
+actuales y legacy (`GOALKEEPER/PORTERO`, `FIXO/CIERRE`, `WINGER/ALA`, `PIVOT/PÍVOT` y
+`UNIVERSAL`) sin modificar el valor almacenado. La cabecera comparativa usa dos mitades reales,
+permanece anclada bajo la cabecera global y conserva un contexto secundario compacto.
+
+`IndividualEventPoint` conserva `matchId + eventId` y puede abrir el evento exacto. El mismo
+resolver y panel se reutilizan en mapas generales, de jugador y de portero; las coordenadas
+pueden repetirse sin ambigüedad. En portería, origen, destino, parte corporal y desenlace son
+datos distintos. Un punto agregado —por ejemplo una jornada en una evolución— no recibe un
+`eventId` ficticio ni ofrece `VER EVENTO`. El fixture `?fixture=1` sigue siendo exclusivamente
+memoria de desarrollo: no escribe repositorios, outbox ni Firebase.
