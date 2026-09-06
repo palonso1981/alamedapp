@@ -25,10 +25,12 @@ export function PitchThreatMap({
   points,
   side,
   onSelect,
+  pointTitle,
 }: {
   points: DashboardThreatPoint[];
   side: "FOR" | "AGAINST";
   onSelect?: (point: DashboardThreatPoint) => void;
+  pointTitle?: (point: DashboardThreatPoint) => string;
 }) {
   const visible = points.filter((point) => point.side === side);
   return (
@@ -47,7 +49,7 @@ export function PitchThreatMap({
             key={`${point.matchId}:${point.eventId}`}
             onClick={() => onSelect?.(point)}
             aria-label={`${point.outcome} · abrir evento ${point.eventId}`}
-            title={`${point.outcome} · X ${Math.round(point.x * 100)} · Y ${Math.round(point.y * 100)}`}
+            title={pointTitle?.(point) ?? `${point.outcome} · X ${Math.round(point.x * 100)} · Y ${Math.round(point.y * 100)}`}
             className={`absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/80 shadow focus:ring-4 focus:ring-white/50 ${OUTCOME_COLOR[point.outcome]}`}
             style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%` }}
           />
@@ -57,7 +59,7 @@ export function PitchThreatMap({
   );
 }
 
-export function GoalThreatMap({ points, onSelect }: { points: DashboardGoalPoint[]; onSelect?: (point: DashboardGoalPoint) => void }) {
+export function GoalThreatMap({ points, onSelect, pointTitle }: { points: DashboardGoalPoint[]; onSelect?: (point: DashboardGoalPoint) => void; pointTitle?: (point: DashboardGoalPoint) => string }) {
   return (
     <article className="rounded-3xl border border-slate-700 bg-slate-900 p-3 sm:p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -81,7 +83,7 @@ export function GoalThreatMap({ points, onSelect }: { points: DashboardGoalPoint
             key={`${point.matchId}:${point.eventId}`}
             onClick={() => onSelect?.(point)}
             aria-label={`${point.outcome} · abrir evento ${point.eventId}`}
-            title={`${point.outcome} · geometría V${point.target.geometryVersion}`}
+            title={pointTitle?.(point) ?? `${point.outcome} · geometría V${point.target.geometryVersion}`}
             className={`absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow focus:ring-4 focus:ring-white/50 ${OUTCOME_COLOR[point.outcome]}`}
             style={{ left: `${point.target.x * 100}%`, top: `${point.target.y * 100}%` }}
           />

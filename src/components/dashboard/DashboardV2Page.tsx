@@ -12,6 +12,7 @@ import { FacedMetricRow, OutcomeDistribution, TeamComparison } from "./SportsCom
 import { GoalThreatMap, PitchThreatMap } from "./ThreatMaps";
 import { ComparisonHeader, comparisonRightLabel } from "./ComparisonHeader";
 import { EventTracePanel, TraceablePoint } from "./EventTracePanel";
+import { dashboardMapPointTitle } from "../../lib/dashboardTrace";
 import { EvolutionChart } from "./EvolutionChart";
 import { MetricHelp } from "./MetricHelp";
 import { DashboardMatchRecord, DASHBOARD_PHASES } from "../../lib/dashboardAnalytics";
@@ -43,9 +44,20 @@ function Kpi({ label, value, detail, tone = "text-white", help }: { label: strin
   return <article className="rounded-2xl border border-slate-700 bg-slate-900 p-3"><div className="flex items-center justify-between gap-2"><p className="text-[9px] font-black tracking-[.12em] text-slate-500">{label}</p>{help && <MetricHelp metricId={help}/>}</div><strong className={`mt-1 block text-2xl sm:text-3xl ${tone}`}>{value}</strong>{detail && <span className="mt-1 block text-[9px] text-slate-500">{detail}</span>}</article>;
 }
 
-function MiniTrend({ title, values, reference }: { title: string; values: number[]; reference: number | null }) {
-  const max = Math.max(1, reference ?? 0, ...values);
-  return <article className="rounded-2xl border border-slate-800 bg-slate-900 p-3"><div className="flex justify-between text-[9px] font-black text-slate-500"><span>{title}</span><span>MEDIA {format(reference)}</span></div><div className="mt-3 flex h-20 items-end gap-1 border-b border-slate-700">{values.map((value, index) => <span key={index} title={String(value)} className="relative flex-1 rounded-t bg-cyan-400/80" style={{ height: `${Math.max(3, value / max * 100)}%` }}>{reference !== null && <i className="absolute inset-x-0 border-t border-dashed border-amber-300" style={{ bottom: `${reference / max * 100}%` }} />}</span>)}</div></article>;
+type TeamEvolutionMetric = "goalsFor" | "goalsAgainst" | "threatsFor" | "threatsAgainst" | "shotsOnTarget" | "shotsOnTargetPct" | "threatsOnTarget" | "threatsOnTargetPct" | "shotsNear" | "threatsNear" | "savePercentage";
+const TEAM_EVOLUTION: Array<[TeamEvolutionMetric, string]> = [["goalsFor", "GF"], ["goalsAgainst", "GC"], ["threatsFor", "REMATES"], ["threatsAgainst", "AMENAZAS"], ["shotsOnTarget", "REM. A PUERTA"], ["shotsOnTargetPct", "% REM. A PUERTA"], ["threatsOnTarget", "AMEN. A PUERTA"], ["threatsOnTargetPct", "% AMEN. A PUERTA"], ["shotsNear", "REM. CERCANOS"], ["threatsNear", "AMEN. CERCANAS"], ["savePercentage", "% PARADA"]];
+
+function trendValue(item: Analysis["trends"][number], metric: TeamEvolutionMetric): number | null {
+  if (metric === "shotsOnTargetPct") return item.threatsFor ? item.shotsOnTarget / item.threatsFor * 100 : null;
+  if (metric === "threatsOnTargetPct") return item.threatsAgainst ? item.threatsOnTarget / item.threatsAgainst * 100 : null;
+  return item[metric];
+}
+
+function TeamEvolution({ analysis, reference, referenceLabel }: { analysis: Analysis; reference: Analysis; referenceLabel: string }) {
+  const [metric, setMetric] = useState<TeamEvolutionMetric>("threatsFor");
+  const values = reference.trends.map((item) => trendValue(item, metric)).filter((value): value is number => value !== null);
+  const referenceValue = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  return <section><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><SectionTitle>EVOLUCIÓN</SectionTitle><select aria-label="Métrica de evolución" value={metric} onChange={(event) => setMetric(event.target.value as TeamEvolutionMetric)} className="min-h-11 rounded-xl bg-slate-800 px-3 text-xs font-black">{TEAM_EVOLUTION.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div><EvolutionChart points={analysis.trends.map((item) => ({ id: item.matchId, label: item.opponent, detail: `${item.date} · ${item.venue === "HOME" ? "Local" : "Visitante"} · ${item.goalsFor}-${item.goalsAgainst}`, value: trendValue(item, metric) }))} reference={referenceValue} referenceLabel={referenceLabel}/></section>;
 }
 
 export function DashboardV2Page() {
@@ -116,7 +128,7 @@ export function DashboardV2Page() {
   return <div className="min-h-screen overflow-x-hidden bg-slate-950 text-white"><AppHeader title="Dashboard V2" clubId={fixture ? undefined : currentClubId} /><main className="mx-auto max-w-7xl space-y-6 p-3 pb-16 sm:p-5">
     <DashboardFilterBar clubName={workspace?.club.name ?? "Club"} clubs={clubs} onClub={setCurrentClub} scope={scope} teams={teams} seasons={seasons} matches={matches} rivals={rivals} players={analysis.players} goalkeepers={analysis.goalkeepers} referencePreset={referencePreset} mode={mode} onScope={setScope} onReferencePreset={setReferencePreset} onMode={setMode} onRefresh={() => setRecords(fixture ? buildDashboardFixture() : readLocalRecords())} fixture={fixture} />
     <nav aria-label="Secciones del Dashboard" className="flex gap-2 overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900 p-2">{AREAS.map(([key, label]) => <button key={key} type="button" onClick={() => setArea(key)} className={`min-h-11 shrink-0 rounded-xl px-4 text-xs font-black ${area === key ? "bg-cyan-300 text-slate-950" : "text-slate-400"}`}>{label}</button>)}</nav>
-    <ComparisonHeader right={comparisonRightLabel(scope, referencePreset)} scope={scope}/>
+    <ComparisonHeader left={area === "GOALKEEPERS" ? keeperA?.name.toUpperCase() ?? "PORTERO A" : "CDA"} right={area === "GOALKEEPERS" ? keeperB?.name.toUpperCase() ?? "PORTERO B" : comparisonRightLabel(scope, referencePreset)} scope={scope}/>
     {!ready ? <p className="p-10 text-center text-slate-500">Preparando análisis…</p> : analysis.analytics.matches === 0 ? <Empty /> : <>{area === "SUMMARY" && <Summary analysis={analysis} reference={reference} mode={mode} query={query} />}{area === "TEAM" && <TeamArea analysis={analysis} reference={reference} mode={mode} scope={scope} onScope={setScope} referenceLabel={comparisonRightLabel(scope, referencePreset)} />}{area === "PLAYERS" && <><SectionTitle eyebrow="CABECERAS CUANTITATIVAS ORDENABLES">JUGADORES</SectionTitle><PlayerTableV2 players={analysis.players} scores={scores} mode={mode} detailQuery={query} /></>}{area === "GOALKEEPERS" && <Goalkeepers analysis={analysis} keeperA={keeperA} keeperB={keeperB} onA={setKeeperAId} onB={setKeeperBId} query={query} />}{area === "MAPS" && <Maps analysis={analysis} scope={scope} onScope={setScope} onPoint={setSelectedPoint} />}</>}
   </main>{selectedPoint && <EventTracePanel records={analysis.records} point={selectedPoint} onClose={() => setSelectedPoint(null)}/>}</div>;
 }
@@ -158,5 +170,5 @@ function KeeperCard({ keeper, query }: { keeper: Analysis["goalkeepers"][number]
 }
 
 function Maps({ analysis, scope, onScope, onPoint }: { analysis: Analysis; scope: DashboardScopeV2; onScope: (scope: DashboardScopeV2) => void; onPoint: (point: TraceablePoint) => void }) {
-  return <section><SectionTitle eyebrow="PUNTOS EXACTOS · EVENTO TRAZABLE">MAPAS / ZONAS</SectionTitle><div className="grid gap-3 lg:grid-cols-2"><PitchThreatMap points={analysis.analytics.pitchPoints} side="FOR" onSelect={onPoint}/><PitchThreatMap points={analysis.analytics.pitchPoints} side="AGAINST" onSelect={onPoint}/><PitchZoneGrid zones={analysis.pitchZones} selected={scope.originZones} onSelect={(zone) => onScope({ ...scope, originZones: toggle(scope.originZones, zone) })}/><GoalThreatMap points={analysis.analytics.goalPoints} onSelect={onPoint}/><GoalZoneGrid zones={analysis.goalZones} selected={scope.targetZones} onSelect={(zone) => onScope({ ...scope, targetZones: toggle(scope.targetZones, zone) })}/></div></section>;
+  return <section><SectionTitle eyebrow="PUNTOS EXACTOS · EVENTO TRAZABLE">MAPAS / ZONAS</SectionTitle><div className="grid gap-3 lg:grid-cols-2"><PitchThreatMap points={analysis.analytics.pitchPoints} side="FOR" onSelect={onPoint} pointTitle={(point) => dashboardMapPointTitle(analysis.records, point)}/><PitchThreatMap points={analysis.analytics.pitchPoints} side="AGAINST" onSelect={onPoint} pointTitle={(point) => dashboardMapPointTitle(analysis.records, point)}/><PitchZoneGrid zones={analysis.pitchZones} selected={scope.originZones} onSelect={(zone) => onScope({ ...scope, originZones: toggle(scope.originZones, zone) })}/><GoalThreatMap points={analysis.analytics.goalPoints} onSelect={onPoint} pointTitle={(point) => dashboardMapPointTitle(analysis.records, point)}/><GoalZoneGrid zones={analysis.goalZones} selected={scope.targetZones} onSelect={(zone) => onScope({ ...scope, targetZones: toggle(scope.targetZones, zone) })}/></div></section>;
 }

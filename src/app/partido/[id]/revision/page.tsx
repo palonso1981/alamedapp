@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { AppHeader } from "../../../../components/app/AppHeader";
@@ -18,11 +18,15 @@ import { seasonById } from "../../../../lib/seasonDomain";
 import { useMatchStore } from "../../../../store/useMatchStore";
 import { useTeamStore } from "../../../../store/useTeamStore";
 import { CDA_CLUB_ID } from "../../../../types";
+import { buildDashboardFixture } from "../../../../lib/dashboardFixture";
 
 export default function MatchReviewPage() {
   const { id: matchId } = useParams<{ id: string }>();
   const router = useRouter();
-  const session = useMatchStore((state) => state.matches[matchId]);
+  const searchParams = useSearchParams();
+  const storedSession = useMatchStore((state) => state.matches[matchId]);
+  const fixtureSession = useMemo(() => searchParams.get("fixture") === "1" ? buildDashboardFixture().find((record) => record.catalog.matchId === matchId)?.session : undefined, [matchId, searchParams]);
+  const session = fixtureSession ?? storedSession;
   const ensureMatch = useMatchStore((state) => state.ensureMatch);
   const startFinishedReview = useMatchStore((state) => state.startFinishedReview);
   const startPeriodReview = useMatchStore((state) => state.startPeriodReview);
@@ -42,8 +46,8 @@ export default function MatchReviewPage() {
   const [pendingOnly, setPendingOnly] = useState(false);
   const [confirmValidation, setConfirmValidation] = useState(false);
 
-  useEffect(() => { ensureRegistry(); ensureMatch(matchId); }, [ensureMatch, ensureRegistry, matchId]);
-  useEffect(() => ensureTeam(matchClubId), [ensureTeam, matchClubId]);
+  useEffect(() => { ensureRegistry(); if (!fixtureSession) ensureMatch(matchId); }, [ensureMatch, ensureRegistry, fixtureSession, matchId]);
+  useEffect(() => { if (!fixtureSession) ensureTeam(matchClubId); }, [ensureTeam, fixtureSession, matchClubId]);
   useEffect(() => { if (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("eventId")) setHistoryOpen(true); }, []);
   const replay = useMemo(
     () => session

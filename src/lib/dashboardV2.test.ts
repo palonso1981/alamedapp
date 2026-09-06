@@ -4,11 +4,15 @@ import test from "node:test";
 import { MatchEvent } from "../types";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
 import { PitchOriginZone } from "./dashboardAnalysis";
+import { competitiveEventIds, deriveCompetitiveMinutes, isCompetitiveMoment } from "./dashboardCompetitiveContext";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "./dashboardFixture";
-import { createLineupInitializedEvent, createLiveThreatEvent } from "./matchEngine";
+import { compareMetricValues, METRIC_DEFINITIONS } from "./dashboardMetricDefinitions";
+import { dashboardMapPointTitle, resolveDashboardMapPoint } from "./dashboardTrace";
+import { createLineupInitializedEvent, createLiveThreatEvent, editEvent } from "./matchEngine";
 import {
   buildDashboardV2,
   buildPlayerScores,
+  derivedThreatSummary,
   emptyDashboardScope,
   filterDashboardDataset,
   mergeDashboardSearchParams,
@@ -56,7 +60,7 @@ test("ABP agrega córner, banda y falta sin incluir fases abiertas", () => {
 });
 
 test("scope y referencia viajan separados por URL y sobreviven reload", () => {
-  const analysis = { ...baseScope(), rivals: ["Racing Norte", "Sala Centro"], originZones: ["Z2" as const], period: 2 as const };
+  const analysis = { ...baseScope(), rivals: ["Racing Norte", "Sala Centro"], originZones: ["Z2" as const], period: 2 as const, outcomeGroup: "ON_TARGET" as const, originDistance: "NEAR" as const, competitiveContext: "GOLD" as const };
   const reference = { ...baseScope(), venues: ["AWAY" as const], period: 2 as const };
   const query = mergeDashboardSearchParams({ analysis, reference, referencePreset: "AWAY", mode: "PER_40", area: "PLAYERS" });
   const params = new URLSearchParams(query);
@@ -142,7 +146,7 @@ test("ordenación cuantitativa deja N/D al final y conserva empates", () => {
 test("fixture poblado cubre temporada, sedes, resultados, jugadores, porteros, fases y P-J sin persistir", () => {
   const records = buildDashboardFixture();
   const analysis = buildDashboardV2(records, baseScope());
-  assert.equal(records.length, 5);
+  assert.equal(records.length, 8);
   assert.ok(records.some((record) => record.catalog.venue === "HOME"));
   assert.ok(records.some((record) => record.catalog.venue === "AWAY"));
   assert.ok(analysis.players.length >= 8);
@@ -152,6 +156,74 @@ test("fixture poblado cubre temporada, sedes, resultados, jugadores, porteros, f
   assert.ok(analysis.flyingGoalkeeper.for.minutes > 0);
   assert.ok(analysis.analytics.threats.FOR.total > 0 && analysis.analytics.threats.AGAINST.total > 0);
   assert.ok(Object.values(analysis.analytics.phases).filter((phase) => phase.FOR + phase.AGAINST > 0).length >= 6);
+});
+
+test("definiciones centrales mantienen fórmulas, denominadores y dirección semántica", () => {
+  assert.equal(METRIC_DEFINITIONS.ON_TARGET.formula, "GOL + PARADA");
+  assert.equal(METRIC_DEFINITIONS.NEAR_ZONE.formula, "Z1 + Z2 + Z3");
+  assert.match(METRIC_DEFINITIONS.KEY_MINUTES.formula, /≤ 1/);
+  assert.match(METRIC_DEFINITIONS.GOLD_MINUTES.formula, /P2/);
+  assert.equal(compareMetricValues("SAVE_PERCENTAGE", 70, 60), "LEFT");
+  assert.equal(compareMetricValues("THREATS_AGAINST_40", 7, 9), "LEFT");
+  assert.equal(compareMetricValues("MINUTES", 20, 10), "NONE");
+});
+
+test("A PUERTA y CERCANAS son derivaciones objetivas e intersectables", () => {
+  const source = buildDashboardFixture()[0];
+  const events: MatchEvent[] = source.session.events.filter((event) => event.type !== "threat_recorded");
+  const outcomes = ["GOL", "GOL", "GOL", "PARADA", "PARADA", "PARADA", "PARADA", "PARADA", "FUERA", "FUERA"] as const;
+  outcomes.forEach((outcome, index) => events.push(createLiveThreatEvent({ id: `metric-${index}`, matchId: source.catalog.matchId, position: { period: 1, minute: index + 1, order: 1 }, side: "FOR", playerId: "fx-p-4", origin: index < 6 ? { x: .1, y: (index % 3 + .5) / 3 } : { x: .7, y: .5 }, outcome, phase: "POSITIONAL", assist: outcome === "GOL" ? { status: "NONE" } : undefined, now: index + 100 })));
+  const record = { ...source, session: { ...source.session, events } };
+  const all = buildDashboardV2([record], baseScope());
+  assert.equal(all.analytics.threats.FOR.total, 10);
+  assert.deepEqual(derivedThreatSummary(events, "FOR"), { total: 10, onTarget: 8, onTargetPercentage: 80, near: 6, nearPercentage: 60 });
+  const intersection = buildDashboardV2([record], { ...baseScope(), outcomeGroup: "ON_TARGET", originDistance: "NEAR" });
+  assert.equal(intersection.analytics.threats.FOR.total, 6);
+});
+
+test("contexto clave y oro usa marcador cronológico y solo minuto deportivo capturado", () => {
+  assert.equal(isCompetitiveMoment("KEY", 1, 5, 0, 0), true);
+  assert.equal(isCompetitiveMoment("KEY", 1, 5, 2, 0), false);
+  assert.equal(isCompetitiveMoment("KEY", 1, 5, 2, 1), true);
+  assert.equal(isCompetitiveMoment("GOLD", 2, 14, 1, 1), false);
+  assert.equal(isCompetitiveMoment("GOLD", 2, 15, 1, 1), true);
+  assert.equal(isCompetitiveMoment("GOLD", 2, 18, 3, 1), false);
+  const session = buildDashboardFixture()[0].session;
+  const key = deriveCompetitiveMinutes(session, "ALL", "KEY");
+  const gold = deriveCompetitiveMinutes(session, "ALL", "GOLD");
+  assert.ok(key.observed >= gold.observed);
+  assert.ok(Array.from(competitiveEventIds(session, "ALL", "GOLD")).every((id) => session.events.some((event) => event.id === id)));
+});
+
+test("trazabilidad resuelve coordenadas duplicadas únicamente por matchId + eventId", () => {
+  const record = buildDashboardFixture()[0];
+  const threats = record.session.events.filter((event) => event.type === "threat_recorded");
+  assert.ok(threats.length >= 2);
+  const wanted = threats[1];
+  const point = { matchId: record.catalog.matchId, eventId: wanted.id, side: wanted.side, outcome: wanted.outcome, x: threats[0].origin.x, y: threats[0].origin.y };
+  const resolved = resolveDashboardMapPoint([record], point);
+  assert.equal(resolved?.event.id, wanted.id);
+  assert.match(dashboardMapPointTitle([record], point), new RegExp(`P${wanted.period} · min ${wanted.minute}`));
+  assert.doesNotMatch(dashboardMapPointTitle([record], point), /\d{1,2}:\d{2}/);
+});
+
+test("editar un evento conserva la hora real original de captura", () => {
+  const record = buildDashboardFixture()[0];
+  const target = record.session.events.find((event) => event.type === "threat_recorded")!;
+  const result = editEvent(record.session.players, record.session.events, target.id, { minute: target.minute + 1 }, target.createdAt + 999_000);
+  const edited = result.find((event) => event.id === target.id)!;
+  assert.equal(edited.createdAt, target.createdAt);
+  assert.ok(edited.updatedAt > edited.createdAt);
+});
+
+test("evolución se ordena cronológicamente y respeta el filtro visitante", () => {
+  const input = buildDashboardFixture().reverse();
+  const all = buildDashboardV2(input, baseScope());
+  assert.deepEqual(all.trends.map((item) => item.date), [...all.trends.map((item) => item.date)].sort());
+  const away = buildDashboardV2(input, { ...baseScope(), venues: ["AWAY"] });
+  assert.ok(away.trends.length > 0);
+  assert.ok(away.trends.every((item) => item.venue === "AWAY"));
+  assert.deepEqual(away.trends.map((item) => item.date), [...away.trends.map((item) => item.date)].sort());
 });
 
 test("filtro de zona, fase y rival conserva la intersección y el click no borra filtros previos", () => {

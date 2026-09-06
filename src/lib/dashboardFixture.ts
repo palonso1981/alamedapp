@@ -105,8 +105,8 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
       createGameStateEvent({ id: `${matchId}-pj-off`, matchId, position: { period: 2, minute: 19, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "FOR", now: 5002 }),
     );
   }
-  const opponent = ["Racing Norte", "Sala Centro", "Atlético Sur", "Racing Norte", "Unión Este"][index];
-  const date = `2026-0${index + 1}-1${index}`;
+  const opponent = ["Racing Norte", "Sala Centro", "Atlético Sur", "Racing Norte", "Unión Este", "Futsal Oeste", "Ciudad Jardín", "Sala Centro"][index];
+  const date = `2026-${String(index + 1).padStart(2, "0")}-${String(10 + index).padStart(2, "0")}`;
   const preparation = {
     clubId: DASHBOARD_FIXTURE_CLUB_ID,
     teamId: DASHBOARD_FIXTURE_TEAM_ID,
@@ -159,5 +159,5 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
 
 /** Fixture exclusivamente en memoria para validación visual; nunca toca repositorios ni Firebase. */
 export function buildDashboardFixture(): DashboardMatchRecord[] {
-  return Array.from({ length: 5 }, (_, index) => buildFixtureRecord(index));
+  return Array.from({ length: 8 }, (_, index) => buildFixtureRecord(index));
 }

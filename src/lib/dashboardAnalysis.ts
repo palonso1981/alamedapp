@@ -65,6 +65,10 @@ export interface PlayerOnCourtStats {
   goalDifference40: number | null;
   foulsFor40: number | null;
   foulsAgainst40: number | null;
+  threatsForOnTarget: number;
+  threatsAgainstOnTarget: number;
+  threatsForNear: number;
+  threatsAgainstNear: number;
 }
 
 export interface PlayerMatchTrend {
@@ -108,6 +112,10 @@ export interface PlayerAnalysis {
   ownThreats: number;
   ownThreatsPerMatch: number | null;
   ownThreats40: number | null;
+  ownOnTarget: number;
+  ownOnTargetPercentage: number | null;
+  ownNear: number;
+  ownNearPercentage: number | null;
   ownOutcomes: Record<ThreatOutcome, number>;
   ownShotPoints: Array<{ eventId: string; x: number; y: number; outcome: ThreatOutcome }>;
   foulsCommitted: number;
@@ -267,8 +275,10 @@ function emptyOutcomes(): Record<ThreatOutcome, number> {
 
 function addOnCourtEvent(player: PlayerAnalysis, event: MatchEvent): void {
   if (event.type === "threat_recorded") {
-    if (event.side === "FOR") player.onCourt.threatsFor += 1;
-    else player.onCourt.threatsAgainst += 1;
+    const onTarget = event.outcome === "GOL" || event.outcome === "PARADA";
+    const near = ["Z1", "Z2", "Z3"].includes(derivePitchOriginZone(event.origin));
+    if (event.side === "FOR") { player.onCourt.threatsFor += 1; if (onTarget) player.onCourt.threatsForOnTarget += 1; if (near) player.onCourt.threatsForNear += 1; }
+    else { player.onCourt.threatsAgainst += 1; if (onTarget) player.onCourt.threatsAgainstOnTarget += 1; if (near) player.onCourt.threatsAgainstNear += 1; }
     if (event.outcome === "GOL") {
       if (event.side === "FOR") player.onCourt.goalsFor += 1;
       else player.onCourt.goalsAgainst += 1;
@@ -290,6 +300,8 @@ function finalizePlayer(player: PlayerAnalysis): void {
   player.assists40 = per40(player.assists, player.minutes);
   player.ownThreatsPerMatch = player.matches > 0 ? player.ownThreats / player.matches : null;
   player.ownThreats40 = per40(player.ownThreats, player.minutes);
+  player.ownOnTargetPercentage = player.ownThreats > 0 ? player.ownOnTarget / player.ownThreats * 100 : null;
+  player.ownNearPercentage = player.ownThreats > 0 ? player.ownNear / player.ownThreats * 100 : null;
   player.foulsCommittedPerMatch = player.matches > 0 ? player.foulsCommitted / player.matches : null;
   player.foulsCommitted40 = per40(player.foulsCommitted, player.minutes);
   player.foulsReceivedPerMatch = player.matches > 0 ? player.foulsReceived / player.matches : null;
@@ -338,6 +350,10 @@ function createPlayer(player: Player): PlayerAnalysis {
     ownThreats: 0,
     ownThreatsPerMatch: null,
     ownThreats40: null,
+    ownOnTarget: 0,
+    ownOnTargetPercentage: null,
+    ownNear: 0,
+    ownNearPercentage: null,
     ownOutcomes: emptyOutcomes(),
     ownShotPoints: [],
     foulsCommitted: 0,
@@ -361,6 +377,7 @@ function createPlayer(player: Player): PlayerAnalysis {
       foulsFor: 0, foulsAgainst: 0, threatsFor40: null, threatsAgainst40: null,
       threatDifference40: null, goalsFor40: null, goalsAgainst40: null,
       goalDifference40: null, foulsFor40: null, foulsAgainst40: null,
+      threatsForOnTarget: 0, threatsAgainstOnTarget: 0, threatsForNear: 0, threatsAgainstNear: 0,
     },
     lowSample: true,
     trend: [],
@@ -471,6 +488,8 @@ export function buildDashboardAnalysis(
         const player = playerMap.get(event.playerId);
         if (player) {
           player.ownThreats += 1;
+          if (event.outcome === "GOL" || event.outcome === "PARADA") player.ownOnTarget += 1;
+          if (["Z1", "Z2", "Z3"].includes(derivePitchOriginZone(event.origin))) player.ownNear += 1;
           const trend = player.trend.find((item) => item.matchId === session.matchId);
           if (trend) trend.threats += 1;
           player.ownOutcomes[event.outcome] += 1;

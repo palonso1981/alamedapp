@@ -43,13 +43,19 @@ export function deriveCompetitiveMinutes(session: MatchSession, period: Dashboar
   const replay = replayMatch(session.players, session.events, { currentClock: { period: session.matchFinished ? 2 : session.period, minute: session.matchFinished ? 20 : session.minute } });
   const byPlayer: Record<string, number> = {};
   let observed = 0;
+  let scoreFor = 0;
+  let scoreAgainst = 0;
   replay.timeline.forEach((entry, index) => {
+    if (entry.event.type === "threat_recorded" && entry.event.outcome === "GOL") {
+      if (entry.event.side === "FOR") scoreFor += 1;
+      else scoreAgainst += 1;
+    }
     const start = deriveGlobalMinute(entry.event.period, entry.event.minute);
     const next = replay.timeline[index + 1];
     const finish = Math.min(end, next ? deriveGlobalMinute(next.event.period, next.event.minute) : end);
     const from = Math.max(scopeStart, start);
     const to = Math.min(scopeEnd, finish);
-    if (to <= from || !isCompetitiveMoment(context, entry.event.period, entry.event.minute, entry.score.for, entry.score.against)) return;
+    if (to <= from || !isCompetitiveMoment(context, entry.event.period, entry.event.minute, scoreFor, scoreAgainst)) return;
     const duration = to - from;
     observed += duration;
     entry.lineupPlayerIds.forEach((id) => { byPlayer[id] = (byPlayer[id] ?? 0) + duration; });
