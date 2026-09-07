@@ -6,7 +6,7 @@ import { DashboardMatchRecord } from "../../lib/dashboardAnalytics";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "../../lib/dashboardFixture";
 import { listMatchCatalog, matchCatalogClubId, visibleMatchCatalog } from "../../lib/matchCatalog";
 import { loadMatchSession } from "../../lib/matchPersistence";
-import { buildDashboardV2, DashboardArea, DashboardReferencePreset, DashboardScopeV2, DashboardValueMode, emptyDashboardScope, mergeDashboardSearchParams, referenceScopeForPreset, scopeFromSearchParams } from "../../lib/dashboardV2";
+import { buildDashboardV2, DashboardArea, DashboardReferencePreset, DashboardScopeV2, DashboardValueMode, defaultDashboardCompetition, emptyDashboardScope, mergeDashboardSearchParams, referenceScopeForPreset, scopeFromSearchParams } from "../../lib/dashboardV2";
 import { useTeamStore } from "../../store/useTeamStore";
 
 function localRecords(): DashboardMatchRecord[] {
@@ -42,8 +42,11 @@ export function useDashboardProfileData(pathname: string, area: DashboardArea = 
     const seasonId = active?.seasons.find((season) => season.teamId === teamId && season.current && season.active)?.seasonId ?? active?.seasons.find((season) => season.teamId === teamId && season.active)?.seasonId ?? "";
     const fallback = emptyDashboardScope(fixture ? DASHBOARD_FIXTURE_CLUB_ID : currentClubId, fixture ? DASHBOARD_FIXTURE_TEAM_ID : teamId, fixture ? DASHBOARD_FIXTURE_SEASON_ID : seasonId);
     const params = new URLSearchParams(searchParams.toString());
-    setRecords(fixture ? buildDashboardFixture() : localRecords());
-    setScope(scopeFromSearchParams(params, "a", fallback));
+    const loadedRecords = fixture ? buildDashboardFixture() : localRecords();
+    const parsedScope = scopeFromSearchParams(params, "a", fallback);
+    if (!params.has("aCompetition")) parsedScope.competition = defaultDashboardCompetition(loadedRecords, parsedScope);
+    setRecords(loadedRecords);
+    setScope(parsedScope);
     setReferencePreset((params.get("reference") as DashboardReferencePreset) ?? "SEASON");
     setMode((params.get("mode") as DashboardValueMode) ?? "TOTALS");
     setReady(true);

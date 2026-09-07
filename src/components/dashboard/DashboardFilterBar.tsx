@@ -1,5 +1,6 @@
 "use client";
 
+import { ReactNode } from "react";
 import { MatchCatalogEntry } from "../../lib/matchCatalog";
 import {
   DashboardPhaseFilter,
@@ -43,9 +44,10 @@ export interface DashboardFilterBarProps {
   onMode: (mode: DashboardValueMode) => void;
   onRefresh?: () => void;
   fixture?: boolean;
+  comparison?: ReactNode;
 }
 
-export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams, seasons, matches, rivals, players = [], goalkeepers = [], referencePreset, mode, onScope, onReferencePreset, onMode, onRefresh, fixture }: DashboardFilterBarProps) {
+export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams, seasons, matches, rivals, players = [], goalkeepers = [], referencePreset, mode, onScope, onReferencePreset, onMode, onRefresh, fixture, comparison }: DashboardFilterBarProps) {
   const patch = (changes: Partial<DashboardScopeV2>) => onScope({ ...scope, ...changes });
   const chips: Array<{ key: string; label: string; clear: () => void }> = [];
   if (scope.period !== "ALL") chips.push({ key: "period", label: `P${scope.period}`, clear: () => patch({ period: "ALL" }) });
@@ -64,7 +66,7 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
   scope.goalkeeperIds.forEach((id) => chips.push({ key: `keeper-${id}`, label: `Portero ${goalkeepers.find((keeper) => keeper.playerId === id)?.name ?? id}`, clear: () => patch({ goalkeeperIds: scope.goalkeeperIds.filter((item) => item !== id) }) }));
   const clearAll = () => patch({ matchIds: [], period: "ALL", venues: [], results: [], rivals: [], phases: [], playerIds: [], goalkeeperIds: [], originZones: [], targetZones: [], outcomes: [], outcomeGroup: "ALL", originDistance: "ALL", competitiveContext: "ALL" });
 
-  return <section className="sticky top-0 z-30 rounded-b-3xl border border-t-0 border-slate-700 bg-slate-950/95 p-3 shadow-2xl backdrop-blur sm:top-2 sm:rounded-3xl sm:border-t">
+  return <><div data-dashboard-sticky-context className="sticky top-16 z-30 overflow-hidden rounded-b-3xl border border-t-0 border-slate-700 bg-slate-950/95 shadow-2xl backdrop-blur sm:rounded-3xl"><section className="p-3">
     <div className="flex items-center gap-2 overflow-x-auto pb-1">
       {fixture || !onClub ? <span className="shrink-0 rounded-xl bg-cyan-950 px-3 py-2 text-[10px] font-black text-cyan-200">{fixture ? "FIXTURE LOCAL" : clubName}</span> : <select aria-label="Club" value={scope.clubId} onChange={(event) => onClub(event.target.value)} className="min-h-10 min-w-36 rounded-xl bg-cyan-950 px-3 text-[10px] font-black text-cyan-100">{clubs.map((club) => <option key={club.clubId} value={club.clubId}>{club.name}</option>)}</select>}
       <select aria-label="Equipo" value={scope.teamId} onChange={(event) => { const teamId = event.target.value; patch({ teamId, seasonId: seasons.find((season) => season.teamId === teamId && season.current)?.seasonId ?? seasons.find((season) => season.teamId === teamId)?.seasonId ?? "", matchIds: [] }); }} className="min-h-10 min-w-36 rounded-xl bg-slate-800 px-3 text-xs font-black">
@@ -75,10 +77,12 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
         {!fixture && seasons.filter((season) => season.teamId === scope.teamId).map((season) => <option key={season.seasonId} value={season.seasonId}>{season.label}</option>)}
         {fixture && <option value={scope.seasonId}>2026-27</option>}
       </select>
+      <select aria-label="Competición" value={scope.competition} onChange={(event) => patch({ competition: event.target.value as DashboardScopeV2["competition"], matchIds: [] })} className="min-h-10 min-w-32 rounded-xl bg-indigo-950 px-3 text-xs font-black text-indigo-100"><option value="LEAGUE">Liga</option><option value="CUP">Copa</option><option value="FRIENDLY">Amistoso</option><option value="OTHER">Otra</option><option value="ALL">Todas</option><option value="UNSPECIFIED">Sin clasificar</option></select>
       <select aria-label="Partido" value={scope.matchIds.length === 1 ? scope.matchIds[0] : "ALL"} onChange={(event) => patch({ matchIds: event.target.value === "ALL" ? [] : [event.target.value] })} className="min-h-10 min-w-44 rounded-xl bg-slate-800 px-3 text-xs font-black">
         <option value="ALL">Todos los partidos</option>
         {matches.map((match) => <option key={match.matchId} value={match.matchId}>{match.date} · {match.opponent}</option>)}
       </select>
+      <select aria-label="Portero funcional" value={scope.goalkeeperIds.length === 1 ? scope.goalkeeperIds[0] : "ALL"} onChange={(event) => patch({ goalkeeperIds: event.target.value === "ALL" ? [] : [event.target.value] })} className="min-h-10 min-w-40 rounded-xl bg-sky-950 px-3 text-xs font-black text-sky-100"><option value="ALL">Todos los porteros</option>{goalkeepers.map((keeper) => <option key={keeper.playerId} value={keeper.playerId}>🥅 {keeper.name}</option>)}</select>
       {(["ALL", 1, 2] as const).map((period) => <MultiButton key={period} active={scope.period === period} onClick={() => patch({ period })}>{period === "ALL" ? "TODO" : `P${period}`}</MultiButton>)}
       {onRefresh && <button type="button" onClick={onRefresh} className="grid min-h-10 min-w-10 place-items-center rounded-xl border border-slate-700 text-lg" aria-label="Actualizar datos">↻</button>}
     </div>
@@ -96,7 +100,7 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
         <div className="flex rounded-xl bg-slate-900 p-1">{(["TOTALS", "PER_MATCH", "PER_40"] as DashboardValueMode[]).map((item) => <button key={item} type="button" onClick={() => onMode(item)} className={`min-h-8 rounded-lg px-2 text-[9px] font-black ${mode === item ? "bg-white text-slate-950" : "text-slate-500"}`}>{item === "TOTALS" ? "TOTALES" : item === "PER_MATCH" ? "POR PARTIDO" : "POR 40"}</button>)}</div>
       </div>
     </div>
-    <details className="mt-2 rounded-2xl bg-slate-900/80 px-3 py-2">
+    </section>{comparison}</div><details data-dashboard-advanced-filters className="rounded-2xl border border-slate-800 bg-slate-900/80 px-3 py-2">
       <summary className="cursor-pointer text-[10px] font-black text-slate-400">FILTROS AVANZADOS · {chips.length}</summary>
       <div className="mt-3 space-y-3">
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">SEDE · RESULTADO</span>{(["HOME", "AWAY"] as const).map((value) => <MultiButton key={value} active={scope.venues.includes(value)} onClick={() => patch({ venues: toggle(scope.venues, value) })}>{value === "HOME" ? "LOCAL" : "VISITANTE"}</MultiButton>)}{(["WIN", "DRAW", "LOSS"] as const).map((value) => <MultiButton key={value} active={scope.results.includes(value)} onClick={() => patch({ results: toggle(scope.results, value) })}>{value === "WIN" ? "VICTORIA" : value === "DRAW" ? "EMPATE" : "DERROTA"}</MultiButton>)}</div>
@@ -108,6 +112,5 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">CONTEXTO TEMPORAL</span>{(["ALL", "KEY", "GOLD"] as const).map((value) => <MultiButton key={value} active={scope.competitiveContext === value} onClick={() => patch({ competitiveContext: value })}>{value === "ALL" ? "TODOS" : value === "KEY" ? "MINUTOS CLAVE" : "MINUTOS DE ORO"}</MultiButton>)}</div>
         {(players.length > 0 || goalkeepers.length > 0) && <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">JUGADOR / PORTERO · CUANDO LA MÉTRICA ES COMPATIBLE</span>{players.map((player) => <MultiButton key={player.playerId} active={scope.playerIds.includes(player.playerId)} onClick={() => patch({ playerIds: toggle(scope.playerIds, player.playerId) })}>{player.name}</MultiButton>)}{goalkeepers.map((keeper) => <MultiButton key={`gk-${keeper.playerId}`} active={scope.goalkeeperIds.includes(keeper.playerId)} onClick={() => patch({ goalkeeperIds: toggle(scope.goalkeeperIds, keeper.playerId) })}>🥅 {keeper.name}</MultiButton>)}</div>}
       </div>
-    </details>
-  </section>;
+    </details></>;
 }

@@ -19,11 +19,13 @@ import { useMatchStore } from "../../../../store/useMatchStore";
 import { useTeamStore } from "../../../../store/useTeamStore";
 import { CDA_CLUB_ID } from "../../../../types";
 import { buildDashboardFixture } from "../../../../lib/dashboardFixture";
+import { safeDashboardReturnTo } from "../../../../lib/dashboardNavigation";
 
 export default function MatchReviewPage() {
   const { id: matchId } = useParams<{ id: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const returnTo = safeDashboardReturnTo(searchParams.get("returnTo"));
   const storedSession = useMatchStore((state) => state.matches[matchId]);
   const fixtureSession = useMemo(() => searchParams.get("fixture") === "1" ? buildDashboardFixture().find((record) => record.catalog.matchId === matchId)?.session : undefined, [matchId, searchParams]);
   const session = fixtureSession ?? storedSession;
@@ -94,6 +96,7 @@ export default function MatchReviewPage() {
     <div className="min-h-screen bg-slate-900 text-white">
       <AppHeader title={`Revisión · ${session.preparation.opponent}`} actions={<SyncStatusBadge matchId={matchId} />} />
       <main className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
+        {returnTo && <Link href={returnTo} className="sticky top-2 z-40 inline-flex min-h-11 items-center rounded-xl border border-cyan-700 bg-slate-950/95 px-4 text-xs font-black text-cyan-200 shadow-xl backdrop-blur">← VOLVER AL ANÁLISIS</Link>}
         <section className="grid gap-4 rounded-3xl border border-slate-700 bg-slate-800 p-5 sm:grid-cols-[1fr_auto] sm:items-center">
           <div><p className="text-xs font-black uppercase tracking-wider text-amber-300">{season?.label ?? "LEGACY · SIN TEMPORADA"} · {session.preparation.date}</p><h2 className="mt-1 text-3xl font-black">{session.preparation.opponent}</h2><p className="mt-1 text-sm text-slate-400">{session.preparation.venue === "HOME" ? "Local" : "Visitante"} · P1 {p1.for}-{p1.against} · P2 {p2.for}-{p2.against}</p></div>
           <div className="text-center"><p className="text-5xl font-black">{replay.score.for}–{replay.score.against}</p><span className={`mt-2 inline-block rounded-full px-3 py-1 text-xs font-black ${status === "VALIDATED" ? "bg-emerald-950 text-emerald-300" : status === "IN_REVIEW" ? "bg-cyan-950 text-cyan-300" : "bg-amber-950 text-amber-300"}`}>{status === "VALIDATED" ? "VALIDADO" : status === "IN_REVIEW" ? "EN REVISIÓN" : "PENDIENTE DE REVISIÓN"}</span></div>

@@ -1,12 +1,13 @@
 import { DashboardAnalysis } from "../../lib/dashboardAnalysis";
-import { DashboardValueMode, outcomeDistribution, TeamMetricKey, teamMetricValue } from "../../lib/dashboardV2";
+import { DashboardValueMode, outcomeDistribution, TeamMetricKey, teamMetricValue, teamPairedMetricValue } from "../../lib/dashboardV2";
+import { PAIRED_METRIC_DEFINITIONS } from "../../lib/dashboardMetricDefinitions";
 import { ThreatOutcomeStats } from "../../lib/dashboardAnalytics";
 import { ThreatSide } from "../../types";
 
 const format = (value: number | null, suffix = "") => value === null ? "N/D" : `${Number.isInteger(value) ? value : value.toFixed(1).replace(".", ",")}${suffix}`;
 
-export function FacedMetricRow({ label, own, rival, ownReference, rivalReference, semantics = "neutral" }: { label: string; own: number | null; rival: number | null; ownReference: number | null; rivalReference: number | null; semantics?: "higher" | "lower" | "neutral" }) {
-  const max = Math.max(1, own ?? 0, rival ?? 0, ownReference ?? 0, rivalReference ?? 0);
+export function FacedMetricRow({ label, own, rival, ownReference, rivalReference, ownGoals, rivalGoals, semantics = "neutral" }: { label: string; own: number | null; rival: number | null; ownReference: number | null; rivalReference: number | null; ownGoals?: number; rivalGoals?: number; semantics?: "higher" | "lower" | "neutral" }) {
+  const max = Math.max(1, own ?? 0, rival ?? 0, ownReference ?? 0, rivalReference ?? 0, ownGoals ?? 0, rivalGoals ?? 0);
   const ownDiff = own === null || ownReference === null ? null : own - ownReference;
   const rivalDiff = rival === null || rivalReference === null ? null : rival - rivalReference;
   const differenceColor = (difference: number | null, side: "own" | "rival") => {
@@ -16,9 +17,9 @@ export function FacedMetricRow({ label, own, rival, ownReference, rivalReference
   };
   return <div className="grid grid-cols-[3rem_minmax(4rem,1fr)_6rem_minmax(4rem,1fr)_3rem] items-center gap-2">
     <strong className="text-right text-sm text-cyan-200">{format(own)}</strong>
-    <div className="relative h-7 rounded-l-full bg-slate-950"><span className="absolute right-0 top-1 h-5 rounded-l-full bg-cyan-400" style={{ width: `${(own ?? 0) / max * 100}%` }} />{ownReference !== null && <i title={`Referencia ${format(ownReference)}`} aria-label={`Referencia ${format(ownReference)}`} className="absolute bottom-[-2px] top-[-2px] z-10 border-l-2 border-dashed border-amber-200" style={{ right: `${ownReference / max * 100}%` }}><b className="absolute -top-3 -translate-x-1/2 text-[8px] not-italic text-amber-100">{format(ownReference)}</b></i>}</div>
+    <div className="relative h-7 rounded-l-full bg-slate-950"><span className="absolute right-0 top-1 h-5 rounded-l-full bg-cyan-400" style={{ width: `${(own ?? 0) / max * 100}%` }} />{ownReference !== null && <i title={`Referencia ${format(ownReference)}`} aria-label={`Referencia ${format(ownReference)}`} className="absolute bottom-[-2px] top-[-2px] z-10 border-l-2 border-dashed border-amber-200" style={{ right: `${ownReference / max * 100}%` }}><b className="absolute -top-3 -translate-x-1/2 text-[8px] not-italic text-amber-100">{format(ownReference)}</b></i>}{ownGoals !== undefined && <span title={`${label} CDA · Remates ${format(own)} · Referencia ${format(ownReference)} · GF ${ownGoals} · % gol ${format(own && own > 0 ? ownGoals / own * 100 : null, "%")}`} aria-label={`GF ${ownGoals}`} className="absolute top-0 z-20 -translate-x-1/2 rounded-full border border-emerald-200 bg-emerald-500 px-1 text-[8px] font-black text-slate-950" style={{ right: `${Math.max(0, ownGoals / max * 100)}%` }}>GF {ownGoals}</span>}</div>
     <div className="text-center"><strong className="block text-[10px]">{label}</strong><span className="text-[8px] text-slate-500">ACTUAL · ◇ MEDIA</span><span className={`block text-[8px] ${differenceColor(ownDiff, "own")}`}>CDA Δ {format(ownDiff)}</span></div>
-    <div className="relative h-7 rounded-r-full bg-slate-950"><span className="absolute left-0 top-1 h-5 rounded-r-full bg-rose-400" style={{ width: `${(rival ?? 0) / max * 100}%` }} />{rivalReference !== null && <i title={`Referencia ${format(rivalReference)}`} aria-label={`Referencia ${format(rivalReference)}`} className="absolute bottom-[-2px] top-[-2px] z-10 border-l-2 border-dashed border-amber-200" style={{ left: `${rivalReference / max * 100}%` }}><b className="absolute -top-3 -translate-x-1/2 text-[8px] not-italic text-amber-100">{format(rivalReference)}</b></i>}</div>
+    <div className="relative h-7 rounded-r-full bg-slate-950"><span className="absolute left-0 top-1 h-5 rounded-r-full bg-rose-400" style={{ width: `${(rival ?? 0) / max * 100}%` }} />{rivalReference !== null && <i title={`Referencia ${format(rivalReference)}`} aria-label={`Referencia ${format(rivalReference)}`} className="absolute bottom-[-2px] top-[-2px] z-10 border-l-2 border-dashed border-amber-200" style={{ left: `${rivalReference / max * 100}%` }}><b className="absolute -top-3 -translate-x-1/2 text-[8px] not-italic text-amber-100">{format(rivalReference)}</b></i>}{rivalGoals !== undefined && <span title={`${label} rival · Amenazas ${format(rival)} · Referencia ${format(rivalReference)} · GC ${rivalGoals} · % gol recibido ${format(rival && rival > 0 ? rivalGoals / rival * 100 : null, "%")}`} aria-label={`GC ${rivalGoals}`} className="absolute top-0 z-20 -translate-x-1/2 rounded-full border border-rose-200 bg-rose-500 px-1 text-[8px] font-black text-white" style={{ left: `${Math.max(0, rivalGoals / max * 100)}%` }}>GC {rivalGoals}</span>}</div>
     <strong className="text-sm text-rose-200">{format(rival)}</strong>
     <span className="col-start-4 col-span-2 text-[8px] text-slate-500">RIV Δ <b className={differenceColor(rivalDiff, "rival")}>{format(rivalDiff)}</b></span>
   </div>;
@@ -32,6 +33,7 @@ export function TeamComparison({ analysis, reference, mode }: { analysis: Dashbo
     <FacedMetricRow label="REMATES" {...pair("threatsFor", "threatsAgainst")} semantics="higher" />
     <FacedMetricRow label="GOLES" {...pair("goalsFor", "goalsAgainst")} semantics="higher" />
     <FacedMetricRow label="FALTAS" {...pair("foulsFor", "foulsAgainst")} semantics="neutral" />
+    <div className="grid gap-2 border-t border-slate-800 pt-3 sm:grid-cols-2">{PAIRED_METRIC_DEFINITIONS.map((definition) => { const value = teamPairedMetricValue(analysis, definition.id, mode); return <div key={definition.id} title={definition.tooltip} className="rounded-xl bg-slate-950 p-3"><span className="text-[9px] font-black text-slate-500">{definition.label}</span><strong className="mt-1 block text-xl">{format(value.left)}–{format(value.right)} <small className={value.difference !== null && value.difference >= 0 ? "text-emerald-300" : "text-rose-300"}>· {value.difference !== null && value.difference > 0 ? "+" : ""}{format(value.difference)}</small></strong><span className="text-[8px] text-slate-500">{definition.differenceLabel}</span></div>; })}</div>
   </article>;
 }
 

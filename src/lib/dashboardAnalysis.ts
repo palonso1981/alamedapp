@@ -10,6 +10,7 @@ import {
 import {
   buildDashboardAnalytics,
   DashboardGoalPoint,
+  DashboardThreatPoint,
   DashboardMatchRecord,
   DashboardPeriod,
   DashboardScope,
@@ -101,8 +102,10 @@ export interface PlayerAnalysis {
   averageMinutes: number | null;
   keyMinutes: number;
   keyMinutesPerMatch: number | null;
+  keyMinutesPercentage: number | null;
   goldMinutes: number;
   goldMinutesPerMatch: number | null;
+  goldMinutesPercentage: number | null;
   targetMinutes?: number;
   goals: number;
   goalsPerMatch: number | null;
@@ -156,6 +159,11 @@ export interface GoalkeeperAnalysis {
   bodyParts: Record<KeeperBodyPart, number>;
   saveOutcomes: Record<SaveOutcome, number>;
   goalPoints: DashboardGoalPoint[];
+  originPoints: DashboardThreatPoint[];
+  keyMinutes: number;
+  keyMinutesPercentage: number | null;
+  goldMinutes: number;
+  goldMinutesPercentage: number | null;
 }
 
 export interface TrendPoint {
@@ -192,6 +200,8 @@ export interface DashboardAnalysis {
   rates: TeamRates;
   players: PlayerAnalysis[];
   goalkeepers: GoalkeeperAnalysis[];
+  teamKeyMinutes: number;
+  teamGoldMinutes: number;
   trends: TrendPoint[];
   pitchZones: ZoneStats<PitchOriginZone>[];
   goalZones: ZoneStats<GoalZoneV1>[];
@@ -339,8 +349,10 @@ function createPlayer(player: Player): PlayerAnalysis {
     averageMinutes: null,
     keyMinutes: 0,
     keyMinutesPerMatch: null,
+    keyMinutesPercentage: null,
     goldMinutes: 0,
     goldMinutesPerMatch: null,
+    goldMinutesPercentage: null,
     targetMinutes: undefined,
     goals: 0,
     goalsPerMatch: null,
@@ -572,6 +584,16 @@ export function buildDashboardAnalysis(
       if (!record || !event) return false;
       return normalGoalkeeperForThreat(record.session, event) === keeper.playerId;
     }),
+    originPoints: analytics.pitchPoints.filter((point) => {
+      if (point.side !== "AGAINST") return false;
+      const record = selected.find((candidate) => candidate.session.matchId === point.matchId);
+      const event = record?.session.events.find((candidate): candidate is ThreatRecordedEvent => candidate.id === point.eventId && candidate.type === "threat_recorded");
+      return Boolean(record && event && normalGoalkeeperForThreat(record.session, event) === keeper.playerId);
+    }),
+    keyMinutes: 0,
+    keyMinutesPercentage: null,
+    goldMinutes: 0,
+    goldMinutesPercentage: null,
   }));
   finishZones(pitchZones);
   finishZones(goalZones);
@@ -590,6 +612,8 @@ export function buildDashboardAnalysis(
     },
     players: players.sort((a, b) => b.minutes - a.minutes || a.number - b.number),
     goalkeepers,
+    teamKeyMinutes: 0,
+    teamGoldMinutes: 0,
     trends,
     pitchZones,
     goalZones,

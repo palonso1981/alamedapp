@@ -7,7 +7,7 @@ import {
   createLiveThreatEvent,
   createSubstitutionEvent,
 } from "./matchEngine";
-import { MatchEvent, MatchSession, Player, ThreatPhase } from "../types";
+import { CompetitionType, MatchEvent, MatchSession, Player, ThreatPhase } from "../types";
 
 export const DASHBOARD_FIXTURE_CLUB_ID = "dashboard-fixture-club";
 export const DASHBOARD_FIXTURE_TEAM_ID = "dashboard-fixture-team";
@@ -114,12 +114,16 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
       createGameStateEvent({ id: `${matchId}-pj-off`, matchId, position: { period: 2, minute: 19, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "FOR", now: 5002 }),
     );
   }
-  const opponent = ["Racing Norte", "Sala Centro", "Atlético Sur", "Racing Norte", "Unión Este", "Futsal Oeste", "Ciudad Jardín", "Sala Centro"][index];
+  const opponent = ["Racing Norte", "Sala Centro", "Atlético Sur", "Racing Norte", "Unión Este", "Futsal Oeste", "Ciudad Jardín", "Sala Centro", "Legacy Norte"][index];
   const date = `2026-${String(index + 1).padStart(2, "0")}-${String(10 + index).padStart(2, "0")}`;
   const preparation = {
     clubId: DASHBOARD_FIXTURE_CLUB_ID,
     teamId: DASHBOARD_FIXTURE_TEAM_ID,
     seasonId: DASHBOARD_FIXTURE_SEASON_ID,
+    ...(index < 4 ? { competitionType: "LEAGUE" as CompetitionType }
+      : index < 6 ? { competitionType: "FRIENDLY" as CompetitionType }
+        : index < 8 ? { competitionType: "CUP" as CompetitionType }
+          : {}),
     opponent,
     venue: home ? "HOME" as const : "AWAY" as const,
     date,
@@ -168,5 +172,5 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
 
 /** Fixture exclusivamente en memoria para validación visual; nunca toca repositorios ni Firebase. */
 export function buildDashboardFixture(): DashboardMatchRecord[] {
-  return Array.from({ length: 8 }, (_, index) => buildFixtureRecord(index));
+  return Array.from({ length: 9 }, (_, index) => buildFixtureRecord(index));
 }

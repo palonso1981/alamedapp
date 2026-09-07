@@ -1,4 +1,5 @@
 import {
+  CompetitionType,
   MatchEvent,
   ThreatOutcome,
   ThreatPhase,
@@ -8,7 +9,6 @@ import {
   DashboardMatchRecord,
   DashboardPeriod,
   filterDashboardMatches,
-  normalGoalkeeperForThreat,
 } from "./dashboardAnalytics";
 import {
   AnalysisScope,
@@ -28,6 +28,7 @@ import { CompetitiveContext, competitiveEventIds, deriveCompetitiveMinutes } fro
 export type DashboardValueMode = "TOTALS" | "PER_MATCH" | "PER_40";
 export type DashboardArea = "SUMMARY" | "TEAM" | "PLAYERS" | "GOALKEEPERS" | "MAPS";
 export type DashboardPhaseFilter = ThreatPhase | "SET_PIECE";
+export type DashboardCompetition = CompetitionType | "UNSPECIFIED" | "ALL";
 export type DashboardReferencePreset =
   | "SEASON"
   | "HOME"
@@ -43,6 +44,7 @@ export interface DashboardScopeV2 {
   clubId: string;
   teamId: string;
   seasonId: string;
+  competition: DashboardCompetition;
   matchIds: string[];
   period: DashboardPeriod;
   venues: Exclude<VenueFilter, "ALL">[];
@@ -116,6 +118,7 @@ export function emptyDashboardScope(
     clubId,
     teamId,
     seasonId,
+    competition: "ALL",
     matchIds: [],
     period: "ALL",
     venues: [],
@@ -194,12 +197,17 @@ function threatMatches(
     if (target.startsWith("OUT_") || !scope.targetZones.includes(target as GoalZoneV1)) return false;
   }
   if (scope.playerIds.length > 0 && (!event.playerId || !scope.playerIds.includes(event.playerId))) return false;
-  if (scope.goalkeeperIds.length > 0) {
-    if (event.side !== "AGAINST") return false;
-    const goalkeeperId = normalGoalkeeperForThreat(record.session, event);
-    if (!goalkeeperId || !scope.goalkeeperIds.includes(goalkeeperId)) return false;
-  }
   return true;
+}
+
+export function matchCompetition(record: DashboardMatchRecord): Exclude<DashboardCompetition, "ALL"> {
+  return record.session.preparation?.competitionType ?? "UNSPECIFIED";
+}
+
+export function defaultDashboardCompetition(records: readonly DashboardMatchRecord[], scope: Pick<DashboardScopeV2, "clubId" | "teamId" | "seasonId">): DashboardCompetition {
+  const available = new Set(records.filter((record) => record.catalog.clubId === scope.clubId && record.catalog.teamId === scope.teamId && record.catalog.seasonId === scope.seasonId).map(matchCompetition));
+  if (available.has("LEAGUE")) return "LEAGUE";
+  return available.size === 1 ? Array.from(available)[0] : "ALL";
 }
 
 function originZone(event: ThreatRecordedEvent): PitchOriginZone {
@@ -238,11 +246,12 @@ export function filterDashboardDataset(
   });
   return base
     .filter((record) => scope.matchIds.length === 0 || scope.matchIds.includes(record.catalog.matchId))
+    .filter((record) => scope.competition === "ALL" || matchCompetition(record) === scope.competition)
     .filter((record) => scope.rivals.length === 0 || scope.rivals.includes(record.catalog.opponent))
     .filter((record) => scope.venues.length === 0 || scope.venues.includes(record.catalog.venue))
     .filter((record) => scope.results.length === 0 || Boolean(matchResult(record) && scope.results.includes(matchResult(record)!)))
     .map((record) => {
-      const contextIds = competitiveEventIds(record.session, scope.period, scope.competitiveContext);
+      const contextIds = competitiveEventIds(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds);
       return {
         catalog: record.catalog,
         session: {
@@ -276,16 +285,24 @@ export function buildDashboardV2(
   const originals = records.filter((record) => selectedIds.has(record.catalog.matchId));
   const keyByPlayer: Record<string, number> = {};
   const goldByPlayer: Record<string, number> = {};
+  const keyByGoalkeeper: Record<string, number> = {};
+  const goldByGoalkeeper: Record<string, number> = {};
   const contextByPlayer: Record<string, number> = {};
   const contextByGoalkeeper: Record<string, number> = {};
   let contextObserved = 0;
+  let teamKeyMinutes = 0;
+  let teamGoldMinutes = 0;
   for (const record of originals) {
-    const key = deriveCompetitiveMinutes(record.session, scope.period, "KEY");
-    const gold = deriveCompetitiveMinutes(record.session, scope.period, "GOLD");
-    const current = deriveCompetitiveMinutes(record.session, scope.period, scope.competitiveContext);
+    const key = deriveCompetitiveMinutes(record.session, scope.period, "KEY", scope.goalkeeperIds);
+    const gold = deriveCompetitiveMinutes(record.session, scope.period, "GOLD", scope.goalkeeperIds);
+    const current = deriveCompetitiveMinutes(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds);
+    teamKeyMinutes += key.observed;
+    teamGoldMinutes += gold.observed;
     contextObserved += current.observed;
     for (const [id, value] of Object.entries(key.byPlayer)) keyByPlayer[id] = (keyByPlayer[id] ?? 0) + value;
     for (const [id, value] of Object.entries(gold.byPlayer)) goldByPlayer[id] = (goldByPlayer[id] ?? 0) + value;
+    for (const [id, value] of Object.entries(key.byGoalkeeper)) keyByGoalkeeper[id] = (keyByGoalkeeper[id] ?? 0) + value;
+    for (const [id, value] of Object.entries(gold.byGoalkeeper)) goldByGoalkeeper[id] = (goldByGoalkeeper[id] ?? 0) + value;
     for (const [id, value] of Object.entries(current.byPlayer)) contextByPlayer[id] = (contextByPlayer[id] ?? 0) + value;
     for (const [id, value] of Object.entries(current.byGoalkeeper)) contextByGoalkeeper[id] = (contextByGoalkeeper[id] ?? 0) + value;
     for (const player of analysis.players) {
@@ -298,6 +315,8 @@ export function buildDashboardV2(
     player.goldMinutes = goldByPlayer[player.playerId] ?? 0;
     player.keyMinutesPerMatch = player.matches > 0 ? player.keyMinutes / player.matches : null;
     player.goldMinutesPerMatch = player.matches > 0 ? player.goldMinutes / player.matches : null;
+    player.keyMinutesPercentage = chronologicalParticipationPercentage(player.keyMinutes, teamKeyMinutes);
+    player.goldMinutesPercentage = chronologicalParticipationPercentage(player.goldMinutes, teamGoldMinutes);
     if (scope.competitiveContext !== "ALL") {
       player.minutes = contextByPlayer[player.playerId] ?? 0;
       player.averageMinutes = player.matches > 0 ? player.minutes / player.matches : null;
@@ -307,6 +326,14 @@ export function buildDashboardV2(
       player.onCourt.threatsFor40 = per40(player.onCourt.threatsFor, player.minutes);
       player.onCourt.threatsAgainst40 = per40(player.onCourt.threatsAgainst, player.minutes);
     }
+  }
+  analysis.teamKeyMinutes = teamKeyMinutes;
+  analysis.teamGoldMinutes = teamGoldMinutes;
+  for (const goalkeeper of analysis.goalkeepers) {
+    goalkeeper.keyMinutes = keyByGoalkeeper[goalkeeper.playerId] ?? 0;
+    goalkeeper.goldMinutes = goldByGoalkeeper[goalkeeper.playerId] ?? 0;
+    goalkeeper.keyMinutesPercentage = chronologicalParticipationPercentage(goalkeeper.keyMinutes, teamKeyMinutes);
+    goalkeeper.goldMinutesPercentage = chronologicalParticipationPercentage(goalkeeper.goldMinutes, teamGoldMinutes);
   }
   if (scope.competitiveContext !== "ALL") {
     for (const goalkeeper of analysis.goalkeepers) {
@@ -358,6 +385,28 @@ export function teamMetricValue(
           : metric === "goalsAgainst" ? "goalsAgainst40"
             : metric === "foulsFor" ? "foulsFor40" : "foulsAgainst40"
   ];
+}
+
+export type PairedMetricId = "GOALS" | "THREATS" | "ON_TARGET" | "NEAR";
+export interface PairedMetricValue { left: number | null; right: number | null; difference: number | null }
+
+export function chronologicalParticipationPercentage(participantMinutes: number, teamChronologicalMinutes: number): number | null {
+  return teamChronologicalMinutes > 0 ? participantMinutes / teamChronologicalMinutes * 100 : null;
+}
+
+export function teamPairedMetricValue(analysis: DashboardAnalysis, id: PairedMetricId, mode: DashboardValueMode): PairedMetricValue {
+  const summaryFor = derivedThreatSummary(analysis.records.flatMap((record) => record.session.events), "FOR");
+  const summaryAgainst = derivedThreatSummary(analysis.records.flatMap((record) => record.session.events), "AGAINST");
+  const totals = id === "GOALS" ? [analysis.analytics.goalsFor, analysis.analytics.goalsAgainst]
+    : id === "THREATS" ? [analysis.analytics.threats.FOR.total, analysis.analytics.threats.AGAINST.total]
+      : id === "ON_TARGET" ? [summaryFor.onTarget, summaryAgainst.onTarget]
+        : [summaryFor.near, summaryAgainst.near];
+  const normalize = (value: number): number | null => mode === "TOTALS" ? value
+    : mode === "PER_MATCH" ? analysis.samples > 0 ? value / analysis.samples : null
+      : per40(value, analysis.rates.observedMinutes);
+  const left = normalize(totals[0]);
+  const right = normalize(totals[1]);
+  return { left, right, difference: left === null || right === null ? null : left - right };
 }
 
 export function playerMetricValue(
@@ -462,6 +511,7 @@ export function scopeToSearchParams(scope: DashboardScopeV2, prefix: "a" | "r"):
   params.set(`${prefix}Club`, scope.clubId);
   params.set(`${prefix}Team`, scope.teamId);
   params.set(`${prefix}Season`, scope.seasonId);
+  params.set(`${prefix}Competition`, scope.competition);
   if (scope.period !== "ALL") params.set(`${prefix}Period`, String(scope.period));
   if (scope.includeArchived) params.set(`${prefix}Archived`, "1");
   if (scope.outcomeGroup !== "ALL") params.set(`${prefix}OutcomeGroup`, scope.outcomeGroup);
@@ -484,6 +534,7 @@ export function scopeFromSearchParams(
     clubId: params.get(`${prefix}Club`) ?? fallback.clubId,
     teamId: params.get(`${prefix}Team`) ?? fallback.teamId,
     seasonId: params.get(`${prefix}Season`) ?? fallback.seasonId,
+    competition: (["ALL", "LEAGUE", "CUP", "FRIENDLY", "OTHER", "UNSPECIFIED"] as DashboardCompetition[]).includes(params.get(`${prefix}Competition`) as DashboardCompetition) ? params.get(`${prefix}Competition`) as DashboardCompetition : fallback.competition,
     period: period === "1" ? 1 : period === "2" ? 2 : fallback.period,
     includeArchived: params.get(`${prefix}Archived`) === "1" || fallback.includeArchived,
     outcomeGroup: params.get(`${prefix}OutcomeGroup`) === "ON_TARGET" ? "ON_TARGET" : fallback.outcomeGroup,

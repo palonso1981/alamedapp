@@ -40,7 +40,7 @@ export function isCompetitiveMoment(context: CompetitiveContext, period: number,
  * a él; si es gol, el marcador nuevo rige desde ese mismo minuto hasta el
  * siguiente evento. Sin segundos deportivos, no se inventa una fracción menor.
  */
-export function deriveCompetitiveProjection(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext): CompetitiveProjection {
+export function deriveCompetitiveProjection(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext, goalkeeperIds: readonly string[] = []): CompetitiveProjection {
   const end = matchEnd(session);
   const [scopeStart, scopeEnd] = periodBounds(period, end);
   const projection: CompetitiveProjection = { observed: 0, byPlayer: {}, byGoalkeeper: {}, eventIds: new Set<string>() };
@@ -50,8 +50,13 @@ export function deriveCompetitiveProjection(session: MatchSession, period: Dashb
   let scoreAgainst = 0;
   replay.timeline.forEach((entry, index) => {
     const event = entry.event;
+    const goalkeeper = entry.gameContexts.includes("FLYING_GOALKEEPER")
+      ? null
+      : goalkeeperAtPosition(session.players, session.events, event);
+    const goalkeeperMatches = goalkeeperIds.length === 0
+      || (goalkeeper?.status === "PLAYER" && goalkeeperIds.includes(goalkeeper.playerId));
     const start = deriveGlobalMinute(event.period, event.minute);
-    if (start >= scopeStart && start <= scopeEnd && isCompetitiveMoment(context, event.period, event.minute, scoreFor, scoreAgainst)) {
+    if (goalkeeperMatches && start >= scopeStart && start <= scopeEnd && isCompetitiveMoment(context, event.period, event.minute, scoreFor, scoreAgainst)) {
       projection.eventIds.add(event.id);
     }
     if (entry.event.type === "threat_recorded" && entry.event.outcome === "GOL") {
@@ -63,23 +68,20 @@ export function deriveCompetitiveProjection(session: MatchSession, period: Dashb
     let from = Math.max(scopeStart, start);
     const to = Math.min(scopeEnd, finish);
     if (context === "GOLD") from = Math.max(from, GOLD_WINDOW_START_GLOBAL_MINUTE);
-    if (to <= from || (context !== "ALL" && Math.abs(scoreFor - scoreAgainst) > 1)) return;
+    if (!goalkeeperMatches || to <= from || (context !== "ALL" && Math.abs(scoreFor - scoreAgainst) > 1)) return;
     const duration = to - from;
     projection.observed += duration;
     entry.lineupPlayerIds.forEach((id) => { projection.byPlayer[id] = (projection.byPlayer[id] ?? 0) + duration; });
-    if (!entry.gameContexts.includes("FLYING_GOALKEEPER")) {
-      const goalkeeper = goalkeeperAtPosition(session.players, session.events, event);
-      if (goalkeeper.status === "PLAYER") projection.byGoalkeeper[goalkeeper.playerId] = (projection.byGoalkeeper[goalkeeper.playerId] ?? 0) + duration;
-    }
+    if (goalkeeper?.status === "PLAYER") projection.byGoalkeeper[goalkeeper.playerId] = (projection.byGoalkeeper[goalkeeper.playerId] ?? 0) + duration;
   });
   return projection;
 }
 
-export function deriveCompetitiveMinutes(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext): CompetitiveMinutes {
-  const { observed, byPlayer, byGoalkeeper } = deriveCompetitiveProjection(session, period, context);
+export function deriveCompetitiveMinutes(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext, goalkeeperIds: readonly string[] = []): CompetitiveMinutes {
+  const { observed, byPlayer, byGoalkeeper } = deriveCompetitiveProjection(session, period, context, goalkeeperIds);
   return { observed, byPlayer, byGoalkeeper };
 }
 
-export function competitiveEventIds(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext): Set<string> {
-  return deriveCompetitiveProjection(session, period, context).eventIds;
+export function competitiveEventIds(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext, goalkeeperIds: readonly string[] = []): Set<string> {
+  return deriveCompetitiveProjection(session, period, context, goalkeeperIds).eventIds;
 }
