@@ -196,3 +196,34 @@ pueden repetirse sin ambigüedad. En portería, origen, destino, parte corporal 
 datos distintos. Un punto agregado —por ejemplo una jornada en una evolución— no recibe un
 `eventId` ficticio ni ofrece `VER EVENTO`. El fixture `?fixture=1` sigue siendo exclusivamente
 memoria de desarrollo: no escribe repositorios, outbox ni Firebase.
+
+## Dashboard V2.3 — scope competitivo y navegación analítica
+
+La cabecera queda compuesta por dos niveles dentro del mismo sticky: scope principal compacto
+y, solo cuando aporta información, identidad CDA/referencia o A/B. Los filtros avanzados viven
+fuera de ese contenedor y se expanden en el flujo normal; desplazan el contenido y desaparecen
+al hacer scroll, sin overlay. Competición es parte del scope principal junto a club, equipo y
+temporada. Se reutiliza `competitionType` (`LEAGUE`, `CUP`, `FRIENDLY`, `OTHER`); un partido
+legacy sin valor se analiza como `UNSPECIFIED` sin migrarlo. La URL prevalece; sin parámetro se
+elige Liga cuando existe, la única competición cuando solo hay una y Todas en el resto. Las
+referencias heredan competición, por lo que “Media temporada” bajo Liga nunca mezcla Copa o
+amistosos. Creación y Prepartido siguen siendo los puntos de edición; Directo no cambia.
+
+Los porcentajes Clave/Oro dividen los minutos de intersección del jugador entre la duración
+cronológica Clave/Oro del equipo en el mismo scope. El denominador no se multiplica por cinco y
+un denominador cero se presenta como N/D. Los balances se definen centralmente solo para pares
+homogéneos: GF-GC, REM-AME, A puerta y Cercanos, disponibles en Total, Por partido y Por 40.
+SCORE ALAM, Clave/Oro, A puerta y Cercanas conservan sus definiciones anteriores.
+
+Portero es un filtro global temporal: conserva toda la actividad del equipo únicamente durante
+los intervalos en los que la persona seleccionada ocupa el rol funcional de portero normal. Los
+intervalos P-J se excluyen y el filtro se intersecta con periodo, competición, sede y Clave/Oro.
+El análisis de porteros comparte una columna simétrica con foto, KPI, mapa de origen en campo,
+mapa de destino en portería, cuerpo, desenlaces y evolución.
+
+Las fases aparecen después del resumen de Equipo. Su barra conserva volumen sólido y referencia
+discontinua y añade el marcador visible GF/GC del scope. El detalle accesible informa volumen,
+referencia, goles y porcentaje. La navegación de un punto mantiene identidad exclusiva
+`matchId + eventId` y añade un `returnTo` interno validado: Revisión muestra “Volver al análisis”
+y recupera ruta, query, sección, filtros y anchor. Se rechazan orígenes externos, rutas que no
+sean Dashboard y variantes protocol-relative.
