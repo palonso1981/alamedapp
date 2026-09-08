@@ -227,3 +227,34 @@ referencia, goles y porcentaje. La navegación de un punto mantiene identidad ex
 `matchId + eventId` y añade un `returnTo` interno validado: Revisión muestra “Volver al análisis”
 y recupera ruta, query, sección, filtros y anchor. Se rechazan orígenes externos, rutas que no
 sean Dashboard y variantes protocol-relative.
+
+## Dashboard V2.4 — referencia flexible y escalabilidad
+
+`analysisScope` y `referenceScope` son scopes completos e independientes. La referencia puede
+ser un preset, un partido elegido manualmente o una selección personalizada de competición,
+rivales, sede, resultado y periodo. Un rival significa siempre “partidos de CDA contra ese
+rival”; nunca se interpreta como la temporada completa de un tercero. La referencia hereda la
+competición del análisis al crearse y solo cruza competiciones mediante una elección explícita.
+Ambos scopes se codifican por separado en la URL (`a*` y `r*`) y sobreviven navegación, recarga,
+fichas y trazabilidad.
+
+El selector de partidos es un combobox buscable por rival, jornada, fecha y competición. Sus
+labels combinan jornada o competición, rival, fecha y marcador cuando está disponible. La
+comparación partido contra partido usa magnitudes brutas; si las muestras tienen distinto
+número de partidos, el benchmark primario cambia a media por partido para no enfrentar, por
+ejemplo, 10 remates contra 60 acumulados en cinco encuentros.
+
+La ficha de jugador conserva el comparador numérico simétrico y añade mapas y evoluciones A/B
+para jugador contra jugador o el mismo jugador en dos scopes. Cada mapa usa exclusivamente sus
+propios eventos y mantiene `matchId + eventId` y `returnTo`, incluido el lado de procedencia. La
+media de plantilla no inventa una posición espacial media: no se muestra un mapa ficticio.
+
+Todas las evoluciones por partido mantienen el ancho de su contenedor. Las observaciones se
+comprimen reduciendo gap y densidad de etiquetas para 5, 15 o 30 partidos; no se elimina ningún
+dato y no existe scroll horizontal interno. El tooltip conserva rival, fecha, contexto y valor.
+
+Partidos incorpora filtros compactos por temporada, competición, jornada, rival y texto. En
+Plantilla, “Añadir del club” busca identidades maestras activas y crea únicamente la membership
+de temporada. El `playerId` permanece estable, las personas ya vinculadas se marcan y no pueden
+duplicarse, y Archivados conserva su semántica de ciclo de vida. El flujo usa el repositorio
+offline-first y su outbox existente; no añade una segunda relación ni agregados persistidos.
