@@ -56,9 +56,10 @@ function isPlayingStateEvent(event: MatchEvent, context: Exclude<PlayingStateCon
 }
 
 /**
- * Los estados P-J son sostenidos y deportivos: se abren/cierra por eventos ON/OFF
+ * Los estados P-J son sostenidos y deportivos: se abren/cierran por eventos ON/OFF
  * y nunca por timestamps de captura. Cada periodo es independiente; un ON sin OFF
- * se cierra en el último minuto observado de ese periodo.
+ * se cierra en el límite deportivo conocido (fin de periodo/partido) o, si sigue
+ * en curso, en el minuto actual, sin proyectar tiempo futuro.
  */
 export function derivePlayingStateIntervals(
   session: MatchSession,

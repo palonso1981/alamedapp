@@ -347,6 +347,20 @@ test("un intervalo P-J abierto se cierra al final observado de su periodo y no s
   assert.deepEqual(intervals.map((interval) => [interval.period, interval.startMinute, interval.endMinute]), [[1, 12, 20]]);
 });
 
+test("P-J CDA abierto al finalizar P2 usa el límite deportivo y no el último evento", () => {
+  const record = playingStateRecord();
+  const events = record.session.events.filter((event) => !["pj-cda-p2-off", "pj-cda-c"].includes(event.id));
+  const intervals = derivePlayingStateIntervals({ ...record.session, events }, 2, "PJ_CDA");
+  assert.deepEqual(intervals.map((interval) => [interval.startMinute, interval.endMinute]), [[15, 20]]);
+});
+
+test("P-J rival abierto al finalizar P2 usa el límite deportivo y permanece separado de P1", () => {
+  const record = playingStateRecord();
+  const events = record.session.events.filter((event) => event.id !== "pj-rival-off");
+  const intervals = derivePlayingStateIntervals({ ...record.session, events }, "ALL", "PJ_RIVAL");
+  assert.deepEqual(intervals.map((interval) => [interval.period, interval.startMinute, interval.endMinute]), [[2, 11, 20]]);
+});
+
 test("filtro PJ incluye solo eventos del intervalo y se intersecta con Clave/Oro", () => {
   const record = playingStateRecord();
   const cda = filterDashboardDataset([record], { ...baseScope(), matchIds: [record.catalog.matchId], playingState: "PJ_CDA" });
