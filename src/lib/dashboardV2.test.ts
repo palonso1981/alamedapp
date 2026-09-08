@@ -9,6 +9,7 @@ import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEA
 import { compareMetricValues, METRIC_DEFINITIONS } from "./dashboardMetricDefinitions";
 import { dashboardMapPointTitle, resolveDashboardMapPoint } from "./dashboardTrace";
 import { revisionEventHref, safeDashboardReturnTo } from "./dashboardNavigation";
+import { adaptiveChartLayout, filterSearchableMatches, searchableMatchLabel } from "./dashboardSelectors";
 
 test("returnTo acepta solo rutas Dashboard internas y conserva la identidad del evento", () => {
   const returnTo = "/dashboard/jugador/p1?aCompetition=LEAGUE&shot=GOL#shot-map";
@@ -32,6 +33,7 @@ import {
   derivedThreatSummary,
   emptyDashboardScope,
   filterDashboardDataset,
+  homogeneousComparisonMode,
   mergeDashboardSearchParams,
   outcomeDistribution,
   playerMetricValue,
@@ -57,16 +59,16 @@ test("competición TODAS sobrevive explícitamente en la URL", () => {
 
 test("competición es scope principal, legacy no se convierte en Liga y la referencia la hereda", () => {
   const records = buildDashboardFixture();
-  assert.equal(records.length, 9);
-  assert.equal(records.filter((record) => record.session.preparation?.competitionType === "LEAGUE").length, 4);
-  assert.equal(records.filter((record) => record.session.preparation?.competitionType === "FRIENDLY").length, 2);
-  assert.equal(records.filter((record) => record.session.preparation?.competitionType === "CUP").length, 2);
-  assert.equal(records.filter((record) => !record.session.preparation?.competitionType).length, 1);
+  assert.equal(records.length, 30);
+  assert.equal(records.filter((record) => record.session.preparation?.competitionType === "LEAGUE").length, 21);
+  assert.equal(records.filter((record) => record.session.preparation?.competitionType === "FRIENDLY").length, 3);
+  assert.equal(records.filter((record) => record.session.preparation?.competitionType === "CUP").length, 3);
+  assert.equal(records.filter((record) => !record.session.preparation?.competitionType).length, 3);
   assert.equal(defaultDashboardCompetition(records, baseScope()), "LEAGUE");
   const league = { ...baseScope(), competition: "LEAGUE" as const, rivals: ["Racing Norte"] };
   assert.equal(buildDashboardV2(records, league).records.every((record) => record.session.preparation?.competitionType === "LEAGUE"), true);
   assert.equal(referenceScopeForPreset(league, "SEASON").competition, "LEAGUE");
-  assert.equal(buildDashboardV2(records, { ...baseScope(), competition: "UNSPECIFIED" }).records[0]?.catalog.opponent, "Legacy Norte");
+  assert.ok(buildDashboardV2(records, { ...baseScope(), competition: "UNSPECIFIED" }).records.every((record) => !record.session.preparation?.competitionType));
 });
 
 test("balances pareados mantienen tanteo y diferencia en todos los modos", () => {
@@ -80,7 +82,7 @@ test("balances pareados mantienen tanteo y diferencia en todos los modos", () =>
 });
 
 test("filtro global de portero conserva toda la actividad del equipo durante sus intervalos y excluye P-J", () => {
-  const record = buildDashboardFixture()[4];
+  const record = buildDashboardFixture()[17];
   const filtered = filterDashboardDataset([record], { ...baseScope(), competition: "FRIENDLY", goalkeeperIds: ["fx-gk-2"] });
   const threats = filtered.flatMap((item) => item.session.events).filter((event) => event.type === "threat_recorded");
   assert.ok(threats.some((event) => event.side === "FOR"));
@@ -210,7 +212,7 @@ test("ordenación cuantitativa deja N/D al final y conserva empates", () => {
 test("fixture poblado cubre temporada, sedes, resultados, jugadores, porteros, fases y P-J sin persistir", () => {
   const records = buildDashboardFixture();
   const analysis = buildDashboardV2(records, baseScope());
-  assert.equal(records.length, 9);
+  assert.equal(records.length, 30);
   assert.ok(records.some((record) => record.catalog.venue === "HOME"));
   assert.ok(records.some((record) => record.catalog.venue === "AWAY"));
   assert.ok(analysis.players.length >= 8);
@@ -398,4 +400,54 @@ test("filtro de zona, fase y rival conserva la intersección y el click no borra
   assert.ok(threats.length > 0);
   assert.ok(filtered.every((record) => record.catalog.opponent === candidate.record.catalog.opponent));
   assert.ok(threats.every((event) => event.phase === phase));
+});
+
+test("referenceScope personalizado hace roundtrip en URL sin alterar analysisScope", () => {
+  const analysis = { ...baseScope(), competition: "LEAGUE" as const, matchIds: ["dashboard-fixture-8"] };
+  const reference = { ...baseScope(), competition: "LEAGUE" as const, rivals: ["Racing Norte", "Sala Centro"], venues: ["AWAY" as const], period: 2 as const };
+  const query = mergeDashboardSearchParams({ analysis, reference, referencePreset: "CUSTOM", mode: "TOTALS", area: "PLAYERS" });
+  const params = new URLSearchParams(query);
+  assert.deepEqual(scopeFromSearchParams(params, "a", emptyDashboardScope()).matchIds, analysis.matchIds);
+  assert.deepEqual(scopeFromSearchParams(params, "r", emptyDashboardScope()).rivals, reference.rivals);
+  assert.deepEqual(scopeFromSearchParams(params, "r", emptyDashboardScope()).venues, ["AWAY"]);
+  assert.equal(scopeFromSearchParams(params, "r", emptyDashboardScope()).period, 2);
+  assert.equal(params.get("reference"), "CUSTOM");
+});
+
+test("partido vs partido usa bruto y partido vs multiparte usa media homogénea", () => {
+  assert.equal(homogeneousComparisonMode(1, 1, "TOTALS"), "TOTALS");
+  assert.equal(homogeneousComparisonMode(1, 5, "TOTALS"), "PER_MATCH");
+  assert.equal(homogeneousComparisonMode(4, 6, "TOTALS"), "PER_MATCH");
+  assert.equal(homogeneousComparisonMode(4, 4, "TOTALS"), "PER_MATCH");
+  assert.equal(homogeneousComparisonMode(1, 5, "PER_40"), "PER_40");
+});
+
+test("combobox busca 30 partidos por rival jornada fecha y competición", () => {
+  const matches = buildDashboardFixture().map((record) => ({ ...record.catalog, matchday: record.session.preparation?.matchday, competitionLabel: record.session.preparation?.competitionType }));
+  assert.equal(matches.length, 30);
+  assert.ok(filterSearchableMatches(matches, "Racing Norte").every((match) => match.opponent === "Racing Norte"));
+  assert.deepEqual(filterSearchableMatches(matches, "J7").map((match) => match.matchday), [7]);
+  assert.ok(filterSearchableMatches(matches, "league").length > 10);
+  assert.match(searchableMatchLabel(matches[6]), /^J7 · /);
+});
+
+test("gráficas adaptan gap y labels sin eliminar observaciones", () => {
+  const five = adaptiveChartLayout(5, 390);
+  const fifteen = adaptiveChartLayout(15, 390);
+  const thirty = adaptiveChartLayout(30, 390);
+  assert.ok(five.gap > fifteen.gap && fifteen.gap > thirty.gap);
+  assert.equal(five.labelEvery, 1);
+  assert.ok(thirty.labelEvery > 1);
+});
+
+test("mapas del mismo jugador respetan eventIds distintos de analysis y reference", () => {
+  const records = buildDashboardFixture();
+  const analysis = buildDashboardV2(records, { ...baseScope(), matchIds: [records[0].catalog.matchId] });
+  const reference = buildDashboardV2(records, { ...baseScope(), matchIds: [records[1].catalog.matchId] });
+  const a = analysis.players.find((player) => player.playerId === "fx-p-4")?.ownShotPoints ?? [];
+  const b = reference.players.find((player) => player.playerId === "fx-p-4")?.ownShotPoints ?? [];
+  assert.ok(a.length > 0 && b.length > 0);
+  assert.ok(a.every((point) => point.matchId === records[0].catalog.matchId));
+  assert.ok(b.every((point) => point.matchId === records[1].catalog.matchId));
+  assert.equal(new Set([...a, ...b].map((point) => `${point.matchId}:${point.eventId}`)).size, a.length + b.length);
 });

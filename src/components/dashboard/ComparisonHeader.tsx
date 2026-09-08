@@ -1,6 +1,6 @@
 import { DashboardReferencePreset, DashboardScopeV2 } from "../../lib/dashboardV2";
 
-const REFERENCES: Record<DashboardReferencePreset, string> = { SEASON: "MEDIA TEMPORADA", HOME: "MEDIA LOCAL", AWAY: "MEDIA VISITANTE", WINS: "VICTORIAS", DRAWS: "EMPATES", LOSSES: "DERROTAS", P1: "MEDIA P1", P2: "MEDIA P2", FILTERED: "SELECCIÓN FILTRADA" };
+const REFERENCES: Record<DashboardReferencePreset, string> = { SEASON: "MEDIA TEMPORADA", HOME: "MEDIA LOCAL", AWAY: "MEDIA VISITANTE", WINS: "VICTORIAS", DRAWS: "EMPATES", LOSSES: "DERROTAS", P1: "MEDIA P1", P2: "MEDIA P2", FILTERED: "SELECCIÓN FILTRADA", MATCH: "PARTIDO", CUSTOM: "REFERENCIA PERSONALIZADA" };
 
 export function scopeLabel(scope: DashboardScopeV2): string {
   const competition = { ALL: "Todas", LEAGUE: "Liga", CUP: "Copa", FRIENDLY: "Amistoso", OTHER: "Otra", UNSPECIFIED: "Sin clasificar" }[scope.competition];
@@ -8,10 +8,12 @@ export function scopeLabel(scope: DashboardScopeV2): string {
   return parts.length ? parts.join(" · ") : "Temporada completa";
 }
 
-export function comparisonRightLabel(scope: DashboardScopeV2, reference: DashboardReferencePreset): string {
-  if (scope.rivals.length === 1) return scope.rivals[0].toUpperCase();
+export function comparisonRightLabel(scope: DashboardScopeV2, preset: DashboardReferencePreset, matchLabel?: string): string {
+  if (scope.matchIds.length === 1) return matchLabel?.toUpperCase() ?? "PARTIDO SELECCIONADO";
+  if (scope.rivals.length === 1) return `PARTIDOS VS ${scope.rivals[0].toUpperCase()}`;
   if (scope.rivals.length > 1) return `${scope.rivals.length} RIVALES`;
-  return REFERENCES[reference];
+  if (preset === "CUSTOM") return scopeLabel(scope).toUpperCase();
+  return REFERENCES[preset];
 }
 
 export function ComparisonHeader({ left = "CDA", right, scope }: { left?: string; right: string; scope: DashboardScopeV2 }) {

@@ -38,7 +38,9 @@ export type DashboardReferencePreset =
   | "LOSSES"
   | "P1"
   | "P2"
-  | "FILTERED";
+  | "FILTERED"
+  | "MATCH"
+  | "CUSTOM";
 
 export interface DashboardScopeV2 {
   clubId: string;
@@ -159,7 +161,20 @@ export function referenceScopeForPreset(
   if (preset === "P1") reference.period = 1;
   if (preset === "P2") reference.period = 2;
   if (preset === "FILTERED") return { ...analysis, matchIds: [] };
+  // MATCH y CUSTOM conservan un scope explícito gestionado por la interfaz.
+  // Este fallback solo se usa al inicializarlos por primera vez.
+  if (preset === "MATCH" || preset === "CUSTOM") return reference;
   return reference;
+}
+
+/** Una comparación primaria nunca enfrenta acumulados de muestras distintas. */
+export function homogeneousComparisonMode(
+  analysisSamples: number,
+  referenceSamples: number,
+  requested: DashboardValueMode,
+): DashboardValueMode {
+  if (requested !== "TOTALS") return requested;
+  return analysisSamples === 1 && referenceSamples === 1 ? "TOTALS" : "PER_MATCH";
 }
 
 function matchResult(record: DashboardMatchRecord): Exclude<ResultFilter, "ALL"> | null {

@@ -29,6 +29,7 @@ export default function RosterPage() {
   const ensureRegistry = useTeamStore((state) => state.ensureRegistry);
   const ensureTeam = useTeamStore((state) => state.ensureTeam);
   const createPlayer = useTeamStore((state) => state.createPlayer);
+  const addPlayerToSeason = useTeamStore((state) => state.addPlayerToSeason);
   const updatePlayer = useTeamStore((state) => state.updatePlayer);
   const createStaff = useTeamStore((state) => state.createStaff);
   const updateStaff = useTeamStore((state) => state.updateStaff);
@@ -42,6 +43,8 @@ export default function RosterPage() {
   const [scope, setScope] = useState<"ROSTER" | "CLUB">("ROSTER");
   const [playerPosition, setPlayerPosition] = useState<FutsalPosition | "">("");
   const [additionalGoalkeeper, setAdditionalGoalkeeper] = useState(false);
+  const [clubPlayerPicker, setClubPlayerPicker] = useState(false);
+  const [clubPlayerQuery, setClubPlayerQuery] = useState("");
 
   useEffect(() => ensureRegistry(), [ensureRegistry]);
   useEffect(() => ensureTeam(currentClubId), [currentClubId, ensureTeam]);
@@ -93,6 +96,12 @@ export default function RosterPage() {
     return map;
   }, [workspace]);
 
+  const linkedPlayerIds = useMemo(() => new Set(workspace?.seasonPlayers.filter((membership) => membership.seasonId === seasonId && membership.active && !membership.archivedAt && !membership.deletedAt).map((membership) => membership.playerId) ?? []), [seasonId, workspace]);
+  const clubPlayerCandidates = useMemo(() => {
+    const query = clubPlayerQuery.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    return (workspace?.players ?? []).filter((player) => player.active && !player.archivedAt && !player.deletedAt).filter((player) => `${player.fullName} ${player.displayName} ${player.number} ${formatFutsalPosition(player.primaryPosition)}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(query));
+  }, [clubPlayerQuery, workspace]);
+
   function submitPlayer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const data = new FormData(event.currentTarget);
     const primaryPosition = String(data.get("primaryPosition") ?? "");
@@ -132,7 +141,8 @@ export default function RosterPage() {
         </div>
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => setShowInactive((value) => !value)} className={`min-h-11 rounded-xl px-4 text-sm font-bold ${showInactive ? "bg-slate-600" : "bg-slate-800 text-slate-300"}`}>{showInactive ? "OCULTAR ARCHIVADOS" : "MOSTRAR ARCHIVADOS"}</button>
-          <button type="button" onClick={() => { clearError(currentClubId); setEditor({ kind: tab === "PLAYERS" ? "PLAYER" : "STAFF" }); }} className="min-h-12 rounded-xl bg-cyan-400 px-5 font-black text-slate-950">+ {tab === "PLAYERS" ? "JUGADOR" : "STAFF"}</button>
+          {scope === "ROSTER" && tab === "PLAYERS" && seasonId && <button type="button" onClick={() => setClubPlayerPicker(true)} className="min-h-12 rounded-xl border border-cyan-500 bg-cyan-950 px-4 text-xs font-black text-cyan-100">AÑADIR DEL CLUB</button>}
+          <button type="button" onClick={() => { clearError(currentClubId); setEditor({ kind: tab === "PLAYERS" ? "PLAYER" : "STAFF" }); }} className="min-h-12 rounded-xl bg-cyan-400 px-5 font-black text-slate-950">+ {tab === "PLAYERS" ? "NUEVO" : "STAFF"}</button>
         </div>
       </div>
       {error && <div role="alert" className="mt-4 rounded-xl border border-red-800 bg-red-950 p-3 text-red-200">{error}</div>}
@@ -145,6 +155,7 @@ export default function RosterPage() {
         {staff.map((member) => <button key={member.staffId} type="button" onClick={() => setEditor({ kind: "STAFF", value: member })} className={`flex min-h-24 items-center gap-3 rounded-2xl border p-3 text-left ${member.active ? "border-violet-900 bg-slate-800" : "border-slate-800 bg-slate-950 opacity-55"}`}><StaffAvatar member={staffSnapshot(member)} /><span className="min-w-0"><span className="block truncate font-black">{member.displayName}</span><span className="block truncate text-xs text-violet-300">{staffRoleLabel(member)}</span></span></button>)}
       </section>}
     </main>
+    {clubPlayerPicker && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4" onMouseDown={() => setClubPlayerPicker(false)}><section onMouseDown={(event) => event.stopPropagation()} className="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-4"><header className="flex items-center justify-between"><div><h2 className="font-black">AÑADIR JUGADOR DEL CLUB</h2><p className="text-xs text-slate-500">Conserva su identidad e historial.</p></div><button type="button" onClick={() => setClubPlayerPicker(false)} className="min-h-11 min-w-11 rounded-full bg-slate-800 text-xl">×</button></header><input autoFocus value={clubPlayerQuery} onChange={(event) => setClubPlayerQuery(event.target.value)} placeholder="Nombre, dorsal o posición…" className="mt-4 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-4"/><div className="mt-3 max-h-80 space-y-2 overflow-y-auto">{clubPlayerCandidates.map((player) => { const linked = linkedPlayerIds.has(player.playerId); return <button type="button" key={player.playerId} disabled={linked} onClick={() => { addPlayerToSeason(currentClubId, seasonId, player.playerId, player.number); setClubPlayerPicker(false); setClubPlayerQuery(""); }} className="flex min-h-16 w-full items-center gap-3 rounded-2xl bg-slate-800 p-2 text-left disabled:opacity-45"><PlayerAvatar player={playerSnapshot(player)}/><span className="min-w-0 flex-1"><strong className="block truncate">#{player.number} · {player.displayName}</strong><small className="text-slate-400">{formatFutsalPosition(player.primaryPosition)}</small></span>{linked && <span className="text-[9px] font-black text-amber-300">YA EN EL EQUIPO</span>}</button>; })}{clubPlayerCandidates.length === 0 && <p className="p-6 text-center text-sm text-slate-500">No hay jugadores activos del club con esa búsqueda.</p>}</div><button type="button" onClick={() => { setClubPlayerPicker(false); clearError(currentClubId); setEditor({ kind: "PLAYER" }); }} className="mt-3 min-h-11 w-full rounded-xl border border-slate-700 text-xs font-black">CREAR NUEVO JUGADOR</button></section></div>}
     {editor && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4" onMouseDown={() => setEditor(null)}><form onSubmit={editor.kind === "PLAYER" ? submitPlayer : submitStaff} onMouseDown={(event) => event.stopPropagation()} className="w-full max-w-md space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl">
       <div className="flex items-center justify-between"><h2 className="text-xl font-black">{editor.value ? "EDITAR" : "NUEVO"} {editor.kind === "PLAYER" ? "JUGADOR" : "STAFF"}</h2><button type="button" onClick={() => setEditor(null)} className="min-h-11 min-w-11 rounded-full bg-slate-800 text-xl">×</button></div>
       <label className="block text-sm font-bold text-slate-300">Nombre completo<input name="fullName" required defaultValue={editor.value?.fullName} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /><span className="mt-1 block text-[11px] font-normal text-slate-500">Identidad estable de la persona dentro del club.</span></label>

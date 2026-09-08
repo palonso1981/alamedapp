@@ -1,5 +1,5 @@
 import { DashboardAnalysis } from "../../lib/dashboardAnalysis";
-import { DashboardValueMode, outcomeDistribution, TeamMetricKey, teamMetricValue, teamPairedMetricValue } from "../../lib/dashboardV2";
+import { DashboardValueMode, homogeneousComparisonMode, outcomeDistribution, TeamMetricKey, teamMetricValue, teamPairedMetricValue } from "../../lib/dashboardV2";
 import { PAIRED_METRIC_DEFINITIONS } from "../../lib/dashboardMetricDefinitions";
 import { ThreatOutcomeStats } from "../../lib/dashboardAnalytics";
 import { ThreatSide } from "../../types";
@@ -26,10 +26,10 @@ export function FacedMetricRow({ label, own, rival, ownReference, rivalReference
 }
 
 export function TeamComparison({ analysis, reference, mode }: { analysis: DashboardAnalysis; reference: DashboardAnalysis; mode: DashboardValueMode }) {
-  const comparisonMode = mode === "TOTALS" ? "PER_MATCH" : mode;
+  const comparisonMode = homogeneousComparisonMode(analysis.samples, reference.samples, mode);
   const pair = (own: TeamMetricKey, rival: TeamMetricKey) => ({ own: teamMetricValue(analysis, own, comparisonMode), rival: teamMetricValue(analysis, rival, comparisonMode), ownReference: teamMetricValue(reference, own, comparisonMode), rivalReference: teamMetricValue(reference, rival, comparisonMode) });
   return <article className="space-y-4 rounded-3xl border border-slate-700 bg-slate-900 p-4">
-    <div className="flex justify-between text-[9px] font-black"><span className="text-cyan-300">CDA</span><span className="text-slate-500">{comparisonMode === "PER_MATCH" ? "POR PARTIDO" : "POR 40"} · MARCA = REFERENCIA</span><span className="text-rose-300">RIVAL</span></div>
+    <div className="flex justify-between text-[9px] font-black"><span className="text-cyan-300">CDA</span><span className="text-slate-500">{comparisonMode === "TOTALS" ? "VALOR DE PARTIDO" : comparisonMode === "PER_MATCH" ? "POR PARTIDO" : "POR 40"} · MARCA = REFERENCIA</span><span className="text-rose-300">RIVAL</span></div>
     <FacedMetricRow label="REMATES" {...pair("threatsFor", "threatsAgainst")} semantics="higher" />
     <FacedMetricRow label="GOLES" {...pair("goalsFor", "goalsAgainst")} semantics="higher" />
     <FacedMetricRow label="FALTAS" {...pair("foulsFor", "foulsAgainst")} semantics="neutral" />

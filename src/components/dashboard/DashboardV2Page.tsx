@@ -20,7 +20,8 @@ import { DashboardMatchRecord, DASHBOARD_PHASES } from "../../lib/dashboardAnaly
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "../../lib/dashboardFixture";
 import { listMatchCatalog, matchCatalogClubId, visibleMatchCatalog } from "../../lib/matchCatalog";
 import { loadMatchSession } from "../../lib/matchPersistence";
-import { buildDashboardV2, buildPlayerScores, DashboardArea, DashboardReferencePreset, DashboardScopeV2, DashboardValueMode, defaultDashboardCompetition, derivedThreatSummary, emptyDashboardScope, mergeDashboardSearchParams, referenceScopeForPreset, scopeFromSearchParams, teamMetricValue } from "../../lib/dashboardV2";
+import { buildDashboardV2, buildPlayerScores, DashboardArea, DashboardReferencePreset, DashboardScopeV2, DashboardValueMode, defaultDashboardCompetition, derivedThreatSummary, emptyDashboardScope, matchCompetition, mergeDashboardSearchParams, referenceScopeForPreset, scopeFromSearchParams, teamMetricValue } from "../../lib/dashboardV2";
+import { replayMatch } from "../../lib/matchEngine";
 import { useTeamStore } from "../../store/useTeamStore";
 import { ThreatPhase, ThreatRecordedEvent } from "../../types";
 import { effectiveThreatPhase } from "../../lib/matchEngine";
@@ -75,6 +76,7 @@ export function DashboardV2Page() {
   const fixture = searchParams.get("fixture") === "1";
   const [records, setRecords] = useState<DashboardMatchRecord[]>([]);
   const [scope, setScope] = useState<DashboardScopeV2>(() => emptyDashboardScope());
+  const [referenceScope, setReferenceScope] = useState<DashboardScopeV2>(() => emptyDashboardScope());
   const [referencePreset, setReferencePreset] = useState<DashboardReferencePreset>("SEASON");
   const [mode, setMode] = useState<DashboardValueMode>("TOTALS");
   const [area, setArea] = useState<DashboardArea>("SUMMARY");
@@ -97,7 +99,9 @@ export function DashboardV2Page() {
     if (!params.has("aCompetition")) parsedScope.competition = defaultDashboardCompetition(loadedRecords, parsedScope);
     setRecords(loadedRecords);
     setScope(parsedScope);
-    setReferencePreset((params.get("reference") as DashboardReferencePreset) ?? "SEASON");
+    const preset = (params.get("reference") as DashboardReferencePreset) ?? "SEASON";
+    setReferencePreset(preset);
+    setReferenceScope(params.has("rClub") ? scopeFromSearchParams(params, "r", referenceScopeForPreset(parsedScope, preset)) : referenceScopeForPreset(parsedScope, preset));
     setMode((params.get("mode") as DashboardValueMode) ?? "TOTALS");
     setArea((params.get("area") as DashboardArea) ?? "SUMMARY");
     setReady(true);
@@ -113,12 +117,21 @@ export function DashboardV2Page() {
     setScope((current) => ({ ...emptyDashboardScope(currentClubId, teamId, seasonId), period: current.period }));
     setRecords(readLocalRecords());
   }, [currentClubId, fixture, ready, scope.clubId, seasons, teams]);
-  const matches = useMemo(() => visibleMatchCatalog(records.map((record) => record.catalog), scope.includeArchived).filter((match) => matchCatalogClubId(match) === scope.clubId && match.teamId === scope.teamId && match.seasonId === scope.seasonId), [records, scope.clubId, scope.includeArchived, scope.seasonId, scope.teamId]);
+  const matches = useMemo(() => visibleMatchCatalog(records.map((record) => record.catalog), scope.includeArchived).filter((match) => matchCatalogClubId(match) === scope.clubId && match.teamId === scope.teamId && match.seasonId === scope.seasonId).map((match) => { const record = records.find((item) => item.catalog.matchId === match.matchId); const score = record ? replayMatch(record.session.players, record.session.events).score : null; return { ...match, matchday: record?.session.preparation?.matchday, competitionLabel: record ? ({ LEAGUE: "Liga", CUP: "Copa", FRIENDLY: "Amistoso", OTHER: "Otra", UNSPECIFIED: "Sin clasificar" } as const)[matchCompetition(record)] : undefined, scoreLabel: score ? `${score.for}-${score.against}` : undefined }; }), [records, scope.clubId, scope.includeArchived, scope.seasonId, scope.teamId]);
   const rivals = useMemo(() => Array.from(new Set(matches.map((match) => match.opponent))).sort(), [matches]);
-  const referenceScope = useMemo(() => referenceScopeForPreset(scope, referencePreset), [referencePreset, scope]);
   const analysis = useMemo(() => buildDashboardV2(records, scope), [records, scope]);
   const reference = useMemo(() => buildDashboardV2(records, referenceScope), [records, referenceScope]);
   const scores = useMemo(() => buildPlayerScores(analysis.players), [analysis.players]);
+
+  useEffect(() => {
+    if (!ready || referencePreset === "CUSTOM" || referencePreset === "MATCH") return;
+    setReferenceScope(referenceScopeForPreset(scope, referencePreset));
+  }, [ready, referencePreset, scope]);
+  function changeReferencePreset(preset: DashboardReferencePreset) {
+    setReferencePreset(preset);
+    if (preset === "MATCH" || (preset === "CUSTOM" && referencePreset !== "CUSTOM")) setReferenceScope(referenceScopeForPreset(scope, preset));
+    else if (preset !== "CUSTOM") setReferenceScope(referenceScopeForPreset(scope, preset));
+  }
 
   useEffect(() => {
     if (!ready) return;
@@ -131,7 +144,7 @@ export function DashboardV2Page() {
   const keeperB = analysis.goalkeepers.find((keeper) => keeper.playerId === keeperBId) ?? analysis.goalkeepers.find((keeper) => keeper.playerId !== keeperA?.playerId);
 
   return <div className="min-h-screen overflow-x-clip bg-slate-950 text-white"><div className="sticky top-0 z-40"><AppHeader title="Dashboard V2" clubId={fixture ? undefined : currentClubId} /></div><main className="mx-auto max-w-7xl space-y-6 p-3 pb-16 sm:p-5">
-    <DashboardFilterBar clubName={workspace?.club.name ?? "Club"} clubs={clubs} onClub={setCurrentClub} scope={scope} teams={teams} seasons={seasons} matches={matches} rivals={rivals} players={analysis.players} goalkeepers={analysis.goalkeepers} referencePreset={referencePreset} mode={mode} onScope={setScope} onReferencePreset={setReferencePreset} onMode={setMode} onRefresh={() => setRecords(fixture ? buildDashboardFixture() : readLocalRecords())} fixture={fixture} comparison={<ComparisonHeader left={area === "GOALKEEPERS" ? keeperA?.name.toUpperCase() ?? "PORTERO A" : "CDA"} right={area === "GOALKEEPERS" ? keeperB?.name.toUpperCase() ?? "PORTERO B" : comparisonRightLabel(scope, referencePreset)} scope={scope}/>} />
+    <DashboardFilterBar clubName={workspace?.club.name ?? "Club"} clubs={clubs} onClub={setCurrentClub} scope={scope} referenceScope={referenceScope} teams={teams} seasons={seasons} matches={matches} rivals={rivals} players={analysis.players} goalkeepers={analysis.goalkeepers} referencePreset={referencePreset} mode={mode} onScope={setScope} onReferenceScope={setReferenceScope} onReferencePreset={changeReferencePreset} onMode={setMode} onRefresh={() => setRecords(fixture ? buildDashboardFixture() : readLocalRecords())} fixture={fixture} comparison={<ComparisonHeader left={area === "GOALKEEPERS" ? keeperA?.name.toUpperCase() ?? "PORTERO A" : "CDA"} right={area === "GOALKEEPERS" ? keeperB?.name.toUpperCase() ?? "PORTERO B" : comparisonRightLabel(referenceScope, referencePreset, matches.find((match) => match.matchId === referenceScope.matchIds[0])?.opponent)} scope={scope}/>} />
     <nav aria-label="Secciones del Dashboard" className="flex gap-2 overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900 p-2">{AREAS.map(([key, label]) => <button key={key} type="button" onClick={() => setArea(key)} className={`min-h-11 shrink-0 rounded-xl px-4 text-xs font-black ${area === key ? "bg-cyan-300 text-slate-950" : "text-slate-400"}`}>{label}</button>)}</nav>
     {!ready ? <p className="p-10 text-center text-slate-500">Preparando análisis…</p> : analysis.analytics.matches === 0 ? <Empty /> : <>{area === "SUMMARY" && <Summary analysis={analysis} reference={reference} mode={mode} query={query} />}{area === "TEAM" && <TeamArea analysis={analysis} reference={reference} mode={mode} scope={scope} onScope={setScope} referenceLabel={comparisonRightLabel(scope, referencePreset)} />}{area === "PLAYERS" && <><SectionTitle eyebrow="CABECERAS CUANTITATIVAS ORDENABLES">JUGADORES</SectionTitle><PlayerTableV2 players={analysis.players} scores={scores} mode={mode} detailQuery={query} /></>}{area === "GOALKEEPERS" && <Goalkeepers analysis={analysis} keeperA={keeperA} keeperB={keeperB} onA={setKeeperAId} onB={setKeeperBId} query={query} onPoint={setSelectedPoint} />}{area === "MAPS" && <Maps analysis={analysis} scope={scope} onScope={setScope} onPoint={setSelectedPoint} />}</>}
   </main>{selectedPoint && <EventTracePanel records={analysis.records} point={selectedPoint} onClose={() => setSelectedPoint(null)} returnTo={`/dashboard?${query}#maps`}/>}</div>;
