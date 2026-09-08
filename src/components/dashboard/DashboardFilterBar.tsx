@@ -1,7 +1,6 @@
 "use client";
 
 import { ReactNode } from "react";
-import { MatchCatalogEntry } from "../../lib/matchCatalog";
 import {
   DashboardPhaseFilter,
   DashboardReferencePreset,
@@ -10,6 +9,7 @@ import {
 } from "../../lib/dashboardV2";
 import { Season, TeamProfile, ThreatOutcome } from "../../types";
 import { SearchableMatchCombobox } from "./SearchableMatchCombobox";
+import { SearchableMatch } from "../../lib/dashboardSelectors";
 
 const PHASES: Array<[DashboardPhaseFilter, string]> = [
   ["POSITIONAL", "Posicional"], ["TRANSITION", "Transición"], ["SET_PIECE", "ABP"],
@@ -34,7 +34,7 @@ export interface DashboardFilterBarProps {
   scope: DashboardScopeV2;
   teams: TeamProfile[];
   seasons: Season[];
-  matches: MatchCatalogEntry[];
+  matches: SearchableMatch[];
   rivals: string[];
   players?: Array<{ playerId: string; name: string }>;
   goalkeepers?: Array<{ playerId: string; name: string }>;
@@ -115,13 +115,13 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
     </details></>;
 }
 
-function ReferenceBuilder({ preset, scope, analysis, matches, rivals, onChange }: { preset: DashboardReferencePreset; scope: DashboardScopeV2; analysis: DashboardScopeV2; matches: MatchCatalogEntry[]; rivals: string[]; onChange: (scope: DashboardScopeV2) => void }) {
+function ReferenceBuilder({ preset, scope, analysis, matches, rivals, onChange }: { preset: DashboardReferencePreset; scope: DashboardScopeV2; analysis: DashboardScopeV2; matches: SearchableMatch[]; rivals: string[]; onChange: (scope: DashboardScopeV2) => void }) {
   const patch = (changes: Partial<DashboardScopeV2>) => onChange({ ...scope, clubId: analysis.clubId, teamId: analysis.teamId, seasonId: analysis.seasonId, ...changes });
-  if (preset === "MATCH") return <section data-reference-builder className="rounded-2xl border border-amber-900/70 bg-amber-950/20 p-3"><span className="mb-2 block text-[9px] font-black tracking-[.15em] text-amber-300">PARTIDO DE REFERENCIA</span><SearchableMatchCombobox matches={matches} value={scope.matchIds.length === 1 ? scope.matchIds[0] : ""} allLabel="Elige un partido" onChange={(matchId) => patch({ matchIds: matchId ? [matchId] : [], rivals: [], venues: [], results: [] })}/>{analysis.matchIds.length === 1 && scope.matchIds[0] === analysis.matchIds[0] && <p className="mt-2 text-[10px] text-amber-200">Estás comparando el mismo partido.</p>}</section>;
+  if (preset === "MATCH") return <section data-reference-builder className="rounded-2xl border border-amber-900/70 bg-amber-950/20 p-3"><span className="mb-2 block text-[9px] font-black tracking-[.15em] text-amber-300">PARTIDO DE REFERENCIA</span><SearchableMatchCombobox matches={matches} value={scope.matchIds.length === 1 ? scope.matchIds[0] : ""} allLabel="Elige un partido" onChange={(matchId) => { const selected = matches.find((match) => match.matchId === matchId); patch({ matchIds: matchId ? [matchId] : [], competition: selected?.competitionType ?? analysis.competition, rivals: [], venues: [], results: [] }); }}/>{analysis.matchIds.length === 1 && scope.matchIds[0] === analysis.matchIds[0] && <p className="mt-2 text-[10px] text-amber-200">Estás comparando el mismo partido.</p>}</section>;
   return <details open data-reference-builder className="rounded-2xl border border-amber-900/70 bg-amber-950/20 p-3"><summary className="cursor-pointer text-[10px] font-black text-amber-200">REFERENCIA PERSONALIZADA · {scope.rivals.length === 1 ? `VS ${scope.rivals[0]}` : scope.rivals.length > 1 ? `${scope.rivals.length} RIVALES` : scope.competition}</summary><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
     <label className="text-[9px] font-black text-slate-400">COMPETICIÓN<select aria-label="Competición de referencia" value={scope.competition} onChange={(event) => patch({ competition: event.target.value as DashboardScopeV2["competition"], matchIds: [] })} className="mt-1 min-h-11 w-full rounded-xl bg-slate-900 px-3 text-xs text-white"><option value="LEAGUE">Liga</option><option value="CUP">Copa</option><option value="FRIENDLY">Amistoso</option><option value="OTHER">Otra</option><option value="ALL">Todas · explícito</option></select></label>
     <label className="text-[9px] font-black text-slate-400">SEDE<select aria-label="Sede de referencia" value={scope.venues[0] ?? "ALL"} onChange={(event) => patch({ venues: event.target.value === "ALL" ? [] : [event.target.value as "HOME" | "AWAY"] })} className="mt-1 min-h-11 w-full rounded-xl bg-slate-900 px-3 text-xs text-white"><option value="ALL">Todas</option><option value="HOME">Local</option><option value="AWAY">Visitante</option></select></label>
     <label className="text-[9px] font-black text-slate-400">RESULTADO<select aria-label="Resultado de referencia" value={scope.results[0] ?? "ALL"} onChange={(event) => patch({ results: event.target.value === "ALL" ? [] : [event.target.value as "WIN" | "DRAW" | "LOSS"] })} className="mt-1 min-h-11 w-full rounded-xl bg-slate-900 px-3 text-xs text-white"><option value="ALL">Todos</option><option value="WIN">Victorias</option><option value="DRAW">Empates</option><option value="LOSS">Derrotas</option></select></label>
     <label className="text-[9px] font-black text-slate-400">PERIODO<select aria-label="Periodo de referencia" value={scope.period} onChange={(event) => patch({ period: event.target.value === "ALL" ? "ALL" : Number(event.target.value) as 1 | 2 })} className="mt-1 min-h-11 w-full rounded-xl bg-slate-900 px-3 text-xs text-white"><option value="ALL">Todo</option><option value="1">P1</option><option value="2">P2</option></select></label>
-  </div><fieldset className="mt-3"><legend className="text-[9px] font-black text-slate-400">RIVALES</legend><div className="mt-1 flex max-h-28 flex-wrap gap-2 overflow-y-auto">{rivals.map((rival) => <MultiButton key={rival} active={scope.rivals.includes(rival)} onClick={() => patch({ rivals: toggle(scope.rivals, rival), matchIds: [] })}>{rival}</MultiButton>)}</div></fieldset></details>;
+  </div><fieldset className="mt-3"><legend className="text-[9px] font-black text-slate-400">RIVALES</legend><div className="mt-1 flex max-h-28 flex-wrap gap-2 overflow-y-auto">{rivals.map((rival) => <MultiButton key={rival} active={scope.rivals.includes(rival)} onClick={() => patch({ rivals: toggle(scope.rivals, rival), matchIds: [] })}>{rival}</MultiButton>)}</div></fieldset><fieldset className="mt-3"><legend className="text-[9px] font-black text-slate-400">FASE · CUANDO APLICA</legend><div className="mt-1 flex flex-wrap gap-2">{PHASES.map(([phase, label]) => <MultiButton key={phase} active={scope.phases.includes(phase)} onClick={() => patch({ phases: toggle(scope.phases, phase) })}>{label}</MultiButton>)}</div></fieldset></details>;
 }

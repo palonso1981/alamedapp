@@ -2,6 +2,7 @@ import { MatchCatalogEntry } from "./matchCatalog";
 
 export interface SearchableMatch extends MatchCatalogEntry {
   competitionLabel?: string;
+  competitionType?: "LEAGUE" | "CUP" | "FRIENDLY" | "OTHER" | "UNSPECIFIED";
   matchday?: number;
   scoreLabel?: string;
 }
