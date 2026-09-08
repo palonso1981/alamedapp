@@ -8,7 +8,7 @@ export interface SearchableMatch extends MatchCatalogEntry {
 }
 
 export function normalizeDashboardSearch(value: string): string {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es").trim();
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es").trim().replace(/\s+/g, " ");
 }
 
 export function matchSearchText(match: SearchableMatch): string {

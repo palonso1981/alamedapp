@@ -23,7 +23,7 @@ import {
 import { effectiveThreatPhase, replayMatch } from "./matchEngine";
 import { deriveGoalZoneV1, GoalZoneV1 } from "./spatialZones";
 import { GOAL_FRAME } from "./goalTarget";
-import { CompetitiveContext, competitiveEventIds, deriveCompetitiveMinutes } from "./dashboardCompetitiveContext";
+import { CompetitiveContext, competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, PlayingStateContext } from "./dashboardCompetitiveContext";
 
 export type DashboardValueMode = "TOTALS" | "PER_MATCH" | "PER_40";
 export type DashboardArea = "SUMMARY" | "TEAM" | "PLAYERS" | "GOALKEEPERS" | "MAPS";
@@ -61,6 +61,7 @@ export interface DashboardScopeV2 {
   outcomeGroup: "ALL" | "ON_TARGET";
   originDistance: "ALL" | "NEAR" | "FAR";
   competitiveContext: CompetitiveContext;
+  playingState: PlayingStateContext;
   includeArchived: boolean;
 }
 
@@ -135,6 +136,7 @@ export function emptyDashboardScope(
     outcomeGroup: "ALL",
     originDistance: "ALL",
     competitiveContext: "ALL",
+    playingState: "ALL",
     includeArchived: false,
   };
 }
@@ -266,7 +268,7 @@ export function filterDashboardDataset(
     .filter((record) => scope.venues.length === 0 || scope.venues.includes(record.catalog.venue))
     .filter((record) => scope.results.length === 0 || Boolean(matchResult(record) && scope.results.includes(matchResult(record)!)))
     .map((record) => {
-      const contextIds = competitiveEventIds(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds);
+      const contextIds = competitiveEventIds(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, scope.playingState);
       return {
         catalog: record.catalog,
         session: {
@@ -304,13 +306,14 @@ export function buildDashboardV2(
   const goldByGoalkeeper: Record<string, number> = {};
   const contextByPlayer: Record<string, number> = {};
   const contextByGoalkeeper: Record<string, number> = {};
+  const contextMatchesByPlayer: Record<string, number> = {};
   let contextObserved = 0;
   let teamKeyMinutes = 0;
   let teamGoldMinutes = 0;
   for (const record of originals) {
-    const key = deriveCompetitiveMinutes(record.session, scope.period, "KEY", scope.goalkeeperIds);
-    const gold = deriveCompetitiveMinutes(record.session, scope.period, "GOLD", scope.goalkeeperIds);
-    const current = deriveCompetitiveMinutes(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds);
+    const key = deriveCompetitiveMinutes(record.session, scope.period, "KEY", scope.goalkeeperIds, scope.playingState);
+    const gold = deriveCompetitiveMinutes(record.session, scope.period, "GOLD", scope.goalkeeperIds, scope.playingState);
+    const current = deriveCompetitiveMinutes(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, scope.playingState);
     teamKeyMinutes += key.observed;
     teamGoldMinutes += gold.observed;
     contextObserved += current.observed;
@@ -320,6 +323,7 @@ export function buildDashboardV2(
     for (const [id, value] of Object.entries(gold.byGoalkeeper)) goldByGoalkeeper[id] = (goldByGoalkeeper[id] ?? 0) + value;
     for (const [id, value] of Object.entries(current.byPlayer)) contextByPlayer[id] = (contextByPlayer[id] ?? 0) + value;
     for (const [id, value] of Object.entries(current.byGoalkeeper)) contextByGoalkeeper[id] = (contextByGoalkeeper[id] ?? 0) + value;
+    for (const [id, value] of Object.entries(current.byPlayer)) if (value > 0) contextMatchesByPlayer[id] = (contextMatchesByPlayer[id] ?? 0) + 1;
     for (const player of analysis.players) {
       const trend = player.trend.find((item) => item.matchId === record.catalog.matchId);
       if (trend) { trend.keyMinutes = key.byPlayer[player.playerId] ?? 0; trend.goldMinutes = gold.byPlayer[player.playerId] ?? 0; }
@@ -332,14 +336,35 @@ export function buildDashboardV2(
     player.goldMinutesPerMatch = player.matches > 0 ? player.goldMinutes / player.matches : null;
     player.keyMinutesPercentage = chronologicalParticipationPercentage(player.keyMinutes, teamKeyMinutes);
     player.goldMinutesPercentage = chronologicalParticipationPercentage(player.goldMinutes, teamGoldMinutes);
-    if (scope.competitiveContext !== "ALL") {
+    if (scope.competitiveContext !== "ALL" || scope.playingState !== "ALL") {
       player.minutes = contextByPlayer[player.playerId] ?? 0;
+      player.matches = contextMatchesByPlayer[player.playerId] ?? 0;
       player.averageMinutes = player.matches > 0 ? player.minutes / player.matches : null;
+      player.keyMinutesPerMatch = player.matches > 0 ? player.keyMinutes / player.matches : null;
+      player.goldMinutesPerMatch = player.matches > 0 ? player.goldMinutes / player.matches : null;
+      player.participationPercentage = chronologicalParticipationPercentage(player.minutes, contextObserved);
+      player.goalsPerMatch = player.matches > 0 ? player.goals / player.matches : null;
       player.goals40 = per40(player.goals, player.minutes);
+      player.assistsPerMatch = player.matches > 0 ? player.assists / player.matches : null;
       player.assists40 = per40(player.assists, player.minutes);
+      player.ownThreatsPerMatch = player.matches > 0 ? player.ownThreats / player.matches : null;
       player.ownThreats40 = per40(player.ownThreats, player.minutes);
+      player.foulsCommittedPerMatch = player.matches > 0 ? player.foulsCommitted / player.matches : null;
+      player.foulsReceivedPerMatch = player.matches > 0 ? player.foulsReceived / player.matches : null;
+      player.criticalFoulsCommittedPerMatch = player.matches > 0 ? player.criticalFoulsCommitted / player.matches : null;
+      player.criticalFoulsReceivedPerMatch = player.matches > 0 ? player.criticalFoulsReceived / player.matches : null;
+      player.foulsCommitted40 = per40(player.foulsCommitted, player.minutes);
+      player.foulsReceived40 = per40(player.foulsReceived, player.minutes);
+      player.criticalFoulsCommitted40 = per40(player.criticalFoulsCommitted, player.minutes);
+      player.criticalFoulsReceived40 = per40(player.criticalFoulsReceived, player.minutes);
       player.onCourt.threatsFor40 = per40(player.onCourt.threatsFor, player.minutes);
       player.onCourt.threatsAgainst40 = per40(player.onCourt.threatsAgainst, player.minutes);
+      player.onCourt.threatDifference40 = per40(player.onCourt.threatsFor - player.onCourt.threatsAgainst, player.minutes);
+      player.onCourt.goalsFor40 = per40(player.onCourt.goalsFor, player.minutes);
+      player.onCourt.goalsAgainst40 = per40(player.onCourt.goalsAgainst, player.minutes);
+      player.onCourt.goalDifference40 = per40(player.onCourt.goalDifference, player.minutes);
+      player.onCourtPointsPerMatch = player.matches > 0 ? player.onCourtPoints / player.matches : null;
+      player.lowSample = player.minutes < 20;
     }
   }
   analysis.teamKeyMinutes = teamKeyMinutes;
@@ -350,7 +375,7 @@ export function buildDashboardV2(
     goalkeeper.keyMinutesPercentage = chronologicalParticipationPercentage(goalkeeper.keyMinutes, teamKeyMinutes);
     goalkeeper.goldMinutesPercentage = chronologicalParticipationPercentage(goalkeeper.goldMinutes, teamGoldMinutes);
   }
-  if (scope.competitiveContext !== "ALL") {
+  if (scope.competitiveContext !== "ALL" || scope.playingState !== "ALL") {
     for (const goalkeeper of analysis.goalkeepers) {
       goalkeeper.minutes = contextByGoalkeeper[goalkeeper.playerId] ?? 0;
       goalkeeper.threatsAgainst40 = per40(goalkeeper.threatsAgainst, goalkeeper.minutes);
@@ -362,7 +387,59 @@ export function buildDashboardV2(
     analysis.rates.goalsFor40 = per40(analysis.analytics.goalsFor, contextObserved);
     analysis.rates.goalsAgainst40 = per40(analysis.analytics.goalsAgainst, contextObserved);
   }
+  analysis.flyingGoalkeeper.for = summarizePlayingState(originals, scope, "PJ_CDA", analysis.samples);
+  analysis.flyingGoalkeeper.against = summarizePlayingState(originals, scope, "PJ_RIVAL", analysis.samples);
+  for (const trend of analysis.trends) {
+    const record = originals.find((candidate) => candidate.catalog.matchId === trend.matchId);
+    trend.pjForMinutes = record ? deriveCompetitiveProjection(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, "PJ_CDA").observed : 0;
+    trend.pjAgainstMinutes = record ? deriveCompetitiveProjection(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, "PJ_RIVAL").observed : 0;
+  }
   return analysis;
+}
+
+function summarizePlayingState(
+  records: readonly DashboardMatchRecord[],
+  scope: DashboardScopeV2,
+  playingState: Exclude<PlayingStateContext, "ALL">,
+  totalMatches: number,
+) {
+  let minutes = 0;
+  let matchesWithState = 0;
+  let threatsFor = 0;
+  let threatsAgainst = 0;
+  let goalsFor = 0;
+  let goalsAgainst = 0;
+  let onTargetFor = 0;
+  let onTargetAgainst = 0;
+  for (const record of records) {
+    const projection = deriveCompetitiveProjection(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, playingState);
+    minutes += projection.observed;
+    if (projection.observed > 0) matchesWithState += 1;
+    for (const event of record.session.events) {
+      if (event.deletedAt !== null || !projection.eventIds.has(event.id) || event.type !== "threat_recorded" || !eventMatches(event, record, scope)) continue;
+      if (event.side === "FOR") {
+        threatsFor += 1;
+        if (event.outcome === "GOL") goalsFor += 1;
+        if (event.outcome === "GOL" || event.outcome === "PARADA") onTargetFor += 1;
+      } else {
+        threatsAgainst += 1;
+        if (event.outcome === "GOL") goalsAgainst += 1;
+        if (event.outcome === "GOL" || event.outcome === "PARADA") onTargetAgainst += 1;
+      }
+    }
+  }
+  return {
+    minutes,
+    matchesWithState,
+    minutesPerMatch: totalMatches > 0 ? minutes / totalMatches : null,
+    minutesPerMatchWithState: matchesWithState > 0 ? minutes / matchesWithState : null,
+    threatsFor,
+    threatsAgainst,
+    goalsFor,
+    goalsAgainst,
+    onTargetFor,
+    onTargetAgainst,
+  };
 }
 
 export function outcomeDistribution(
@@ -503,6 +580,24 @@ export function buildPlayerScores(players: readonly PlayerAnalysis[]): PlayerSco
 
 export type SortDirection = "asc" | "desc";
 
+export interface SquadAverage {
+  value: number | null;
+  eligiblePlayers: number;
+  validValues: number;
+}
+
+/** Benchmark del jugador típico: primero deriva cada valor individual y después
+ * calcula la media. Los N/D no se convierten en cero. */
+export function squadAverage<T extends { minutes: number }>(items: readonly T[], value: (item: T) => number | null): SquadAverage {
+  const eligible = items.filter((item) => item.minutes > 0);
+  const values = eligible.map(value).filter((candidate): candidate is number => candidate !== null && Number.isFinite(candidate));
+  return {
+    value: values.length > 0 ? values.reduce((sum, candidate) => sum + candidate, 0) / values.length : null,
+    eligiblePlayers: eligible.length,
+    validValues: values.length,
+  };
+}
+
 export function stableSortByMetric<T>(
   items: readonly T[],
   value: (item: T) => number | null,
@@ -532,6 +627,7 @@ export function scopeToSearchParams(scope: DashboardScopeV2, prefix: "a" | "r"):
   if (scope.outcomeGroup !== "ALL") params.set(`${prefix}OutcomeGroup`, scope.outcomeGroup);
   if (scope.originDistance !== "ALL") params.set(`${prefix}Distance`, scope.originDistance);
   if (scope.competitiveContext !== "ALL") params.set(`${prefix}Context`, scope.competitiveContext);
+  if (scope.playingState !== "ALL") params.set(`${prefix}PJState`, scope.playingState);
   for (const key of LIST_KEYS) if (scope[key].length > 0) params.set(`${prefix}${key}`, scope[key].join("~"));
   return params;
 }
@@ -555,6 +651,7 @@ export function scopeFromSearchParams(
     outcomeGroup: params.get(`${prefix}OutcomeGroup`) === "ON_TARGET" ? "ON_TARGET" : fallback.outcomeGroup,
     originDistance: params.get(`${prefix}Distance`) === "NEAR" ? "NEAR" : params.get(`${prefix}Distance`) === "FAR" ? "FAR" : fallback.originDistance,
     competitiveContext: params.get(`${prefix}Context`) === "KEY" ? "KEY" : params.get(`${prefix}Context`) === "GOLD" ? "GOLD" : fallback.competitiveContext,
+    playingState: params.get(`${prefix}PJState`) === "PJ_CDA" ? "PJ_CDA" : params.get(`${prefix}PJState`) === "PJ_RIVAL" ? "PJ_RIVAL" : fallback.playingState,
     matchIds: read<string>("matchIds"),
     venues: read<Exclude<VenueFilter, "ALL">>("venues"),
     results: read<Exclude<ResultFilter, "ALL">>("results"),

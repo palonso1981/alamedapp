@@ -114,7 +114,25 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
       createGameStateEvent({ id: `${matchId}-pj-off`, matchId, position: { period: 2, minute: 19, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "FOR", now: 5002 }),
     );
   }
-  const opponent = ["Racing Norte", "Sala Centro", "Atlético Sur", "Racing Norte", "Unión Este", "Futsal Oeste", "Ciudad Jardín", "Sala Centro", "Legacy Norte"][index % 9];
+  if (index === 5) {
+    events.push(
+      createGameStateEvent({ id: `${matchId}-pj-rival-on`, matchId, position: { period: 2, minute: 14, order: 2 }, state: "FLYING_GOALKEEPER", active: true, side: "AGAINST", now: 5100 }),
+      threat(matchId, `${matchId}-pj-rival-cda`, 2, 16, 1, "FOR", "GOL", "TRANSITION", "fx-p-9", secondHalfGoalkeeper),
+      threat(matchId, `${matchId}-pj-rival-threat`, 2, 17, 1, "AGAINST", "PARADA", "FLYING_GOALKEEPER", undefined, secondHalfGoalkeeper),
+      createGameStateEvent({ id: `${matchId}-pj-rival-off`, matchId, position: { period: 2, minute: 18, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "AGAINST", now: 5103 }),
+    );
+  }
+  if (index === 6) {
+    events.push(
+      createGameStateEvent({ id: `${matchId}-pj-p1-on`, matchId, position: { period: 1, minute: 12, order: 2 }, state: "FLYING_GOALKEEPER", active: true, playerId: "fx-p-8", side: "FOR", now: 5200 }),
+      threat(matchId, `${matchId}-pj-p1-shot`, 1, 13, 1, "FOR", "PARADA", "FLYING_GOALKEEPER", "fx-p-8", startingGoalkeeper),
+      createGameStateEvent({ id: `${matchId}-pj-p1-off`, matchId, position: { period: 1, minute: 15, order: 2 }, state: "FLYING_GOALKEEPER", active: false, side: "FOR", now: 5202 }),
+      createGameStateEvent({ id: `${matchId}-pj-p2-on`, matchId, position: { period: 2, minute: 17, order: 2 }, state: "FLYING_GOALKEEPER", active: true, playerId: "fx-p-10", side: "FOR", now: 5203 }),
+      threat(matchId, `${matchId}-pj-p2-shot`, 2, 18, 1, "FOR", "GOL", "FLYING_GOALKEEPER", "fx-p-10", secondHalfGoalkeeper),
+      createGameStateEvent({ id: `${matchId}-pj-p2-off`, matchId, position: { period: 2, minute: 19, order: 2 }, state: "FLYING_GOALKEEPER", active: false, side: "FOR", now: 5205 }),
+    );
+  }
+  const opponent = ["Racing Norte", "Alzira FS", "Atlético Sur", "Racing Norte", "Unión Este", "Alzira B", "Ciudad Jardín", "Sala Centro", "Legacy Norte"][index % 9];
   const date = new Date(Date.UTC(2026, 8, 5 + index * 7)).toISOString().slice(0, 10);
   const preparation = {
     clubId: DASHBOARD_FIXTURE_CLUB_ID,

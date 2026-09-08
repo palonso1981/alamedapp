@@ -4,7 +4,7 @@ import test from "node:test";
 import { MatchEvent } from "../types";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
 import { PitchOriginZone } from "./dashboardAnalysis";
-import { competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, isCompetitiveMoment } from "./dashboardCompetitiveContext";
+import { competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, derivePlayingStateIntervals, isCompetitiveMoment } from "./dashboardCompetitiveContext";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "./dashboardFixture";
 import { compareMetricValues, METRIC_DEFINITIONS } from "./dashboardMetricDefinitions";
 import { dashboardMapPointTitle, resolveDashboardMapPoint } from "./dashboardTrace";
@@ -24,7 +24,7 @@ test("returnTo acepta solo rutas Dashboard internas y conserva la identidad del 
   assert.equal(url.searchParams.get("fixture"), "1");
 });
 import { formatFutsalPosition } from "./positionFormat";
-import { createLineupInitializedEvent, createLiveThreatEvent, createSubstitutionEvent, editEvent } from "./matchEngine";
+import { createGameStateEvent, createLineupInitializedEvent, createLiveThreatEvent, createSubstitutionEvent, editEvent } from "./matchEngine";
 import {
   buildDashboardV2,
   buildPlayerScores,
@@ -39,6 +39,7 @@ import {
   playerMetricValue,
   referenceScopeForPreset,
   scopeFromSearchParams,
+  squadAverage,
   stableSortByMetric,
   teamMetricValue,
   teamPairedMetricValue,
@@ -126,8 +127,8 @@ test("ABP agrega córner, banda y falta sin incluir fases abiertas", () => {
 });
 
 test("scope y referencia viajan separados por URL y sobreviven reload", () => {
-  const analysis = { ...baseScope(), rivals: ["Racing Norte", "Sala Centro"], originZones: ["Z2" as const], period: 2 as const, outcomeGroup: "ON_TARGET" as const, originDistance: "NEAR" as const, competitiveContext: "GOLD" as const };
-  const reference = { ...baseScope(), venues: ["AWAY" as const], period: 2 as const };
+  const analysis = { ...baseScope(), rivals: ["Racing Norte", "Sala Centro"], originZones: ["Z2" as const], period: 2 as const, outcomeGroup: "ON_TARGET" as const, originDistance: "NEAR" as const, competitiveContext: "GOLD" as const, playingState: "PJ_CDA" as const };
+  const reference = { ...baseScope(), venues: ["AWAY" as const], period: 2 as const, playingState: "PJ_RIVAL" as const };
   const query = mergeDashboardSearchParams({ analysis, reference, referencePreset: "AWAY", mode: "PER_40", area: "PLAYERS" });
   const params = new URLSearchParams(query);
   assert.deepEqual(scopeFromSearchParams(params, "a", baseScope()), analysis);
@@ -209,6 +210,27 @@ test("ordenación cuantitativa deja N/D al final y conserva empates", () => {
   assert.deepEqual(stableSortByMetric(rows, (row) => row.value, "desc").map((row) => row.id), ["a", "c", "d", "b"]);
 });
 
+test("MEDIA PLANTILLA promedia valores individuales válidos, excluye N/D y jugadores sin minutos", () => {
+  const rows = [
+    { minutes: 20, value: 2 },
+    { minutes: 12, value: 4 },
+    { minutes: 8, value: 9 },
+    { minutes: 5, value: null },
+    { minutes: 0, value: 100 },
+  ];
+  assert.deepEqual(squadAverage(rows, (row) => row.value), { value: 5, eligiblePlayers: 4, validValues: 3 });
+  assert.deepEqual(squadAverage(rows, () => null), { value: null, eligiblePlayers: 4, validValues: 0 });
+});
+
+test("MEDIA PLANTILLA aplica primero TOTALES, POR PARTIDO y POR 40 de cada jugador", () => {
+  const players = buildDashboardV2(buildDashboardFixture(), baseScope()).players;
+  for (const mode of ["TOTALS", "PER_MATCH", "PER_40"] as const) {
+    const values = players.filter((player) => player.minutes > 0).map((player) => playerMetricValue(player, "goals", mode)).filter((value): value is number => value !== null);
+    const expected = values.reduce((sum, value) => sum + value, 0) / values.length;
+    assert.equal(squadAverage(players, (player) => playerMetricValue(player, "goals", mode)).value, expected);
+  }
+});
+
 test("fixture poblado cubre temporada, sedes, resultados, jugadores, porteros, fases y P-J sin persistir", () => {
   const records = buildDashboardFixture();
   const analysis = buildDashboardV2(records, baseScope());
@@ -277,6 +299,91 @@ test("contexto clave y oro usa marcador cronológico y solo minuto deportivo cap
   const gold = deriveCompetitiveMinutes(session, "ALL", "GOLD");
   assert.ok(key.observed >= gold.observed);
   assert.ok(Array.from(competitiveEventIds(session, "ALL", "GOLD")).every((id) => session.events.some((event) => event.id === id)));
+});
+
+function playingStateRecord(): DashboardMatchRecord {
+  const source = buildDashboardFixture()[0];
+  const matchId = "pj-context-test";
+  const squad = source.session.players.map((player) => player.id);
+  const p1 = ["fx-gk-1", "fx-p-2", "fx-p-4", "fx-p-5", "fx-p-7"];
+  const p2 = ["fx-gk-1", "fx-p-5", "fx-p-7", "fx-p-9", "fx-p-10"];
+  const events: MatchEvent[] = [
+    createLineupInitializedEvent({ id: "pj-p1", matchId, position: { period: 1, minute: 0, order: 1 }, squadPlayerIds: squad, onCourtPlayerIds: p1, goalkeeperPlayerId: "fx-gk-1", now: 1 }),
+    createLiveThreatEvent({ id: "phase-only", matchId, position: { period: 1, minute: 5, order: 1 }, side: "FOR", playerId: "fx-p-4", origin: { x: .3, y: .5 }, outcome: "PARADA", phase: "FLYING_GOALKEEPER", now: 2 }),
+    createGameStateEvent({ id: "pj-cda-p1-on", matchId, position: { period: 1, minute: 12, order: 1 }, state: "FLYING_GOALKEEPER", active: true, playerId: "fx-p-4", side: "FOR", now: 3 }),
+    createLiveThreatEvent({ id: "pj-cda-a", matchId, position: { period: 1, minute: 13, order: 1 }, side: "FOR", playerId: "fx-p-4", origin: { x: .3, y: .5 }, outcome: "PARADA", phase: "POSITIONAL", now: 4 }),
+    createGameStateEvent({ id: "pj-cda-p1-off", matchId, position: { period: 1, minute: 15, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "FOR", now: 5 }),
+    createLineupInitializedEvent({ id: "pj-p2", matchId, position: { period: 2, minute: 0, order: 1 }, squadPlayerIds: squad, onCourtPlayerIds: p2, goalkeeperPlayerId: "fx-gk-1", now: 6 }),
+    createLiveThreatEvent({ id: "outside-pj", matchId, position: { period: 2, minute: 10, order: 1 }, side: "AGAINST", origin: { x: .4, y: .5 }, outcome: "FUERA", phase: "POSITIONAL", now: 7 }),
+    createGameStateEvent({ id: "pj-rival-on", matchId, position: { period: 2, minute: 11, order: 1 }, state: "FLYING_GOALKEEPER", active: true, side: "AGAINST", now: 8 }),
+    createLiveThreatEvent({ id: "pj-rival-a", matchId, position: { period: 2, minute: 12, order: 1 }, side: "AGAINST", origin: { x: .4, y: .5 }, outcome: "PARADA", phase: "POSITIONAL", defensive: { version: 2, goalTarget: { x: .5, y: .5, geometryVersion: 3 }, goalkeeper: { status: "PLAYER", playerId: "fx-gk-1" } }, now: 9 }),
+    createGameStateEvent({ id: "pj-rival-off", matchId, position: { period: 2, minute: 14, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "AGAINST", now: 10 }),
+    createGameStateEvent({ id: "pj-cda-p2-on", matchId, position: { period: 2, minute: 15, order: 1 }, state: "FLYING_GOALKEEPER", active: true, playerId: "fx-p-10", side: "FOR", now: 11 }),
+    createLiveThreatEvent({ id: "pj-cda-b", matchId, position: { period: 2, minute: 16, order: 1 }, side: "FOR", playerId: "fx-p-10", origin: { x: .3, y: .5 }, outcome: "GOL", phase: "TRANSITION", assist: { status: "NONE" }, now: 12 }),
+    createLiveThreatEvent({ id: "pj-cda-c", matchId, position: { period: 2, minute: 18, order: 1 }, side: "AGAINST", origin: { x: .4, y: .5 }, outcome: "GOL", phase: "POSITIONAL", defensive: { version: 2, goalTarget: { x: .5, y: .5, geometryVersion: 3 }, goalkeeper: { status: "PLAYER", playerId: "fx-p-10" } }, now: 13 }),
+    createGameStateEvent({ id: "pj-cda-p2-off", matchId, position: { period: 2, minute: 19, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "FOR", now: 14 }),
+  ];
+  return {
+    catalog: { ...source.catalog, matchId, opponent: "Alzira FS", date: "2026-10-05", status: "FINISHED" },
+    session: { ...source.session, matchId, events, matchFinished: true, period: 2, minute: 20, closedPeriods: [1, 2] },
+  };
+}
+
+test("intervalos P-J derivan ON/OFF por lado, varios periodos y no confunden la fase", () => {
+  const session = playingStateRecord().session;
+  const cda = derivePlayingStateIntervals(session, "ALL", "PJ_CDA");
+  const rival = derivePlayingStateIntervals(session, "ALL", "PJ_RIVAL");
+  assert.deepEqual(cda.map((interval) => [interval.period, interval.startMinute, interval.endMinute]), [[1, 12, 15], [2, 15, 19]]);
+  assert.deepEqual(rival.map((interval) => [interval.period, interval.startMinute, interval.endMinute]), [[2, 11, 14]]);
+  assert.equal(deriveCompetitiveMinutes(session, "ALL", "ALL", [], "PJ_CDA").observed, 7);
+  assert.equal(deriveCompetitiveMinutes(session, "ALL", "ALL", [], "PJ_RIVAL").observed, 3);
+  assert.equal(competitiveEventIds(session, "ALL", "ALL", [], "PJ_CDA").has("phase-only"), false);
+});
+
+test("un intervalo P-J abierto se cierra al final observado de su periodo y no salta a P2", () => {
+  const record = playingStateRecord();
+  const events = record.session.events.filter((event) => !["pj-cda-p1-off", "pj-cda-p2-on", "pj-cda-p2-off"].includes(event.id));
+  const intervals = derivePlayingStateIntervals({ ...record.session, events }, "ALL", "PJ_CDA");
+  assert.deepEqual(intervals.map((interval) => [interval.period, interval.startMinute, interval.endMinute]), [[1, 12, 20]]);
+});
+
+test("filtro PJ incluye solo eventos del intervalo y se intersecta con Clave/Oro", () => {
+  const record = playingStateRecord();
+  const cda = filterDashboardDataset([record], { ...baseScope(), matchIds: [record.catalog.matchId], playingState: "PJ_CDA" });
+  const threats = cda[0].session.events.filter((event) => event.type === "threat_recorded").map((event) => event.id);
+  assert.deepEqual(threats, ["pj-cda-a", "pj-cda-b", "pj-cda-c"]);
+  assert.equal(deriveCompetitiveMinutes(record.session, "ALL", "GOLD", [], "PJ_CDA").observed, 4);
+  assert.equal(deriveCompetitiveMinutes(record.session, "ALL", "KEY", [], "PJ_CDA").observed, 7);
+  const gold = buildDashboardV2([record], { ...baseScope(), matchIds: [record.catalog.matchId], competitiveContext: "GOLD", playingState: "PJ_CDA" });
+  assert.equal(gold.rates.observedMinutes, 4);
+  assert.equal(gold.analytics.threats.FOR.total, 1);
+  assert.equal(gold.analytics.threats.AGAINST.total, 1);
+  const rival = buildDashboardV2([record], { ...baseScope(), matchIds: [record.catalog.matchId], playingState: "PJ_RIVAL" });
+  assert.equal(rival.rates.observedMinutes, 3);
+  assert.equal(rival.analytics.threats.FOR.total, 0);
+  assert.equal(rival.analytics.threats.AGAINST.total, 1);
+  assert.equal(rival.goalkeepers.find((keeper) => keeper.playerId === "fx-gk-1")?.minutes, 3);
+  const ownWithKeeper = buildDashboardV2([record], { ...baseScope(), matchIds: [record.catalog.matchId], playingState: "PJ_CDA", goalkeeperIds: ["fx-gk-1"] });
+  assert.equal(ownWithKeeper.rates.observedMinutes, 0, "el P-J CDA no contamina al portero funcional normal");
+});
+
+test("MEDIA PLANTILLA se recalcula con los jugadores elegibles dentro de PJ CDA", () => {
+  const record = playingStateRecord();
+  const analysis = buildDashboardV2([record], { ...baseScope(), matchIds: [record.catalog.matchId], playingState: "PJ_CDA" });
+  const average = squadAverage(analysis.players, (player) => playerMetricValue(player, "threats", "TOTALS"));
+  assert.ok(average.eligiblePlayers > 0);
+  assert.equal(average.value, analysis.players.filter((player) => player.minutes > 0).reduce((sum, player) => sum + player.ownThreats, 0) / average.eligiblePlayers);
+});
+
+test("promedios PJ distinguen todos los partidos de los partidos con uso", () => {
+  const record = playingStateRecord();
+  const without = { ...buildDashboardFixture()[1], catalog: { ...buildDashboardFixture()[1].catalog, matchId: "pj-without" }, session: { ...buildDashboardFixture()[1].session, matchId: "pj-without", events: buildDashboardFixture()[1].session.events.map((event) => ({ ...event, matchId: "pj-without" })) } };
+  const analysis = buildDashboardV2([record, without], baseScope());
+  assert.equal(analysis.flyingGoalkeeper.for.minutes, 7);
+  assert.equal(analysis.flyingGoalkeeper.for.matchesWithState, 1);
+  assert.equal(analysis.flyingGoalkeeper.for.minutesPerMatch, 3.5);
+  assert.equal(analysis.flyingGoalkeeper.for.minutesPerMatchWithState, 7);
+  assert.equal(analysis.flyingGoalkeeper.against.minutes, 3);
 });
 
 function competitiveFortyMinuteRecord(): DashboardMatchRecord {
@@ -428,6 +535,8 @@ test("combobox busca 30 partidos por rival jornada fecha y competición", () => 
   assert.ok(filterSearchableMatches(matches, "Racing Norte").every((match) => match.opponent === "Racing Norte"));
   assert.deepEqual(filterSearchableMatches(matches, "J7").map((match) => match.matchday), [7]);
   assert.ok(filterSearchableMatches(matches, "league").length > 10);
+  assert.ok(filterSearchableMatches(matches, "alz").length >= 2);
+  assert.deepEqual(filterSearchableMatches(matches, "  ÁLZ  ").map((match) => match.matchId), filterSearchableMatches(matches, "alz").map((match) => match.matchId));
   assert.match(searchableMatchLabel(matches[6]), /^J7 · /);
 });
 

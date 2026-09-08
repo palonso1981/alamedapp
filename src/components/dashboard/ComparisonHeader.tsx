@@ -4,7 +4,7 @@ const REFERENCES: Record<DashboardReferencePreset, string> = { SEASON: "MEDIA TE
 
 export function scopeLabel(scope: DashboardScopeV2): string {
   const competition = { ALL: "Todas", LEAGUE: "Liga", CUP: "Copa", FRIENDLY: "Amistoso", OTHER: "Otra", UNSPECIFIED: "Sin clasificar" }[scope.competition];
-  const parts = [competition, scope.venues.length === 1 ? scope.venues[0] === "HOME" ? "Local" : "Visitante" : null, scope.period === "ALL" ? null : `P${scope.period}`, scope.competitiveContext === "KEY" ? "Minutos clave" : scope.competitiveContext === "GOLD" ? "Minutos de oro" : null].filter(Boolean);
+  const parts = [competition, scope.venues.length === 1 ? scope.venues[0] === "HOME" ? "Local" : "Visitante" : null, scope.period === "ALL" ? null : `P${scope.period}`, scope.playingState === "PJ_CDA" ? "PJ CDA" : scope.playingState === "PJ_RIVAL" ? "PJ rival" : null, scope.competitiveContext === "KEY" ? "Minutos clave" : scope.competitiveContext === "GOLD" ? "Minutos de oro" : null].filter(Boolean);
   return parts.length ? parts.join(" · ") : "Temporada completa";
 }
 

@@ -181,6 +181,21 @@ export interface TrendPoint {
   shotsNear: number;
   threatsNear: number;
   savePercentage: number | null;
+  pjForMinutes: number;
+  pjAgainstMinutes: number;
+}
+
+export interface PlayingStateAnalytics {
+  minutes: number;
+  matchesWithState: number;
+  minutesPerMatch: number | null;
+  minutesPerMatchWithState: number | null;
+  threatsFor: number;
+  threatsAgainst: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  onTargetFor: number;
+  onTargetAgainst: number;
 }
 
 export interface ZoneStats<T extends string> {
@@ -207,8 +222,8 @@ export interface DashboardAnalysis {
   goalZones: ZoneStats<GoalZoneV1>[];
   criticalFouls: { for: number; against: number };
   flyingGoalkeeper: {
-    for: { minutes: number; threatsFor: number; threatsAgainst: number; goalsFor: number; goalsAgainst: number };
-    against: { minutes: number; threatsFor: number; threatsAgainst: number; goalsFor: number; goalsAgainst: number };
+    for: PlayingStateAnalytics;
+    against: PlayingStateAnalytics;
   };
 }
 
@@ -429,9 +444,13 @@ export function buildDashboardAnalysis(
   const criticalFouls = { for: 0, against: 0 };
   const pitchZones = zoneCollection(["Z1", "Z2", "Z3", "Z4", "Z5", "Z6"] as const);
   const goalZones = zoneCollection(["LEFT_HIGH", "CENTER_HIGH", "RIGHT_HIGH", "LEFT_LOW", "CENTER_LOW", "RIGHT_LOW"] as const);
+  const emptyPlayingState = (): PlayingStateAnalytics => ({
+    minutes: 0, matchesWithState: 0, minutesPerMatch: null, minutesPerMatchWithState: null,
+    threatsFor: 0, threatsAgainst: 0, goalsFor: 0, goalsAgainst: 0, onTargetFor: 0, onTargetAgainst: 0,
+  });
   const flyingGoalkeeper = {
-    for: { minutes: 0, threatsFor: 0, threatsAgainst: 0, goalsFor: 0, goalsAgainst: 0 },
-    against: { minutes: 0, threatsFor: 0, threatsAgainst: 0, goalsFor: 0, goalsAgainst: 0 },
+    for: emptyPlayingState(),
+    against: emptyPlayingState(),
   };
 
   const trends = selected.map((record) => {
@@ -443,7 +462,7 @@ export function buildDashboardAnalysis(
     const threatsNear = threats.filter((event) => event.side === "AGAINST" && ["Z1", "Z2", "Z3"].includes(derivePitchOriginZone(event.origin))).length;
     const saves = one.threats.AGAINST.PARADA;
     const goals = one.threats.AGAINST.GOL;
-    return { matchId: record.catalog.matchId, opponent: record.catalog.opponent, date: record.catalog.date, venue: record.catalog.venue, result: resultFor(record), threatsFor: one.threats.FOR.total, threatsAgainst: one.threats.AGAINST.total, goalsFor: one.goalsFor, goalsAgainst: one.goalsAgainst, shotsOnTarget, threatsOnTarget, shotsNear, threatsNear, savePercentage: saves + goals > 0 ? saves / (saves + goals) * 100 : null };
+    return { matchId: record.catalog.matchId, opponent: record.catalog.opponent, date: record.catalog.date, venue: record.catalog.venue, result: resultFor(record), threatsFor: one.threats.FOR.total, threatsAgainst: one.threats.AGAINST.total, goalsFor: one.goalsFor, goalsAgainst: one.goalsAgainst, shotsOnTarget, threatsOnTarget, shotsNear, threatsNear, savePercentage: saves + goals > 0 ? saves / (saves + goals) * 100 : null, pjForMinutes: 0, pjAgainstMinutes: 0 };
   }).sort((a, b) => a.date.localeCompare(b.date));
 
   for (const record of selected) {
