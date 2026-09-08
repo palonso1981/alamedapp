@@ -258,3 +258,33 @@ Plantilla, “Añadir del club” busca identidades maestras activas y crea úni
 de temporada. El `playerId` permanece estable, las personas ya vinculadas se marcan y no pueden
 duplicarse, y Archivados conserva su semántica de ciclo de vida. El flujo usa el repositorio
 offline-first y su outbox existente; no añade una segunda relación ni agregados persistidos.
+
+## Dashboard V2.5 — selector, contexto P-J y media de plantilla
+
+El partido se elige con un único desplegable estilo Excel reutilizado en analysis y reference:
+al abrir muestra la lista completa, mantiene el buscador visible y filtra al escribir por rival,
+jornada, fecha o competición. La normalización ignora mayúsculas, tildes y espacios redundantes.
+Cada opción sigue siendo un partido identificado por jornada/competición, rival, fecha y marcador;
+la selección es inmediata y no requiere aplicar. El popup se renderiza fuera de los contenedores
+con scroll del header para no quedar recortado, admite teclado básico, cierre exterior/Escape y
+targets táctiles de al menos 44 px.
+
+`PJ CDA` y `PJ RIVAL` proceden exclusivamente de los eventos cronológicos
+`game_state_changed(FLYING_GOALKEEPER, side, active)`. Un intervalo empieza en ON y termina en
+OFF; si queda abierto, se cierra en el último minuto deportivo observado del mismo periodo. Los
+periodos son independientes. No se infiere duración desde la fase `FLYING_GOALKEEPER`, desde la
+duración de un gesto ni desde `createdAt`. La proyección calcula una sola vez intervalos, eventos,
+jugadores en pista y portero funcional, y permite intersectarlos con periodo, Liga/sede, Clave,
+Oro y filtro de portero. PJ CDA continúa excluido de las estadísticas de portero normal.
+
+El bloque Equipo presenta para ambos lados minutos, partidos con uso, minutos por partido,
+minutos por partido con uso, GF-GC, REM-AME y actividad a puerta. El filtro `ESTADO P-J` se
+persiste por separado en analysis/reference (`aPJState`/`rPJState`) y recalcula equipo, jugadores,
+porteros y mapas sin persistir agregados.
+
+Las tablas de jugadores incorporan una fila fija conceptualmente —no una entidad ni una fila
+ordenable— `MEDIA PLANTILLA`. Primero se deriva la métrica individual según TOTALES, POR PARTIDO
+o POR 40 y después se calcula su media entre jugadores con minutos válidos en el scope. Los N/D
+se excluyen de cada celda en lugar de convertirse en cero; cada celda informa su N válido y la
+fila muestra el número de jugadores elegibles. La referencia del Dashboard sigue siendo un
+concepto independiente y SCORE ALAM conserva su fórmula experimental.
