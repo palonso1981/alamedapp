@@ -44,9 +44,11 @@ import {
   rosterForSeason,
   rosterWithExtraPlayers,
   setCurrentSeason,
+  updateSeasonDetails,
   upsertSeasonPlayer,
   upsertSeasonStaff,
 } from "./seasonDomain";
+import { updateExistingMatchMetadata } from "./matchMetadata";
 import { LocalStorageAdapter } from "./matchPersistence";
 import { LocalTeamRepository } from "./sync/localTeamRepository";
 import { LocalMatchRepository } from "./sync/localMatchRepository";
@@ -54,7 +56,7 @@ import { InMemoryRemoteMatchRepository } from "./sync/remoteMatchRepository";
 import { RemoteApplyResult } from "./sync/remoteMatchRepository";
 import { RevisionedRemoteRepository, SyncCoordinator } from "./sync/syncCoordinator";
 import { teamEntityKey, TeamSyncOperation } from "./sync/teamSyncTypes";
-import { replayMatch } from "./matchEngine";
+import { createLiveThreatEvent, replayMatch } from "./matchEngine";
 import { MasterPlayer, TeamRoster, TeamWorkspace } from "../types";
 
 const MATCH_SCOPE = { teamId: "cd-alameda", seasonId: "season-test" } as const;
@@ -118,6 +120,62 @@ test("temporadas mantienen ID estable y una única temporada actual configurable
   assert.equal(currentSeason(workspace)?.seasonId, "season-b");
   assert.equal(workspace.seasons.filter((season) => season.current).length, 1);
   assert.deepEqual(workspace.seasons.map((season) => season.seasonId), ["season-a", "season-b"]);
+});
+
+test("categoría propia vive en equipo-temporada, persiste y no contamina otro equipo", () => {
+  let workspace = createTeamProfile(
+    workspaceFixture(),
+    { name: "Senior B" },
+    { teamId: "senior-b", now: 5 },
+  );
+  workspace = createSeason(
+    workspace,
+    { label: "2026-27", category: "Juvenil División de Honor" },
+    { seasonId: "season-category", now: 10 },
+  );
+  workspace = createSeason(
+    workspace,
+    { teamId: "senior-b", label: "2026-27", category: "Senior Preferente" },
+    { seasonId: "season-category-b", now: 10 },
+  );
+  assert.equal(workspace.seasons[0].category, "Juvenil División de Honor");
+  workspace = updateSeasonDetails(workspace, "season-category", { category: "Juvenil Preferente" }, 11);
+  assert.equal(workspace.seasons[0].category, "Juvenil Preferente");
+  assert.equal(workspace.seasons[0].revision, 1);
+  assert.equal(workspace.seasons.find((season) => season.seasonId === "season-category-b")?.category, "Senior Preferente");
+  const storage = new MemoryStorage();
+  new LocalTeamRepository({ storage }).save(workspace);
+  assert.equal(new LocalTeamRepository({ storage }).load(workspace.teamId).seasons[0].category, "Juvenil Preferente");
+});
+
+test("editar metadata mantiene matchId, eventos, coordenadas y horas de captura", () => {
+  let workspace = createTeamProfile(workspaceFixture(), { name: "Senior A" }, { teamId: "senior-edit", now: 2 });
+  workspace = createSeason(workspace, { teamId: "senior-edit", label: "2026-27", category: "Senior" }, { seasonId: "season-edit-a", now: 3 });
+  workspace = createSeason(workspace, { teamId: "senior-edit", label: "2027-28", category: "Senior" }, { seasonId: "season-edit-b", now: 4 });
+  const base = createDraftMatch("match-001", { clubId: workspace.clubId, teamId: "senior-edit", seasonId: "season-edit-a", opponent: "Alzira", venue: "HOME", date: "2026-10-01", competitionType: "LEAGUE", matchday: 5 }, 10);
+  const threat = createLiveThreatEvent({ id: "event-123", matchId: base.matchId, position: { period: 1, minute: 4, order: 1 }, side: "FOR", playerId: "p-2", origin: { x: 0.24, y: 0.71 }, outcome: "FUERA", phase: "TRANSITION", now: 12 });
+  const session = { ...base, preparation: { ...base.preparation!, status: "FINISHED" as const }, matchFinished: true, events: [threat] };
+  const edited = updateExistingMatchMetadata(session, workspace, { seasonId: "season-edit-b", opponent: "Elche", venue: "AWAY", date: "2026-10-03", time: "18:30", competitionType: "CUP", competition: "Copa Autonómica", matchday: 6, opponentCategory: "Senior Preferente" }, 20);
+  assert.equal(edited.matchId, "match-001");
+  assert.equal(edited.preparation?.status, "FINISHED");
+  assert.equal(edited.preparation?.createdAt, 10);
+  assert.equal(edited.preparation?.updatedAt, 20);
+  assert.deepEqual(edited.events, session.events);
+  assert.equal(edited.events[0].id, "event-123");
+  assert.equal(edited.events[0].createdAt, 12);
+  assert.deepEqual(edited.events[0].type === "threat_recorded" ? edited.events[0].origin : null, { x: 0.24, y: 0.71 });
+  assert.deepEqual({ opponent: edited.preparation?.opponent, venue: edited.preparation?.venue, seasonId: edited.preparation?.seasonId, competitionType: edited.preparation?.competitionType, matchday: edited.preparation?.matchday, opponentCategory: edited.preparation?.opponentCategory }, { opponent: "Elche", venue: "AWAY", seasonId: "season-edit-b", competitionType: "CUP", matchday: 6, opponentCategory: "Senior Preferente" });
+});
+
+test("edición rechaza temporada ajena y partido eliminado sin tocar el original", () => {
+  let workspace = createTeamProfile(workspaceFixture(), { name: "Senior A" }, { teamId: "senior-safe", now: 2 });
+  workspace = createSeason(workspace, { teamId: "senior-safe", label: "2026-27" }, { seasonId: "season-safe", now: 3 });
+  workspace = createSeason(workspace, { teamId: workspace.teamId, label: "Legacy" }, { seasonId: "season-foreign", now: 4 });
+  const base = createDraftMatch("match-safe", { clubId: workspace.clubId, teamId: "senior-safe", seasonId: "season-safe", opponent: "Rival", venue: "HOME", date: "2026-10-01" }, 10);
+  assert.throws(() => updateExistingMatchMetadata(base, workspace, { seasonId: "season-foreign", opponent: "Otro", venue: "HOME", date: "2026-10-01" }), /temporada no pertenece/i);
+  const deleted = { ...base, preparation: { ...base.preparation!, deletedAt: 11 } };
+  assert.throws(() => updateExistingMatchMetadata(deleted, workspace, { opponent: "Otro", venue: "HOME", date: "2026-10-01" }), /eliminado/i);
+  assert.equal(base.preparation?.opponent, "Rival");
 });
 
 test("copiar plantilla crea memberships nuevas sin duplicar identidades maestras", () => {

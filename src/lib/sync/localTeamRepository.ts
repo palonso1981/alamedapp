@@ -117,6 +117,7 @@ function validSeason(value: unknown, teamId?: string): value is Season {
     typeof season.seasonId === "string" &&
     (!teamId || typeof season.teamId === "string") &&
     typeof season.label === "string" &&
+    (season.category === undefined || typeof season.category === "string") &&
     typeof season.current === "boolean" &&
     typeof season.active === "boolean" &&
     typeof season.createdAt === "number" &&

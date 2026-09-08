@@ -27,6 +27,7 @@ import {
   currentSeason,
   setCurrentSeason as setCurrentSeasonDomain,
   updateTeamProfile,
+  updateSeasonDetails as updateSeasonDetailsDomain,
   upsertSeasonPlayer,
   upsertSeasonStaff,
 } from "../lib/seasonDomain";
@@ -57,6 +58,7 @@ interface TeamState {
   updateRealTeam: (scopeId: string, realTeamId: string, changes: Partial<Pick<TeamProfile, "name" | "shortName">>) => void;
   changeLifecycle: (scopeId: string, entityType: "TEAM" | "SEASON" | "PLAYER" | "STAFF", entityId: string, action: "ARCHIVE" | "REACTIVATE" | "DELETE") => void;
   createSeason: (teamId: string, input: CreateSeasonInput) => string | null;
+  updateSeasonDetails: (teamId: string, seasonId: string, changes: { label?: string; category?: string; startDate?: string; endDate?: string }) => void;
   setCurrentSeason: (teamId: string, seasonId: string) => void;
   /** `null` crea solo la identidad de club, sin membership. */
   createPlayer: (teamId: string, input: MasterPlayerInput, seasonId?: string | null) => string | null;
@@ -231,6 +233,17 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       return null;
     }
   },
+  updateSeasonDetails: (teamId, seasonId, changes) =>
+    set((state) => {
+      const workspace = state.teams[teamId] ?? browserTeamRepository.load(teamId);
+      try {
+        const next = updateSeasonDetailsDomain(workspace, seasonId, changes);
+        if (!saveRoster(next)) throw new Error("No se pudo guardar la temporada.");
+        return { teams: { ...state.teams, [teamId]: next }, errors: { ...state.errors, [teamId]: null } };
+      } catch (error) {
+        return { errors: { ...state.errors, [teamId]: error instanceof Error ? error.message : "No se pudo editar la temporada." } };
+      }
+    }),
   setCurrentSeason: (teamId, seasonId) =>
     set((state) => {
       const workspace = state.teams[teamId] ?? browserTeamRepository.load(teamId);

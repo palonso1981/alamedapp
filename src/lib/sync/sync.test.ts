@@ -29,6 +29,10 @@ import {
 } from "./remoteMatchRepository";
 import { MatchSyncCoordinator } from "./syncCoordinator";
 import { migrateMatchSyncState } from "./syncTypes";
+import { createDraftMatch } from "../preMatch";
+import { createSeason, emptyTeamWorkspace } from "../seasonDomain";
+import { createTeamProfile } from "../adminDomain";
+import { updateExistingMatchMetadata } from "../matchMetadata";
 
 class MemoryStorage implements LocalStorageAdapter {
   private readonly values = new Map<string, string>();
@@ -121,6 +125,35 @@ test("ediciones pendientes se compactan conservando operationId y eventId", () =
   assert.equal(after[0].id, before.id);
   assert.equal(after[0].entityId, foul.id);
   assert.equal((after[0].payload as typeof foul).minute, 5);
+});
+
+test("editar metadata offline encola solo el mismo MATCH y reintenta sin duplicarlo", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, { isOnline: () => true });
+  let workspace = createTeamProfile(emptyTeamWorkspace("club-edit", 1), { name: "Senior A" }, { teamId: "team-edit", now: 2 });
+  workspace = createSeason(workspace, { teamId: "team-edit", label: "2026-27" }, { seasonId: "season-edit", now: 3 });
+  const session = createDraftMatch("match-edit-offline", { clubId: "club-edit", teamId: "team-edit", seasonId: "season-edit", opponent: "Alzira", venue: "HOME", date: "2026-10-01" }, 4);
+  local.save(session);
+  await coordinator.syncMatch(session.matchId);
+  assert.equal(local.getSummary(session.matchId).pending, 0);
+
+  const edited = updateExistingMatchMetadata(session, workspace, { opponent: "Elche", venue: "AWAY", date: "2026-10-02", competitionType: "CUP", matchday: 2 }, 5);
+  local.save(edited);
+  const queued = local.getSyncState(session.matchId).outbox;
+  assert.deepEqual(queued.map((operation) => operation.entityType), ["MATCH"]);
+  assert.equal(queued[0].entityId, session.matchId);
+  const operationId = queued[0].id;
+
+  const reopened = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  assert.equal(reopened.load(session.matchId)?.preparation?.opponent, "Elche");
+  assert.equal(reopened.getSyncState(session.matchId).outbox[0].id, operationId);
+  await new MatchSyncCoordinator(reopened, remote, { isOnline: () => true }).syncMatch(session.matchId);
+  assert.equal(reopened.getSummary(session.matchId).pending, 0);
+  const documents = Array.from(remote.documents.keys()).filter((key) => key === `${session.matchId}:match`);
+  assert.equal(documents.length, 1);
+  assert.equal((remote.documents.get(`${session.matchId}:match`)?.payload as { preparation?: { opponent?: string } }).preparation?.opponent, "Elche");
 });
 
 test("soft delete viaja como UPSERT y undo previo a sync se compacta a tombstone", () => {

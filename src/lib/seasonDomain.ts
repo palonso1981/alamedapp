@@ -14,6 +14,7 @@ import {
 export interface CreateSeasonInput {
   teamId?: string;
   label: string;
+  category?: string;
   startDate?: string;
   endDate?: string;
   copyFromSeasonId?: string;
@@ -180,6 +181,7 @@ export function createSeason(
     clubId: workspace.clubId,
     teamId,
     label,
+    category: cleanOptional(input.category),
     startDate,
     endDate,
     current: firstSeason,
@@ -231,6 +233,31 @@ export function createSeason(
     seasons: [...workspace.seasons, season],
     seasonPlayers: [...workspace.seasonPlayers, ...copiedPlayers],
     seasonStaff: [...workspace.seasonStaff, ...copiedStaff],
+  };
+}
+
+export function updateSeasonDetails(
+  workspace: TeamWorkspace,
+  seasonId: string,
+  changes: Partial<Pick<Season, "label" | "category" | "startDate" | "endDate">>,
+  now = Date.now(),
+): TeamWorkspace {
+  const current = workspace.seasons.find((season) => season.seasonId === seasonId && !season.deletedAt);
+  if (!current) throw new Error("La temporada no existe.");
+  const startDate = changes.startDate === undefined ? current.startDate : validDate(changes.startDate);
+  const endDate = changes.endDate === undefined ? current.endDate : validDate(changes.endDate);
+  if (startDate && endDate && startDate > endDate) throw new Error("La fecha de fin no puede ser anterior al inicio.");
+  return {
+    ...workspace,
+    seasons: workspace.seasons.map((season) => season.seasonId === seasonId ? {
+      ...season,
+      label: changes.label === undefined ? season.label : cleanRequired(changes.label, "El nombre de temporada"),
+      category: changes.category === undefined ? season.category : cleanOptional(changes.category),
+      startDate,
+      endDate,
+      updatedAt: now,
+      revision: (season.revision ?? 0) + 1,
+    } : season),
   };
 }
 

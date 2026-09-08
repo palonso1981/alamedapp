@@ -143,6 +143,7 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
         : index % 10 === 8 ? { competitionType: "CUP" as CompetitionType }
           : {}),
     opponent,
+    opponentCategory: index % 3 === 0 ? "Juvenil Preferente" : undefined,
     venue: home ? "HOME" as const : "AWAY" as const,
     date,
     matchday: index + 1,

@@ -27,6 +27,7 @@ export default function ConfigurationPage() {
   const createRealTeam = useTeamStore((state) => state.createRealTeam);
   const updateRealTeam = useTeamStore((state) => state.updateRealTeam);
   const createSeason = useTeamStore((state) => state.createSeason);
+  const updateSeasonDetails = useTeamStore((state) => state.updateSeasonDetails);
   const setCurrentSeason = useTeamStore((state) => state.setCurrentSeason);
   const changeLifecycle = useTeamStore((state) => state.changeLifecycle);
   const [copyFrom, setCopyFrom] = useState("");
@@ -34,6 +35,7 @@ export default function ConfigurationPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [showArchivedClubs, setShowArchivedClubs] = useState(false);
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
+  const [editingSeasonId, setEditingSeasonId] = useState<string | null>(null);
 
   useEffect(() => ensureRegistry(), [ensureRegistry]);
   useEffect(() => ensureTeam(currentClubId), [currentClubId, ensureTeam]);
@@ -66,7 +68,7 @@ export default function ConfigurationPage() {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
-    const seasonId = createSeason(currentClubId, { teamId: selectedTeamId, label: String(data.get("label") ?? ""), startDate: String(data.get("startDate") ?? ""), endDate: String(data.get("endDate") ?? ""), copyFromSeasonId: copyFrom || undefined });
+    const seasonId = createSeason(currentClubId, { teamId: selectedTeamId, label: String(data.get("label") ?? ""), category: String(data.get("category") ?? ""), startDate: String(data.get("startDate") ?? ""), endDate: String(data.get("endDate") ?? ""), copyFromSeasonId: copyFrom || undefined });
     if (seasonId) { form.reset(); setCopyFrom(""); }
   }
 
@@ -114,8 +116,8 @@ export default function ConfigurationPage() {
           {teamSeasons.map((season) => {
             const impact = calculateDeletionImpact(workspace, "SEASON", season.seasonId, matches);
             return <div key={season.seasonId} className={`flex min-h-16 items-center justify-between gap-3 rounded-2xl border px-4 ${season.archivedAt ? "border-slate-700 bg-slate-950/60 opacity-70" : season.current ? "border-amber-400 bg-amber-950/40" : "border-slate-700 bg-slate-900"}`}>
-              <div><p className="font-black">{season.label}</p><p className="text-xs text-slate-500">{season.startDate || "Sin inicio"} → {season.endDate || "Sin fin"}{season.archivedAt ? " · ARCHIVADA" : ""}</p></div>
-              <div className="flex items-center gap-2">{season.current && !season.archivedAt ? <span className="rounded-full bg-amber-400 px-3 py-1 text-xs font-black text-slate-950">ACTUAL</span> : !season.archivedAt ? <button type="button" onClick={() => setCurrentSeason(currentClubId, season.seasonId)} className="min-h-11 rounded-xl bg-slate-700 px-3 text-xs font-black">HACER ACTUAL</button> : null}<AdminEntityActions label={`temporada ${season.label}`} archived={Boolean(season.archivedAt)} impact={`${impactSummary(impact)}. Plantillas, partidos y eventos históricos no se purgarán.`} onArchive={() => changeLifecycle(currentClubId, "SEASON", season.seasonId, "ARCHIVE")} onReactivate={() => changeLifecycle(currentClubId, "SEASON", season.seasonId, "REACTIVATE")} onDelete={() => changeLifecycle(currentClubId, "SEASON", season.seasonId, "DELETE")} /></div>
+              <div><p className="font-black">{season.label}</p><p className="text-xs text-slate-500">{season.category || "Sin categoría"} · {season.startDate || "Sin inicio"} → {season.endDate || "Sin fin"}{season.archivedAt ? " · ARCHIVADA" : ""}</p></div>
+              <div className="flex items-center gap-2">{season.current && !season.archivedAt ? <span className="rounded-full bg-amber-400 px-3 py-1 text-xs font-black text-slate-950">ACTUAL</span> : !season.archivedAt ? <button type="button" onClick={() => setCurrentSeason(currentClubId, season.seasonId)} className="min-h-11 rounded-xl bg-slate-700 px-3 text-xs font-black">HACER ACTUAL</button> : null}<AdminEntityActions label={`temporada ${season.label}`} archived={Boolean(season.archivedAt)} impact={`${impactSummary(impact)}. Plantillas, partidos y eventos históricos no se purgarán.`} onEdit={() => setEditingSeasonId(season.seasonId)} onArchive={() => changeLifecycle(currentClubId, "SEASON", season.seasonId, "ARCHIVE")} onReactivate={() => changeLifecycle(currentClubId, "SEASON", season.seasonId, "REACTIVATE")} onDelete={() => changeLifecycle(currentClubId, "SEASON", season.seasonId, "DELETE")} /></div>
             </div>;
           })}
           {selectedTeamId && teamSeasons.length === 0 && <p className="rounded-2xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-400">Este equipo todavía no tiene temporadas.</p>}
@@ -123,6 +125,7 @@ export default function ConfigurationPage() {
         {selectedTeamId && <details className="mt-4 rounded-2xl bg-slate-950 p-4"><summary className="min-h-11 cursor-pointer text-sm font-black text-amber-300">+ CREAR TEMPORADA</summary>
           <form onSubmit={addSeason} className="mt-3 grid gap-3 sm:grid-cols-3">
             <label className="text-xs font-bold text-slate-300">TEMPORADA<input name="label" required placeholder="2026-27" className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /><Help>Periodo deportivo al que pertenecerán plantilla y partidos.</Help></label>
+            <label className="text-xs font-bold text-slate-300 sm:col-span-2">CATEGORÍA · OPCIONAL<input name="category" placeholder="Juvenil División de Honor" className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /><Help>Contexto del equipo para esta temporada; no se repite en cada partido.</Help></label>
             <label className="text-xs font-bold text-slate-300">INICIO · OPCIONAL<input name="startDate" type="date" className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /></label>
             <label className="text-xs font-bold text-slate-300">FIN · OPCIONAL<input name="endDate" type="date" className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /></label>
             {copyCandidates.length > 0 && <label className="text-xs font-bold text-slate-300 sm:col-span-3">COPIAR PLANTILLA · OPCIONAL<select value={copyFrom} onChange={(event) => setCopyFrom(event.target.value)} className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3"><option value="">Empezar vacía</option>{copyCandidates.map((season) => <option key={season.seasonId} value={season.seasonId}>{season.label}</option>)}</select><Help>Copia membresías; mantiene las mismas identidades de persona.</Help></label>}
@@ -133,5 +136,6 @@ export default function ConfigurationPage() {
       {error && <p role="alert" className="rounded-xl bg-red-950 p-3 text-red-200">{error}</p>}
     </main>
     {editingTeamId && (() => { const team = workspace.teams.find((item) => item.teamId === editingTeamId); if (!team) return null; return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4"><form onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); updateRealTeam(currentClubId, team.teamId, { name: String(data.get("name") ?? ""), shortName: String(data.get("shortName") ?? "") }); setEditingTeamId(null); }} className="w-full max-w-md rounded-3xl border border-slate-700 bg-slate-900 p-5"><h2 className="text-xl font-black">Editar equipo</h2><label className="mt-4 block text-xs font-bold text-slate-300">NOMBRE<input name="name" defaultValue={team.name} required className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /></label><label className="mt-3 block text-xs font-bold text-slate-300">NOMBRE CORTO<input name="shortName" defaultValue={team.shortName} className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /></label><div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => setEditingTeamId(null)} className="min-h-12 rounded-xl bg-slate-700 font-black">CANCELAR</button><button type="submit" className="min-h-12 rounded-xl bg-cyan-400 font-black text-slate-950">GUARDAR</button></div></form></div>; })()}
+    {editingSeasonId && (() => { const season = workspace.seasons.find((item) => item.seasonId === editingSeasonId); if (!season) return null; return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4"><form onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); updateSeasonDetails(currentClubId, season.seasonId, { label: String(data.get("label") ?? ""), category: String(data.get("category") ?? ""), startDate: String(data.get("startDate") ?? ""), endDate: String(data.get("endDate") ?? "") }); setEditingSeasonId(null); }} className="w-full max-w-md rounded-3xl border border-slate-700 bg-slate-900 p-5"><h2 className="text-xl font-black">Editar temporada</h2><label className="mt-4 block text-xs font-bold text-slate-300">TEMPORADA<input name="label" defaultValue={season.label} required className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /></label><label className="mt-3 block text-xs font-bold text-slate-300">CATEGORÍA · OPCIONAL<input name="category" defaultValue={season.category} placeholder="Juvenil División de Honor" className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /></label><div className="mt-3 grid grid-cols-2 gap-2"><label className="text-xs font-bold text-slate-300">INICIO<input name="startDate" type="date" defaultValue={season.startDate} className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /></label><label className="text-xs font-bold text-slate-300">FIN<input name="endDate" type="date" defaultValue={season.endDate} className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /></label></div><div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => setEditingSeasonId(null)} className="min-h-12 rounded-xl bg-slate-700 font-black">CANCELAR</button><button type="submit" className="min-h-12 rounded-xl bg-cyan-400 font-black text-slate-950">GUARDAR</button></div></form></div>; })()}
   </div>;
 }

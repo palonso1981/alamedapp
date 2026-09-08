@@ -435,6 +435,7 @@ function validPreparation(value: unknown): value is MatchPreparation {
     (value.competitionOtherDetail === undefined || typeof value.competitionOtherDetail === "string") &&
     (value.competition === undefined || typeof value.competition === "string") &&
     (value.category === undefined || typeof value.category === "string") &&
+    (value.opponentCategory === undefined || typeof value.opponentCategory === "string") &&
     (value.matchday === undefined || (typeof value.matchday === "number" && Number.isInteger(value.matchday) && value.matchday > 0)) &&
     ["DRAFT", "READY", "LIVE", "FINISHED"].includes(String(value.status)) &&
     isStringArray(value.calledPlayerIds) &&

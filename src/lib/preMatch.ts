@@ -24,6 +24,7 @@ export interface CreateMatchInput {
   competitionOtherDetail?: string;
   competition?: string;
   category?: string;
+  opponentCategory?: string;
   matchday?: number;
 }
 
@@ -96,6 +97,7 @@ export function createDraftMatch(
           : undefined,
       competition: cleaned(input.competition),
       category: cleaned(input.category),
+      opponentCategory: cleaned(input.opponentCategory),
       matchday:
         Number.isFinite(input.matchday) && (input.matchday ?? 0) > 0
           ? Math.trunc(input.matchday!)
@@ -162,6 +164,10 @@ export function updateMatchDetails(
         changes.category === undefined
           ? preparation.category
           : cleaned(changes.category),
+      opponentCategory:
+        changes.opponentCategory === undefined
+          ? preparation.opponentCategory
+          : cleaned(changes.opponentCategory),
       matchday: changes.matchday === undefined
         ? preparation.matchday
         : Number.isFinite(changes.matchday) && changes.matchday > 0

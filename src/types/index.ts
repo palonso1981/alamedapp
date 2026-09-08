@@ -64,6 +64,8 @@ export interface Season extends LifecycleMetadata {
   clubId?: string;
   teamId: string;
   label: string;
+  /** Categoría deportiva del equipo durante esta temporada. */
+  category?: string;
   startDate?: string;
   endDate?: string;
   current: boolean;
@@ -186,6 +188,8 @@ export interface MatchPreparation {
   competitionOtherDetail?: string;
   competition?: string;
   category?: string;
+  /** Categoría del rival en este enfrentamiento; opcional y no inferida. */
+  opponentCategory?: string;
   matchday?: number;
   status: MatchLifecycleStatus;
   calledPlayerIds: string[];

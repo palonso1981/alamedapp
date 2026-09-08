@@ -72,6 +72,27 @@ test("competición es scope principal, legacy no se convierte en Liga y la refer
   assert.ok(buildDashboardV2(records, { ...baseScope(), competition: "UNSPECIFIED" }).records.every((record) => !record.session.preparation?.competitionType));
 });
 
+test("corregir competición conserva identidades y mueve el partido al scope nuevo", () => {
+  const record = buildDashboardFixture()[0];
+  const eventIds = record.session.events.map((event) => event.id);
+  const edited: DashboardMatchRecord = {
+    catalog: { ...record.catalog },
+    session: {
+      ...record.session,
+      preparation: {
+        ...record.session.preparation!,
+        competitionType: "CUP",
+        matchday: 6,
+        opponent: "Rival corregido",
+      },
+    },
+  };
+  assert.equal(filterDashboardDataset([edited], { ...baseScope(), matchIds: [], competition: "LEAGUE" }).length, 0);
+  assert.equal(filterDashboardDataset([edited], { ...baseScope(), matchIds: [], competition: "CUP" }).length, 1);
+  assert.equal(edited.catalog.matchId, record.catalog.matchId);
+  assert.deepEqual(edited.session.events.map((event) => event.id), eventIds);
+});
+
 test("balances pareados mantienen tanteo y diferencia en todos los modos", () => {
   const analysis = buildDashboardV2(buildDashboardFixture(), { ...baseScope(), competition: "LEAGUE" });
   for (const id of ["GOALS", "THREATS", "ON_TARGET", "NEAR"] as const) {
