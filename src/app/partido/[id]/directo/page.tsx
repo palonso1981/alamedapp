@@ -87,17 +87,17 @@ function courtPlayerPosition(
 }
 
 function RestartTargets({ onRestart }: { onRestart: (end: "LEFT" | "RIGHT", side: "TOP" | "BOTTOM", kind: "CORNER" | "DANGEROUS_KICK_IN") => void }) {
-  const corner = "absolute z-20 grid h-14 w-14 place-items-center bg-transparent text-3xl font-black text-amber-100 drop-shadow-lg active:scale-95 sm:h-16 sm:w-16";
-  const band = "absolute z-20 grid h-11 w-[26%] place-items-center bg-transparent px-1 text-[8px] font-black text-violet-100 active:scale-[.98] before:absolute before:inset-x-1 before:h-1 before:rounded-full before:bg-violet-300/80 sm:h-12";
+  const corner = "absolute z-20 grid h-16 w-16 place-items-center rounded-2xl border border-amber-200/35 bg-amber-950/25 text-4xl font-black text-amber-100 shadow-lg shadow-slate-950/25 active:scale-95 sm:h-[4.5rem] sm:w-[4.5rem]";
+  const band = "absolute z-20 grid h-12 w-[27%] place-items-center bg-transparent px-1 text-[10px] font-black tracking-wide text-violet-50 active:scale-[.98] before:absolute before:inset-x-1 before:h-1.5 before:rounded-full before:bg-violet-200/90 before:shadow-md before:shadow-violet-950/40 sm:h-14";
   return <>
     <button type="button" onClick={() => onRestart("LEFT", "TOP", "CORNER")} className={`${corner} left-0 top-0`} aria-label="Córner izquierda superior">⌜</button>
     <button type="button" onClick={() => onRestart("RIGHT", "TOP", "CORNER")} className={`${corner} right-0 top-0`} aria-label="Córner derecha superior">⌝</button>
     <button type="button" onClick={() => onRestart("LEFT", "BOTTOM", "CORNER")} className={`${corner} bottom-0 left-0`} aria-label="Córner izquierda inferior">⌞</button>
     <button type="button" onClick={() => onRestart("RIGHT", "BOTTOM", "CORNER")} className={`${corner} bottom-0 right-0`} aria-label="Córner derecha inferior">⌟</button>
-    <button type="button" onClick={() => onRestart("LEFT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} left-[8%] top-0`} aria-label="Banda cercana izquierda superior"><span className="relative z-10 rounded-full bg-violet-950/80 px-2 py-0.5">BANDA</span></button>
-    <button type="button" onClick={() => onRestart("RIGHT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} right-[8%] top-0`} aria-label="Banda cercana derecha superior"><span className="relative z-10 rounded-full bg-violet-950/80 px-2 py-0.5">BANDA</span></button>
-    <button type="button" onClick={() => onRestart("LEFT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 left-[8%]`} aria-label="Banda cercana izquierda inferior"><span className="relative z-10 rounded-full bg-violet-950/80 px-2 py-0.5">BANDA</span></button>
-    <button type="button" onClick={() => onRestart("RIGHT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 right-[8%]`} aria-label="Banda cercana derecha inferior"><span className="relative z-10 rounded-full bg-violet-950/80 px-2 py-0.5">BANDA</span></button>
+    <button type="button" onClick={() => onRestart("LEFT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} left-[8%] top-0`} aria-label="Banda cercana izquierda superior"><span className="relative z-10 rounded-full border border-violet-300/50 bg-violet-950/90 px-3 py-1">BANDA</span></button>
+    <button type="button" onClick={() => onRestart("RIGHT", "TOP", "DANGEROUS_KICK_IN")} className={`${band} right-[8%] top-0`} aria-label="Banda cercana derecha superior"><span className="relative z-10 rounded-full border border-violet-300/50 bg-violet-950/90 px-3 py-1">BANDA</span></button>
+    <button type="button" onClick={() => onRestart("LEFT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 left-[8%]`} aria-label="Banda cercana izquierda inferior"><span className="relative z-10 rounded-full border border-violet-300/50 bg-violet-950/90 px-3 py-1">BANDA</span></button>
+    <button type="button" onClick={() => onRestart("RIGHT", "BOTTOM", "DANGEROUS_KICK_IN")} className={`${band} bottom-0 right-[8%]`} aria-label="Banda cercana derecha inferior"><span className="relative z-10 rounded-full border border-violet-300/50 bg-violet-950/90 px-3 py-1">BANDA</span></button>
   </>;
 }
 
