@@ -35,6 +35,7 @@ import { browserTeamRepository } from "../lib/sync/localTeamRepository";
 import {
   CDA_CLUB_ID,
   ClubProfile,
+  ManagedPlayerPhoto,
   MasterPlayer,
   MasterStaffMember,
   TeamProfile,
@@ -69,6 +70,7 @@ interface TeamState {
     changes: Partial<MasterPlayerInput> & { active?: boolean },
     seasonId?: string | null,
   ) => void;
+  setPlayerManagedPhoto: (teamId: string, playerId: string, photo: ManagedPlayerPhoto | null) => boolean;
   createStaff: (teamId: string, input: MasterStaffInput, seasonId?: string | null) => string | null;
   updateStaff: (
     teamId: string,
@@ -346,6 +348,18 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         };
       }
     }),
+  setPlayerManagedPhoto: (teamId, playerId, photo) => {
+    const roster = get().teams[teamId] ?? browserTeamRepository.load(teamId);
+    try {
+      const next: TeamWorkspace = { ...roster, players: updateMasterPlayer(roster.players, playerId, { managedPhoto: photo }) };
+      if (!saveRoster(next)) throw new Error("No se pudo guardar la referencia de la foto.");
+      set((state) => ({ teams: { ...state.teams, [teamId]: next }, errors: { ...state.errors, [teamId]: null } }));
+      return true;
+    } catch (error) {
+      set((state) => ({ errors: { ...state.errors, [teamId]: error instanceof Error ? error.message : "No se pudo guardar la foto." } }));
+      return false;
+    }
+  },
   createStaff: (teamId, input, requestedSeasonId) => {
     try {
       const roster = get().teams[teamId] ?? browserTeamRepository.load(teamId);

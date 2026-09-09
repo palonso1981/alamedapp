@@ -1,4 +1,5 @@
 import { Player } from "../../types";
+import { PlayerImage } from "./PlayerImage";
 
 interface PlayerAvatarProps {
   player: Player;
@@ -23,20 +24,15 @@ export function PlayerAvatar({
     <span
       role="img"
       aria-label={`Foto de ${player.name}`}
-      className={`relative grid shrink-0 place-items-center ${compact || bench ? "overflow-visible rounded-full" : "overflow-hidden rounded-xl"} border-2 bg-slate-700 bg-cover bg-top ${size} ${
+      className={`relative grid shrink-0 place-items-center ${compact || bench ? "overflow-visible rounded-full" : "overflow-hidden rounded-xl"} border-2 bg-slate-700 ${size} ${
         selected ? "border-slate-950" : "border-white/60"
       }`}
-      style={
-        player.photoUrl
-          ? { backgroundImage: `url("${player.photoUrl}")` }
-          : undefined
-      }
     >
-      {!player.photoUrl && (
+      <PlayerImage src={player.photoUrl} alt="" className={`absolute inset-0 h-full w-full object-cover object-top ${compact || bench ? "rounded-full" : "rounded-xl"}`} fallback={
         <span className={`text-xl font-black ${selected ? "text-slate-950" : "text-white"}`} aria-hidden="true">
           {player.number}
         </span>
-      )}
+      } />
       {player.photoUrl && (compact || bench) && (
         <span
           className={`absolute -bottom-1 -right-1 grid h-6 min-w-6 place-items-center rounded-full px-1 text-[10px] font-black shadow ${selected ? "bg-slate-950 text-white" : "bg-white text-slate-950"}`}

@@ -61,6 +61,17 @@ function validPlayer(value: unknown): value is MasterPlayer {
     (player.primaryPosition === undefined || ["GOALKEEPER", "FIXO", "WINGER", "PIVOT", "UNIVERSAL"].includes(String(player.primaryPosition))) &&
     (player.dominantFoot === undefined || ["RIGHT", "LEFT", "BOTH"].includes(String(player.dominantFoot))) &&
     (player.canPlayGoalkeeper === undefined || typeof player.canPlayGoalkeeper === "boolean") &&
+    (player.managedPhoto === undefined || (
+      player.managedPhoto.provider === "FIREBASE_STORAGE" &&
+      typeof player.managedPhoto.path === "string" &&
+      typeof player.managedPhoto.url === "string" &&
+      typeof player.managedPhoto.version === "string" &&
+      player.managedPhoto.contentType === "image/webp" &&
+      typeof player.managedPhoto.width === "number" &&
+      typeof player.managedPhoto.height === "number" &&
+      typeof player.managedPhoto.byteSize === "number" &&
+      typeof player.managedPhoto.updatedAt === "number"
+    )) &&
     typeof player.active === "boolean" &&
     typeof player.createdAt === "number" &&
     typeof player.updatedAt === "number"

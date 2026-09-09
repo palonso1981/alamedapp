@@ -58,6 +58,15 @@ import { RevisionedRemoteRepository, SyncCoordinator } from "./sync/syncCoordina
 import { teamEntityKey, TeamSyncOperation } from "./sync/teamSyncTypes";
 import { createLiveThreatEvent, replayMatch } from "./matchEngine";
 import { MasterPlayer, TeamRoster, TeamWorkspace } from "../types";
+import {
+  PLAYER_PHOTO_MAX_INPUT_BYTES,
+  PlayerPhotoStorageAdapter,
+  playerPhotoStoragePath,
+  removePlayerPhoto,
+  replacePlayerPhoto,
+  resolvePlayerPhoto,
+  validatePlayerPhotoCandidate,
+} from "./media/playerPhoto";
 
 const MATCH_SCOPE = { teamId: "cd-alameda", seasonId: "season-test" } as const;
 
@@ -84,6 +93,25 @@ class TeamRemote implements RevisionedRemoteRepository<TeamSyncOperation> {
     return { status: "APPLIED", revision: revision + 1 };
   }
 }
+
+class PhotoStorageFake implements PlayerPhotoStorageAdapter {
+  uploads: Array<Parameters<PlayerPhotoStorageAdapter["upload"]>[0]> = [];
+  deleted: string[] = [];
+  uploadError = false;
+  deleteError = false;
+  async upload(input: Parameters<PlayerPhotoStorageAdapter["upload"]>[0]): Promise<{ url: string }> {
+    if (this.uploadError) throw new Error("offline");
+    this.uploads.push(input);
+    return { url: `https://storage.test/${encodeURIComponent(input.path)}` };
+  }
+  async delete(path: string): Promise<void> {
+    this.deleted.push(path);
+    if (this.deleteError) throw new Error("cleanup failed");
+  }
+}
+
+const photoFile = (type = "image/jpeg", size = 1024) => ({ type, size }) as File;
+const processedPhoto = () => Promise.resolve({ blob: new Blob(["photo"], { type: "image/webp" }), contentType: "image/webp" as const, width: 900, height: 1200 });
 
 function rosterFixture(): TeamRoster {
   const players: MasterPlayer[] = [
@@ -1053,4 +1081,73 @@ test("partidos nuevos guardan club equipo temporada y legacy conserva cd-alameda
   const created = createDraftMatch("multiclub-match", { clubId: "club-tests", teamId: "tests-senior", seasonId: "tests-26", opponent: "Rival", venue: "HOME", date: "2026-09-02" }, 1);
   assert.deepEqual({ clubId: created.preparation?.clubId, teamId: created.preparation?.teamId, seasonId: created.preparation?.seasonId }, { clubId: "club-tests", teamId: "tests-senior", seasonId: "tests-26" });
   assert.equal(matchCatalogClubId({ matchId: "legacy", opponent: "Rival", venue: "HOME", date: "2025-01-01", status: "FINISHED", updatedAt: 1 }), "cd-alameda");
+});
+
+test("foto gestionada sube, conserva playerId y solo actualiza metadata tras éxito", async () => {
+  const player = workspaceFixture().players[0];
+  const storage = new PhotoStorageFake();
+  let persisted: MasterPlayer = player;
+  const result = await replacePlayerPhoto({
+    clubId: "cd-alameda", player, file: photoFile(), storage, process: processedPhoto,
+    now: () => 100, idFactory: () => "photo-v1",
+    persist: (photo) => { persisted = { ...player, managedPhoto: photo ?? undefined }; },
+  });
+  assert.equal(persisted.playerId, player.playerId);
+  assert.equal(result.photo.path, "clubs/cd-alameda/players/gk-1/100-photo-v1.webp");
+  assert.equal(storage.uploads[0].metadata.playerId, player.playerId);
+  assert.equal(resolvePlayerPhoto(persisted), result.photo.url);
+});
+
+test("reemplazar foto activa primero la nueva y limpia después la versión anterior", async () => {
+  const base = workspaceFixture().players[0];
+  const oldPath = playerPhotoStoragePath("cd-alameda", base.playerId, "old");
+  const player = { ...base, photoUrl: "https://legacy.test/photo.jpg", managedPhoto: { provider: "FIREBASE_STORAGE" as const, path: oldPath, url: "https://storage.test/old", version: "old", contentType: "image/webp" as const, width: 800, height: 1000, byteSize: 500, updatedAt: 1 } };
+  const storage = new PhotoStorageFake();
+  let persistedUrl = "";
+  const result = await replacePlayerPhoto({ clubId: "cd-alameda", player, file: photoFile(), storage, process: processedPhoto, now: () => 200, idFactory: () => "new", persist: (photo) => { persistedUrl = photo?.url ?? ""; } });
+  assert.equal(persistedUrl, result.photo.url);
+  assert.deepEqual(storage.deleted, [oldPath]);
+  assert.notEqual(result.photo.path, oldPath);
+});
+
+test("fallo de upload conserva foto anterior y no publica referencia rota", async () => {
+  const player = workspaceFixture().players[0];
+  const storage = new PhotoStorageFake();
+  storage.uploadError = true;
+  let persisted = false;
+  await assert.rejects(() => replacePlayerPhoto({ clubId: "cd-alameda", player, file: photoFile(), storage, process: processedPhoto, persist: () => { persisted = true; } }), /Comprueba la conexión/i);
+  assert.equal(persisted, false);
+  assert.equal(resolvePlayerPhoto(player), player.photoUrl);
+});
+
+test("quitar foto restaura URL legacy y tolera limpieza remota pendiente", async () => {
+  const base = workspaceFixture().players[0];
+  const player = { ...base, photoUrl: "https://legacy.test/photo.jpg", managedPhoto: { provider: "FIREBASE_STORAGE" as const, path: "clubs/cd-alameda/players/gk-1/old.webp", url: "https://storage.test/old", version: "old", contentType: "image/webp" as const, width: 800, height: 1000, byteSize: 500, updatedAt: 1 } };
+  const storage = new PhotoStorageFake();
+  storage.deleteError = true;
+  let persisted: MasterPlayer = player;
+  const result = await removePlayerPhoto({ player, storage, persist: () => { persisted = { ...player, managedPhoto: undefined }; } });
+  assert.equal(result.cleanupPending, true);
+  assert.equal(resolvePlayerPhoto(persisted), player.photoUrl);
+});
+
+test("validación acepta formatos web y rechaza tipo o tamaño inseguros", () => {
+  for (const type of ["image/jpeg", "image/png", "image/webp"]) assert.doesNotThrow(() => validatePlayerPhotoCandidate(photoFile(type)));
+  assert.throws(() => validatePlayerPhotoCandidate(photoFile("image/heic")), /JPEG, PNG o WebP/i);
+  assert.throws(() => validatePlayerPhotoCandidate(photoFile("image/jpeg", PLAYER_PHOTO_MAX_INPUT_BYTES + 1)), /demasiado grande/i);
+});
+
+test("metadata de foto gestionada persiste y entra en el outbox del mismo Player", () => {
+  const storage = new MemoryStorage();
+  const repository = new LocalTeamRepository({ storage, now: () => 300, idFactory: () => "photo-metadata-op" });
+  const workspace = workspaceFixture();
+  repository.save(workspace);
+  const player = workspace.players[0];
+  const managedPhoto = { provider: "FIREBASE_STORAGE" as const, path: "clubs/cd-alameda/players/gk-1/300-v.webp", url: "https://storage.test/new", version: "300-v", contentType: "image/webp" as const, width: 900, height: 1200, byteSize: 600, updatedAt: 300 };
+  const next = { ...workspace, players: updateMasterPlayer(workspace.players, player.playerId, { managedPhoto }, 300) };
+  repository.save(next);
+  const operation = repository.getSyncState(workspace.teamId).outbox.find((item) => item.entityType === "PLAYER" && item.entityId === player.playerId);
+  assert.equal((operation?.payload as MasterPlayer).managedPhoto?.path, managedPhoto.path);
+  assert.equal((operation?.payload as MasterPlayer).playerId, player.playerId);
+  assert.equal(repository.load(workspace.teamId).players[0].managedPhoto?.url, managedPhoto.url);
 });

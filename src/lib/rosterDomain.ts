@@ -1,6 +1,7 @@
 import {
   CDA_CLUB_ID,
   MasterPlayer,
+  ManagedPlayerPhoto,
   MasterPlayerRole,
   MasterStaffMember,
   MasterStaffRole,
@@ -16,6 +17,7 @@ export interface MasterPlayerInput {
   displayName: string;
   number: number;
   photoUrl?: string;
+  managedPhoto?: ManagedPlayerPhoto | null;
   role: MasterPlayerRole;
   dateOfBirth?: string;
   primaryPosition?: FutsalPosition;
@@ -112,6 +114,7 @@ export function createMasterPlayer(
     displayName: cleanRequired(input.displayName, "El nombre corto"),
     number,
     photoUrl: cleanOptional(input.photoUrl),
+    managedPhoto: input.managedPhoto ?? undefined,
     dateOfBirth: validDateOfBirth(input.dateOfBirth),
     primaryPosition: input.primaryPosition,
     dominantFoot: input.dominantFoot,
@@ -158,6 +161,10 @@ export function updateMasterPlayer(
       changes.photoUrl === undefined
         ? current.photoUrl
         : cleanOptional(changes.photoUrl),
+    managedPhoto:
+      changes.managedPhoto === undefined
+        ? current.managedPhoto
+        : changes.managedPhoto ?? undefined,
     dateOfBirth:
       changes.dateOfBirth === undefined
         ? current.dateOfBirth
@@ -237,13 +244,20 @@ export function playerSnapshot(
     name: player.displayName,
     fullName: player.fullName,
     number: player.number,
-    photoUrl: player.photoUrl,
+    photoUrl: resolveMasterPlayerPhoto(player),
     position: functionalGoalkeeper ? "PORTERO" : "JUGADOR",
     goalkeeperCapable: canPlayGoalkeeper(player),
     naturalPosition: player.primaryPosition,
     dateOfBirth: player.dateOfBirth,
     dominantFoot: player.dominantFoot,
   };
+}
+
+/** Único punto de resolución: Storage gestionado, URL legacy y finalmente fallback visual. */
+export function resolveMasterPlayerPhoto(
+  player: Pick<MasterPlayer, "managedPhoto" | "photoUrl">,
+): string | undefined {
+  return player.managedPhoto?.url || player.photoUrl;
 }
 
 const STAFF_ROLE_LABELS: Record<MasterStaffRole, string> = {

@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { AppHeader } from "../../components/app/AppHeader";
 import { AdminEntityActions } from "../../components/admin/AdminEntityActions";
 import { PlayerAvatar } from "../../components/player/PlayerAvatar";
+import { PlayerPhotoUploader } from "../../components/player/PlayerPhotoUploader";
 import { StaffAvatar } from "../../components/player/StaffAvatar";
 import { TeamSyncStatusBadge } from "../../components/team/TeamSyncStatusBadge";
 import { availableTeams, calculateDeletionImpact, impactSummary } from "../../lib/adminDomain";
@@ -31,6 +32,7 @@ export default function RosterPage() {
   const createPlayer = useTeamStore((state) => state.createPlayer);
   const addPlayerToSeason = useTeamStore((state) => state.addPlayerToSeason);
   const updatePlayer = useTeamStore((state) => state.updatePlayer);
+  const setPlayerManagedPhoto = useTeamStore((state) => state.setPlayerManagedPhoto);
   const createStaff = useTeamStore((state) => state.createStaff);
   const updateStaff = useTeamStore((state) => state.updateStaff);
   const clearError = useTeamStore((state) => state.clearError);
@@ -101,6 +103,9 @@ export default function RosterPage() {
     const query = clubPlayerQuery.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     return (workspace?.players ?? []).filter((player) => player.active && !player.archivedAt && !player.deletedAt).filter((player) => `${player.fullName} ${player.displayName} ${player.number} ${formatFutsalPosition(player.primaryPosition)}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(query));
   }, [clubPlayerQuery, workspace]);
+  const editingPlayer = editor?.kind === "PLAYER" && editor.value
+    ? workspace?.players.find((player) => player.playerId === editor.value!.playerId) ?? editor.value
+    : undefined;
 
   function submitPlayer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const data = new FormData(event.currentTarget);
@@ -156,7 +161,7 @@ export default function RosterPage() {
       </section>}
     </main>
     {clubPlayerPicker && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4" onMouseDown={() => setClubPlayerPicker(false)}><section onMouseDown={(event) => event.stopPropagation()} className="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-4"><header className="flex items-center justify-between"><div><h2 className="font-black">AÑADIR JUGADOR DEL CLUB</h2><p className="text-xs text-slate-500">Conserva su identidad e historial.</p></div><button type="button" onClick={() => setClubPlayerPicker(false)} className="min-h-11 min-w-11 rounded-full bg-slate-800 text-xl">×</button></header><input autoFocus value={clubPlayerQuery} onChange={(event) => setClubPlayerQuery(event.target.value)} placeholder="Nombre, dorsal o posición…" className="mt-4 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-4"/><div className="mt-3 max-h-80 space-y-2 overflow-y-auto">{clubPlayerCandidates.map((player) => { const linked = linkedPlayerIds.has(player.playerId); return <button type="button" key={player.playerId} disabled={linked} onClick={() => { addPlayerToSeason(currentClubId, seasonId, player.playerId, player.number); setClubPlayerPicker(false); setClubPlayerQuery(""); }} className="flex min-h-16 w-full items-center gap-3 rounded-2xl bg-slate-800 p-2 text-left disabled:opacity-45"><PlayerAvatar player={playerSnapshot(player)}/><span className="min-w-0 flex-1"><strong className="block truncate">#{player.number} · {player.displayName}</strong><small className="text-slate-400">{formatFutsalPosition(player.primaryPosition)}</small></span>{linked && <span className="text-[9px] font-black text-amber-300">YA EN EL EQUIPO</span>}</button>; })}{clubPlayerCandidates.length === 0 && <p className="p-6 text-center text-sm text-slate-500">No hay jugadores activos del club con esa búsqueda.</p>}</div><button type="button" onClick={() => { setClubPlayerPicker(false); clearError(currentClubId); setEditor({ kind: "PLAYER" }); }} className="mt-3 min-h-11 w-full rounded-xl border border-slate-700 text-xs font-black">CREAR NUEVO JUGADOR</button></section></div>}
-    {editor && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4" onMouseDown={() => setEditor(null)}><form onSubmit={editor.kind === "PLAYER" ? submitPlayer : submitStaff} onMouseDown={(event) => event.stopPropagation()} className="w-full max-w-md space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl">
+    {editor && <div className="fixed inset-0 z-50 grid place-items-start overflow-y-auto bg-slate-950/80 p-4 sm:place-items-center" onMouseDown={() => setEditor(null)}><form onSubmit={editor.kind === "PLAYER" ? submitPlayer : submitStaff} onMouseDown={(event) => event.stopPropagation()} className="my-4 w-full max-w-md space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:my-0">
       <div className="flex items-center justify-between"><h2 className="text-xl font-black">{editor.value ? "EDITAR" : "NUEVO"} {editor.kind === "PLAYER" ? "JUGADOR" : "STAFF"}</h2><button type="button" onClick={() => setEditor(null)} className="min-h-11 min-w-11 rounded-full bg-slate-800 text-xl">×</button></div>
       <label className="block text-sm font-bold text-slate-300">Nombre completo<input name="fullName" required defaultValue={editor.value?.fullName} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /><span className="mt-1 block text-[11px] font-normal text-slate-500">Identidad estable de la persona dentro del club.</span></label>
       <label className="block text-sm font-bold text-slate-300">Nombre corto<input name="displayName" required defaultValue={editor.value?.displayName} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /><span className="mt-1 block text-[11px] font-normal text-slate-500">Nombre visible en pista y controles compactos.</span></label>
@@ -174,7 +179,9 @@ export default function RosterPage() {
           <div className="rounded-xl border border-emerald-700/60 bg-emerald-950/40 p-3 text-sm font-bold text-emerald-200">◉ Apto como portero por su posición natural.</div>
         </> : <label className="block text-sm font-bold text-slate-300">También puede actuar de portero<select name="canPlayGoalkeeper" value={String(additionalGoalkeeper)} onChange={(event) => setAdditionalGoalkeeper(event.target.value === "true")} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white"><option value="false">No</option><option value="true">Sí</option></select><span className="mt-1 block text-[11px] font-normal text-slate-500">Márcalo solo si este jugador de campo puede ocupar la función de portero.</span></label>}
       </> : <><label className="block text-sm font-bold text-slate-300">Rol<select name="role" defaultValue={editor.value?.role ?? "HEAD_COACH"} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white">{STAFF_ROLES.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}</select></label><label className="block text-sm font-bold text-slate-300">Rol libre (solo Otro)<input name="customRole" defaultValue={editor.value?.customRole} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /></label></>}
-      <label className="block text-sm font-bold text-slate-300">URL de fotografía · temporal<input name="photoUrl" type="url" defaultValue={editor.value?.photoUrl} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /><span className="mt-1 block text-[11px] font-normal text-slate-500">Mecanismo técnico provisional. Más adelante se sustituirá por Subir/Elegir foto con Storage.</span></label>
+      {editor.kind === "PLAYER" && editingPlayer && <PlayerPhotoUploader clubId={currentClubId} player={editingPlayer} onPersist={(photo) => setPlayerManagedPhoto(currentClubId, editingPlayer.playerId, photo)} />}
+      {editor.kind === "PLAYER" && !editor.value && <p className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs text-slate-400">Guarda primero el jugador para poder subir su foto.</p>}
+      <label className="block text-sm font-bold text-slate-300">{editor.kind === "PLAYER" ? "URL de fotografía · legacy" : "URL de fotografía · temporal"}<input name="photoUrl" type="url" defaultValue={editor.value?.photoUrl} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /><span className="mt-1 block text-[11px] font-normal text-slate-500">{editor.kind === "PLAYER" ? "Se conserva como fallback. Una foto subida desde APP ALAM tiene prioridad." : "Mecanismo técnico provisional para staff."}</span></label>
       <div className="flex items-center gap-2">
         {editor.value && scope === "CLUB" && (() => {
           const entityType = editor.kind === "PLAYER" ? "PLAYER" as const : "STAFF" as const;

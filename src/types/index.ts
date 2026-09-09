@@ -1,6 +1,19 @@
 export type DominantFoot = "RIGHT" | "LEFT" | "BOTH" | "UNKNOWN";
 export type FutsalPosition = "GOALKEEPER" | "FIXO" | "WINGER" | "PIVOT" | "UNIVERSAL";
 
+export interface ManagedPlayerPhoto {
+  provider: "FIREBASE_STORAGE";
+  /** Identidad portable del objeto. La URL es una resolución/cache de esta ruta. */
+  path: string;
+  url: string;
+  version: string;
+  contentType: "image/webp";
+  width: number;
+  height: number;
+  byteSize: number;
+  updatedAt: number;
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -109,6 +122,8 @@ export interface MasterPlayer extends LifecycleMetadata {
   displayName: string;
   number: number;
   photoUrl?: string;
+  /** Foto gestionada. Tiene prioridad sobre `photoUrl`, que se conserva como fallback legacy. */
+  managedPhoto?: ManagedPlayerPhoto;
   dateOfBirth?: string;
   primaryPosition?: FutsalPosition;
   dominantFoot?: Exclude<DominantFoot, "UNKNOWN">;
