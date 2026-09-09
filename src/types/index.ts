@@ -245,6 +245,29 @@ export interface Match {
   status: "pending" | "ongoing" | "finished";
 }
 
+export type MatchVideoPeriod = 1 | 2;
+
+export interface MatchVideoAnchor {
+  id: string;
+  /** Identidad estable del evento; nunca se resuelve por minuto o coordenadas. */
+  eventId: string;
+  /** Segundo real del vídeo externo introducido por la persona usuaria. */
+  videoSecond: number;
+}
+
+export interface MatchVideoSegment {
+  id: string;
+  provider: "YOUTUBE";
+  videoId: string;
+  label: string;
+  /** Un segmento lógico puede cubrir P1, P2 o ambas partes. */
+  periods: MatchVideoPeriod[];
+  leadSeconds: number;
+  anchors: MatchVideoAnchor[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 export const MATCH_EVENT_SCHEMA_VERSION = 1 as const;
 export const INFERIORITY_SLOT_ID = "slot:inferiority" as const;
 
@@ -612,6 +635,8 @@ export interface MatchSession {
   reviewStartedAt?: number;
   reviewValidatedAt?: number;
   reviewReopenedAt?: number;
+  /** Índice hacia vídeo externo. Los eventos no almacenan URLs ni posiciones derivadas. */
+  videoSegments?: MatchVideoSegment[];
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];

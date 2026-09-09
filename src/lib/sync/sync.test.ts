@@ -227,7 +227,7 @@ test("migración V1 es explícita, idempotente y genera baseline remoto", () => 
   assert.ok(loaded);
   repository.save(loaded);
   const migrated = loadMatchRecord(session.matchId, storage);
-  assert.equal(migrated?.storageVersion, 2);
+  assert.equal(migrated?.storageVersion, 3);
   assert.equal(migrated?.sync.outbox.length, 2);
 
   repository.save(repository.load(session.matchId)!);

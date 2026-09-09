@@ -39,6 +39,7 @@ import {
   LiveThreatOutcome,
   MatchEvent,
   MatchSession,
+  MatchVideoSegment,
   NormalizedCoordinates,
   Player,
   KeeperBodyPart,
@@ -258,6 +259,7 @@ interface MatchState {
   redo: (matchId: string) => void;
   clearError: (matchId: string) => void;
   resetDemo: (matchId: string) => void;
+  setVideoSegments: (matchId: string, segments: MatchVideoSegment[]) => void;
 }
 
 export function createSession(matchId: string): MatchSession {
@@ -1236,6 +1238,15 @@ export const useMatchStore = create<MatchState>((set) => ({
     set((state) =>
       updateSession(state, matchId, (session) => ({
         ...session,
+        lastError: null,
+      })),
+    ),
+
+  setVideoSegments: (matchId, segments) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => ({
+        ...session,
+        videoSegments: segments,
         lastError: null,
       })),
     ),

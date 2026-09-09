@@ -10,6 +10,7 @@ import {
   MatchEvent,
   MatchPreparation,
   MatchSession,
+  MatchVideoSegment,
   Player,
   StaffMember,
 } from "../types";
@@ -19,7 +20,8 @@ import {
   PersistedMatchSyncState,
 } from "./sync/syncTypes";
 
-export const MATCH_LOCAL_STORAGE_VERSION = 2 as const;
+export const MATCH_LOCAL_STORAGE_VERSION = 3 as const;
+const PREVIOUS_MATCH_LOCAL_STORAGE_VERSION = 2 as const;
 const LEGACY_MATCH_LOCAL_STORAGE_VERSION = 1 as const;
 const STORAGE_PREFIX = "alamedapp:match:v1:";
 
@@ -46,6 +48,7 @@ interface PersistedMatchSession {
   reviewStartedAt?: number;
   reviewValidatedAt?: number;
   reviewReopenedAt?: number;
+  videoSegments?: MatchVideoSegment[];
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];
@@ -54,6 +57,7 @@ interface PersistedMatchSession {
 interface PersistedMatchEnvelope {
   storageVersion:
     | typeof LEGACY_MATCH_LOCAL_STORAGE_VERSION
+    | typeof PREVIOUS_MATCH_LOCAL_STORAGE_VERSION
     | typeof MATCH_LOCAL_STORAGE_VERSION;
   savedAt: number;
   session: PersistedMatchSession;
@@ -118,6 +122,20 @@ function isStaffMember(value: unknown): value is StaffMember {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isVideoSegment(value: unknown): value is MatchVideoSegment {
+  return isObject(value) &&
+    typeof value.id === "string" &&
+    value.provider === "YOUTUBE" &&
+    typeof value.videoId === "string" && /^[A-Za-z0-9_-]{11}$/.test(value.videoId) &&
+    typeof value.label === "string" &&
+    Array.isArray(value.periods) && value.periods.length > 0 &&
+    value.periods.every((period) => period === 1 || period === 2) &&
+    typeof value.leadSeconds === "number" && Number.isInteger(value.leadSeconds) && value.leadSeconds >= 0 && value.leadSeconds <= 20 &&
+    Array.isArray(value.anchors) && value.anchors.every((anchor) => isObject(anchor) && typeof anchor.id === "string" && typeof anchor.eventId === "string" && typeof anchor.videoSecond === "number" && Number.isSafeInteger(anchor.videoSecond) && anchor.videoSecond >= 0) &&
+    typeof value.createdAt === "number" &&
+    typeof value.updatedAt === "number";
 }
 
 function hasEventBase(value: Record<string, unknown>, matchId: string): boolean {
@@ -415,6 +433,7 @@ function migratePersistedSession(value: unknown): unknown {
     reviewStartedAt: typeof value.reviewStartedAt === "number" ? value.reviewStartedAt : undefined,
     reviewValidatedAt: typeof value.reviewValidatedAt === "number" ? value.reviewValidatedAt : undefined,
     reviewReopenedAt: typeof value.reviewReopenedAt === "number" ? value.reviewReopenedAt : undefined,
+    videoSegments: Array.isArray(value.videoSegments) ? value.videoSegments : [],
     events: migrateChronology(value.events, value.matchId),
     past: Array.isArray(value.past)
       ? value.past.map((events) => migrateChronology(events, value.matchId))
@@ -544,6 +563,8 @@ function validPersistedSession(
       !["NOT_REVIEWED", "IN_REVIEW", "VALIDATED"].includes(String(value.reviewStatus))) ||
     (value.reviewRevision !== undefined &&
       (typeof value.reviewRevision !== "number" || !Number.isInteger(value.reviewRevision) || value.reviewRevision < 0)) ||
+    (value.videoSegments !== undefined &&
+      (!Array.isArray(value.videoSegments) || !value.videoSegments.every(isVideoSegment))) ||
     !isEventList(value.events, expectedMatchId) ||
     !Array.isArray(value.past) ||
     !value.past.every((events) => isEventList(events, expectedMatchId)) ||
@@ -626,6 +647,7 @@ export function saveMatchRecord(
       reviewStartedAt: session.reviewStartedAt,
       reviewValidatedAt: session.reviewValidatedAt,
       reviewReopenedAt: session.reviewReopenedAt,
+      videoSegments: session.videoSegments ?? [],
       events: session.events,
       past: session.past,
       future: session.future,
@@ -672,6 +694,7 @@ export function loadMatchRecord(
     if (
       !isObject(envelope) ||
       (envelope.storageVersion !== LEGACY_MATCH_LOCAL_STORAGE_VERSION &&
+        envelope.storageVersion !== PREVIOUS_MATCH_LOCAL_STORAGE_VERSION &&
         envelope.storageVersion !== MATCH_LOCAL_STORAGE_VERSION) ||
       typeof envelope.savedAt !== "number" ||
       !validPersistedSession(migratedSession, matchId)
@@ -687,7 +710,7 @@ export function loadMatchRecord(
         lastSavedAt: envelope.savedAt,
       },
       sync:
-        envelope.storageVersion === MATCH_LOCAL_STORAGE_VERSION
+        envelope.storageVersion !== LEGACY_MATCH_LOCAL_STORAGE_VERSION
           ? migrateMatchSyncState(envelope.sync, matchId)
           : emptyMatchSyncState(),
       storageVersion: envelope.storageVersion,

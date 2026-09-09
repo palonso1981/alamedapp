@@ -58,6 +58,7 @@ export function matchRemoteMetadata(session: MatchSession): MatchRemoteMetadata 
     reviewStartedAt: session.reviewStartedAt,
     reviewValidatedAt: session.reviewValidatedAt,
     reviewReopenedAt: session.reviewReopenedAt,
+    videoSegments: session.videoSegments ?? [],
     preparation: session.preparation,
   };
 }
@@ -245,7 +246,7 @@ export class LocalMatchRepository {
     let sync = this.withLiveInFlightState(previousRecord?.sync ?? emptyMatchSyncState());
     if (isRemoteSyncEligibleMatch(session.matchId)) {
       sync = buildNextSyncState(
-        previousRecord?.storageVersion === 2 ? previousRecord.session : null,
+        previousRecord?.storageVersion === 1 ? null : previousRecord?.session ?? null,
         session,
         sync,
         now,

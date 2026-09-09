@@ -36,6 +36,8 @@
     "src/lib/dashboardCompetitiveContext.ts",
     "src/lib/dashboardMetricDefinitions.ts",
     "src/lib/dashboardTrace.ts",
+    "src/lib/videoIndex.ts",
+    "src/lib/videoIndex.test.ts",
     "src/lib/positionFormat.ts",
     "src/lib/dashboardFixture.ts",
     "src/lib/sync/teamSyncTypes.ts",
