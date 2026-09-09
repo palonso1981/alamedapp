@@ -257,7 +257,10 @@ export function playerSnapshot(
 export function resolveMasterPlayerPhoto(
   player: Pick<MasterPlayer, "managedPhoto" | "photoUrl">,
 ): string | undefined {
-  return player.managedPhoto?.url || player.photoUrl;
+  const managed = player.managedPhoto;
+  if (managed?.provider === "CLOUDINARY") return managed.secureUrl || player.photoUrl;
+  if (managed?.provider === "FIREBASE_STORAGE") return managed.url || player.photoUrl;
+  return player.photoUrl;
 }
 
 const STAFF_ROLE_LABELS: Record<MasterStaffRole, string> = {

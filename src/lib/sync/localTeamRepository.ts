@@ -71,6 +71,16 @@ function validPlayer(value: unknown): value is MasterPlayer {
       typeof player.managedPhoto.height === "number" &&
       typeof player.managedPhoto.byteSize === "number" &&
       typeof player.managedPhoto.updatedAt === "number"
+    ) || (
+      player.managedPhoto.provider === "CLOUDINARY" &&
+      typeof player.managedPhoto.publicId === "string" &&
+      typeof player.managedPhoto.secureUrl === "string" &&
+      (player.managedPhoto.version === undefined || typeof player.managedPhoto.version === "number") &&
+      player.managedPhoto.contentType === "image/webp" &&
+      typeof player.managedPhoto.width === "number" &&
+      typeof player.managedPhoto.height === "number" &&
+      typeof player.managedPhoto.byteSize === "number" &&
+      typeof player.managedPhoto.uploadedAt === "number"
     )) &&
     typeof player.active === "boolean" &&
     typeof player.createdAt === "number" &&

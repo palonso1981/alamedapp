@@ -1,7 +1,7 @@
 export type DominantFoot = "RIGHT" | "LEFT" | "BOTH" | "UNKNOWN";
 export type FutsalPosition = "GOALKEEPER" | "FIXO" | "WINGER" | "PIVOT" | "UNIVERSAL";
 
-export interface ManagedPlayerPhoto {
+export interface FirebaseManagedPlayerPhoto {
   provider: "FIREBASE_STORAGE";
   /** Identidad portable del objeto. La URL es una resolución/cache de esta ruta. */
   path: string;
@@ -13,6 +13,21 @@ export interface ManagedPlayerPhoto {
   byteSize: number;
   updatedAt: number;
 }
+
+export interface CloudinaryManagedPlayerPhoto {
+  provider: "CLOUDINARY";
+  /** Identidad remota autogenerada por Cloudinary; nunca se envía desde el cliente. */
+  publicId: string;
+  secureUrl: string;
+  version?: number;
+  contentType: "image/webp";
+  width: number;
+  height: number;
+  byteSize: number;
+  uploadedAt: number;
+}
+
+export type ManagedPlayerPhoto = FirebaseManagedPlayerPhoto | CloudinaryManagedPlayerPhoto;
 
 export interface Player {
   id: string;

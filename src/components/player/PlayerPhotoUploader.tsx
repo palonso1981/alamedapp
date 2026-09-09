@@ -2,8 +2,9 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import { FirebaseDevPlayerPhotoStorage } from "../../lib/media/firebasePlayerPhotoStorage";
-import { removePlayerPhoto, replacePlayerPhoto, resolvePlayerPhoto, validatePlayerPhotoCandidate } from "../../lib/media/playerPhoto";
+import { CloudinaryPlayerPhotoStorage } from "../../lib/media/cloudinaryPlayerPhotoStorage";
+import { removePlayerPhoto, replacePlayerPhoto, validatePlayerPhotoCandidate } from "../../lib/media/playerPhoto";
+import { resolveMasterPlayerPhoto } from "../../lib/rosterDomain";
 import { ManagedPlayerPhoto, MasterPlayer } from "../../types";
 import { PlayerImage } from "./PlayerImage";
 
@@ -13,7 +14,7 @@ export function PlayerPhotoUploader({ clubId, player, onPersist }: {
   onPersist: (photo: ManagedPlayerPhoto | null) => boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const storage = useMemo(() => new FirebaseDevPlayerPhotoStorage(), []);
+  const storage = useMemo(() => new CloudinaryPlayerPhotoStorage(), []);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -88,7 +89,7 @@ export function PlayerPhotoUploader({ clubId, player, onPersist }: {
     }
   }
 
-  const current = resolvePlayerPhoto(player);
+  const current = resolveMasterPlayerPhoto(player);
   const fallback = <span className="grid h-full w-full place-items-center bg-slate-800 text-2xl font-black text-slate-500">#{player.number}</span>;
   return <section className="rounded-2xl border border-slate-700 bg-slate-950/60 p-3" aria-label="Fotografía del jugador">
     <div className="flex items-center gap-3">

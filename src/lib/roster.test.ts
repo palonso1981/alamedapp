@@ -33,6 +33,7 @@ import {
   createMasterPlayer,
   createMasterStaff,
   playerSnapshot,
+  resolveMasterPlayerPhoto,
   updateMasterPlayer,
 } from "./rosterDomain";
 import {
@@ -57,16 +58,15 @@ import { RemoteApplyResult } from "./sync/remoteMatchRepository";
 import { RevisionedRemoteRepository, SyncCoordinator } from "./sync/syncCoordinator";
 import { teamEntityKey, TeamSyncOperation } from "./sync/teamSyncTypes";
 import { createLiveThreatEvent, replayMatch } from "./matchEngine";
-import { MasterPlayer, TeamRoster, TeamWorkspace } from "../types";
+import { ManagedPlayerPhoto, MasterPlayer, TeamRoster, TeamWorkspace } from "../types";
 import {
   PLAYER_PHOTO_MAX_INPUT_BYTES,
   PlayerPhotoStorageAdapter,
-  playerPhotoStoragePath,
   removePlayerPhoto,
   replacePlayerPhoto,
-  resolvePlayerPhoto,
   validatePlayerPhotoCandidate,
 } from "./media/playerPhoto";
+import { CloudinaryPlayerPhotoStorage, parseCloudinaryUploadResponse } from "./media/cloudinaryPlayerPhotoStorage";
 
 const MATCH_SCOPE = { teamId: "cd-alameda", seasonId: "season-test" } as const;
 
@@ -99,13 +99,13 @@ class PhotoStorageFake implements PlayerPhotoStorageAdapter {
   deleted: string[] = [];
   uploadError = false;
   deleteError = false;
-  async upload(input: Parameters<PlayerPhotoStorageAdapter["upload"]>[0]): Promise<{ url: string }> {
+  async upload(input: Parameters<PlayerPhotoStorageAdapter["upload"]>[0]) {
     if (this.uploadError) throw new Error("offline");
     this.uploads.push(input);
-    return { url: `https://storage.test/${encodeURIComponent(input.path)}` };
+    return { publicId: "alamedapp/players-dev/random-photo", secureUrl: "https://res.cloudinary.com/xc7h48kz/image/upload/v100/random-photo.webp", version: 100, contentType: "image/webp" as const, width: 900, height: 1200, byteSize: input.data.size, uploadedAt: 100 };
   }
-  async delete(path: string): Promise<void> {
-    this.deleted.push(path);
+  async delete(photo: ManagedPlayerPhoto): Promise<void> {
+    this.deleted.push(photo.provider === "CLOUDINARY" ? photo.publicId : photo.path);
     if (this.deleteError) throw new Error("cleanup failed");
   }
 }
@@ -1089,25 +1089,25 @@ test("foto gestionada sube, conserva playerId y solo actualiza metadata tras éx
   let persisted: MasterPlayer = player;
   const result = await replacePlayerPhoto({
     clubId: "cd-alameda", player, file: photoFile(), storage, process: processedPhoto,
-    now: () => 100, idFactory: () => "photo-v1",
+    now: () => 100,
     persist: (photo) => { persisted = { ...player, managedPhoto: photo ?? undefined }; },
   });
   assert.equal(persisted.playerId, player.playerId);
-  assert.equal(result.photo.path, "clubs/cd-alameda/players/gk-1/100-photo-v1.webp");
-  assert.equal(storage.uploads[0].metadata.playerId, player.playerId);
-  assert.equal(resolvePlayerPhoto(persisted), result.photo.url);
+  assert.equal(result.photo.provider, "CLOUDINARY");
+  assert.equal(result.photo.publicId, "alamedapp/players-dev/random-photo");
+  assert.equal(resolveMasterPlayerPhoto(persisted), result.photo.secureUrl);
 });
 
 test("reemplazar foto activa primero la nueva y limpia después la versión anterior", async () => {
   const base = workspaceFixture().players[0];
-  const oldPath = playerPhotoStoragePath("cd-alameda", base.playerId, "old");
+  const oldPath = "clubs/cd-alameda/players/gk-1/old.webp";
   const player = { ...base, photoUrl: "https://legacy.test/photo.jpg", managedPhoto: { provider: "FIREBASE_STORAGE" as const, path: oldPath, url: "https://storage.test/old", version: "old", contentType: "image/webp" as const, width: 800, height: 1000, byteSize: 500, updatedAt: 1 } };
   const storage = new PhotoStorageFake();
   let persistedUrl = "";
-  const result = await replacePlayerPhoto({ clubId: "cd-alameda", player, file: photoFile(), storage, process: processedPhoto, now: () => 200, idFactory: () => "new", persist: (photo) => { persistedUrl = photo?.url ?? ""; } });
-  assert.equal(persistedUrl, result.photo.url);
+  const result = await replacePlayerPhoto({ clubId: "cd-alameda", player, file: photoFile(), storage, process: processedPhoto, now: () => 200, persist: (photo) => { persistedUrl = photo?.provider === "CLOUDINARY" ? photo.secureUrl : ""; } });
+  assert.equal(persistedUrl, result.photo.secureUrl);
   assert.deepEqual(storage.deleted, [oldPath]);
-  assert.notEqual(result.photo.path, oldPath);
+  assert.notEqual(result.photo.publicId, oldPath);
 });
 
 test("fallo de upload conserva foto anterior y no publica referencia rota", async () => {
@@ -1115,9 +1115,9 @@ test("fallo de upload conserva foto anterior y no publica referencia rota", asyn
   const storage = new PhotoStorageFake();
   storage.uploadError = true;
   let persisted = false;
-  await assert.rejects(() => replacePlayerPhoto({ clubId: "cd-alameda", player, file: photoFile(), storage, process: processedPhoto, persist: () => { persisted = true; } }), /Comprueba la conexión/i);
+  await assert.rejects(() => replacePlayerPhoto({ clubId: "cd-alameda", player, file: photoFile(), storage, process: processedPhoto, persist: () => { persisted = true; } }), /offline/i);
   assert.equal(persisted, false);
-  assert.equal(resolvePlayerPhoto(player), player.photoUrl);
+  assert.equal(resolveMasterPlayerPhoto(player), player.photoUrl);
 });
 
 test("quitar foto restaura URL legacy y tolera limpieza remota pendiente", async () => {
@@ -1128,7 +1128,7 @@ test("quitar foto restaura URL legacy y tolera limpieza remota pendiente", async
   let persisted: MasterPlayer = player;
   const result = await removePlayerPhoto({ player, storage, persist: () => { persisted = { ...player, managedPhoto: undefined }; } });
   assert.equal(result.cleanupPending, true);
-  assert.equal(resolvePlayerPhoto(persisted), player.photoUrl);
+  assert.equal(resolveMasterPlayerPhoto(persisted), player.photoUrl);
 });
 
 test("validación acepta formatos web y rechaza tipo o tamaño inseguros", () => {
@@ -1143,11 +1143,40 @@ test("metadata de foto gestionada persiste y entra en el outbox del mismo Player
   const workspace = workspaceFixture();
   repository.save(workspace);
   const player = workspace.players[0];
-  const managedPhoto = { provider: "FIREBASE_STORAGE" as const, path: "clubs/cd-alameda/players/gk-1/300-v.webp", url: "https://storage.test/new", version: "300-v", contentType: "image/webp" as const, width: 900, height: 1200, byteSize: 600, updatedAt: 300 };
+  const managedPhoto = { provider: "CLOUDINARY" as const, publicId: "alamedapp/players-dev/random", secureUrl: "https://res.cloudinary.com/xc7h48kz/image/upload/v300/random.webp", version: 300, contentType: "image/webp" as const, width: 900, height: 1200, byteSize: 600, uploadedAt: 300 };
   const next = { ...workspace, players: updateMasterPlayer(workspace.players, player.playerId, { managedPhoto }, 300) };
   repository.save(next);
   const operation = repository.getSyncState(workspace.teamId).outbox.find((item) => item.entityType === "PLAYER" && item.entityId === player.playerId);
-  assert.equal((operation?.payload as MasterPlayer).managedPhoto?.path, managedPhoto.path);
+  const operationPhoto = (operation?.payload as MasterPlayer).managedPhoto;
+  assert.equal(operationPhoto?.provider, "CLOUDINARY");
+  assert.equal(operationPhoto?.provider === "CLOUDINARY" ? operationPhoto.publicId : "", managedPhoto.publicId);
   assert.equal((operation?.payload as MasterPlayer).playerId, player.playerId);
-  assert.equal(repository.load(workspace.teamId).players[0].managedPhoto?.url, managedPhoto.url);
+  const reloadedPhoto = repository.load(workspace.teamId).players[0].managedPhoto;
+  assert.equal(reloadedPhoto?.provider === "CLOUDINARY" ? reloadedPhoto.secureUrl : "", managedPhoto.secureUrl);
+});
+
+test("parser Cloudinary valida metadata WebP y rechaza respuestas incompletas", () => {
+  const parsed = parseCloudinaryUploadResponse({ public_id: "alamedapp/players-dev/random", secure_url: "https://res.cloudinary.com/xc7h48kz/image/upload/v42/random.webp", version: 42, width: 800, height: 1200, bytes: 45678, format: "webp", resource_type: "image", created_at: "2026-09-09T12:34:56Z" });
+  assert.deepEqual({ publicId: parsed.publicId, version: parsed.version, width: parsed.width, height: parsed.height, byteSize: parsed.byteSize }, { publicId: "alamedapp/players-dev/random", version: 42, width: 800, height: 1200, byteSize: 45678 });
+  assert.throws(() => parseCloudinaryUploadResponse({ public_id: "x", secure_url: "http://unsafe.test/x", width: 1, height: 1, bytes: 1, format: "webp", resource_type: "image" }), /incompleta/i);
+});
+
+test("upload unsigned envía solo archivo y preset, sin public_id ni secretos", async () => {
+  let capturedUrl = "";
+  let capturedFields: string[] = [];
+  const fetcher = async (input: URL | RequestInfo, init?: RequestInit) => {
+    capturedUrl = String(input);
+    const form = init?.body as FormData;
+    capturedFields = Array.from(form.keys()).sort();
+    assert.equal(form.get("upload_preset"), "alamedapp_players_dev");
+    return new Response(JSON.stringify({ public_id: "alamedapp/players-dev/generated", secure_url: "https://res.cloudinary.com/xc7h48kz/image/upload/v7/generated.webp", version: 7, width: 900, height: 1200, bytes: 5, format: "webp", resource_type: "image" }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const adapter = new CloudinaryPlayerPhotoStorage({ cloudName: "xc7h48kz", uploadPreset: "alamedapp_players_dev" }, fetcher as typeof fetch);
+  const result = await adapter.upload({ data: new Blob(["photo"], { type: "image/webp" }), contentType: "image/webp" });
+  assert.equal(capturedUrl, "https://api.cloudinary.com/v1_1/xc7h48kz/image/upload");
+  assert.deepEqual(capturedFields, ["file", "upload_preset"]);
+  assert.equal(result.publicId, "alamedapp/players-dev/generated");
+
+  const failing = new CloudinaryPlayerPhotoStorage({ cloudName: "xc7h48kz", uploadPreset: "alamedapp_players_dev" }, (async () => new Response(JSON.stringify({ error: { message: "Invalid preset" } }), { status: 400 })) as typeof fetch);
+  await assert.rejects(() => failing.upload({ data: new Blob(["x"]), contentType: "image/webp" }), /Invalid preset/);
 });
