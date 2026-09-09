@@ -34,6 +34,7 @@ import { createDraftMatch } from "../preMatch";
 import { createSeason, emptyTeamWorkspace } from "../seasonDomain";
 import { createTeamProfile } from "../adminDomain";
 import { updateExistingMatchMetadata } from "../matchMetadata";
+import { createVideoSegment, upsertVideoSegment } from "../videoIndex";
 
 class MemoryStorage implements LocalStorageAdapter {
   private readonly values = new Map<string, string>();
@@ -1005,6 +1006,26 @@ test("eventos Directo V2 sobreviven offline reload y sincronizan por el mismo ID
   for (const id of ["restart-sync", "adjust-sync", "pj-rival-sync", "loss-sync"]) {
     assert.equal((remote.documents.get(`${session.matchId}:event:${id}`)?.payload as { id?: string })?.id, id);
   }
+  assert.equal(local.getSummary(session.matchId).pending, 0);
+});
+
+test("segmentos y anchors viajan como metadata MATCH sin modificar eventos", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, { isOnline: () => true });
+  const session = createSession("video-metadata-sync");
+  local.save(session);
+  await coordinator.syncMatch(session.matchId);
+  const segment = createVideoSegment({ id: "video-1", urlOrVideoId: "abcdefghijk", periods: [1, 2], now: 10 });
+  const withVideo = upsertVideoSegment(session, { ...segment, anchors: [{ id: "anchor-1", eventId: session.events[0].id, videoSecond: 20 }] });
+  local.save(withVideo);
+  const queued = local.getSyncState(session.matchId).outbox;
+  assert.deepEqual(queued.map((operation) => operation.entityType), ["MATCH"]);
+  assert.equal((queued[0].payload as ReturnType<typeof matchRemoteMetadata>).videoSegments?.[0].anchors[0].eventId, session.events[0].id);
+  await coordinator.syncMatch(session.matchId);
+  const remotePayload = remote.documents.get(`${session.matchId}:match`)?.payload as ReturnType<typeof matchRemoteMetadata>;
+  assert.equal(remotePayload.videoSegments?.[0].videoId, "abcdefghijk");
   assert.equal(local.getSummary(session.matchId).pending, 0);
 });
 
