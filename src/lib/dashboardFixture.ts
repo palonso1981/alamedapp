@@ -5,6 +5,7 @@ import {
   createGameStateEvent,
   createLineupInitializedEvent,
   createLiveThreatEvent,
+  createPossessionLostEvent,
   createSubstitutionEvent,
 } from "./matchEngine";
 import { CompetitionType, MatchEvent, MatchSession, Player, ThreatPhase } from "../types";
@@ -77,6 +78,23 @@ function threat(
   });
 }
 
+function possessionLost(
+  matchId: string,
+  id: string,
+  period: number,
+  minute: number,
+  order: number,
+  playerId: string,
+): MatchEvent {
+  return createPossessionLostEvent({
+    id,
+    matchId,
+    position: { period, minute, order },
+    playerId,
+    now: Date.UTC(2026, 7, period, minute, order),
+  });
+}
+
 function buildFixtureRecord(index: number): DashboardMatchRecord {
   const matchId = `dashboard-fixture-${index + 1}`;
   const home = index % 2 === 0;
@@ -90,10 +108,12 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
     createFoulEvent({ id: `${matchId}-f1`, matchId, position: { period: 1, minute: 6, order: 1 }, side: "FOR", playerId: "fx-p-2", now: index * 1000 + 6 }),
     createSubstitutionEvent({ id: `${matchId}-sub-1`, matchId, position: { period: 1, minute: 8, order: 1 }, playerOutId: "fx-p-2", playerInId: "fx-p-8", now: index * 1000 + 8 }),
     threat(matchId, `${matchId}-for-2`, 1, 12, 1, "FOR", "FUERA", phases[(index + 2) % phases.length], "fx-p-8", startingGoalkeeper),
+    possessionLost(matchId, `${matchId}-loss-1`, 1, 13, 1, index % 2 === 0 ? "fx-p-8" : "fx-p-5"),
     createCardEvent({ id: `${matchId}-card`, matchId, position: { period: 1, minute: 15, order: 1 }, side: "FOR", color: "YELLOW", playerId: "fx-p-8", now: index * 1000 + 15 }),
     createLineupInitializedEvent({ id: `${matchId}-p2`, matchId, position: { period: 2, minute: 0, order: 1 }, squadPlayerIds: fixturePlayers.map((player) => player.id), onCourtPlayerIds: [secondHalfGoalkeeper, "fx-p-5", "fx-p-7", "fx-p-9", "fx-p-10"], goalkeeperPlayerId: secondHalfGoalkeeper, now: index * 1000 + 20 }),
     threat(matchId, `${matchId}-against-2`, 2, 3, 1, "AGAINST", "PARADA", phases[(index + 3) % phases.length], undefined, secondHalfGoalkeeper),
     threat(matchId, `${matchId}-for-3`, 2, 7, 1, "FOR", index % 2 ? "GOL" : "PARADA", phases[(index + 4) % phases.length], "fx-p-9", secondHalfGoalkeeper),
+    possessionLost(matchId, `${matchId}-loss-2`, 2, 8, 1, index % 3 === 0 ? secondHalfGoalkeeper : "fx-p-10"),
     createFoulEvent({ id: `${matchId}-f2`, matchId, position: { period: 2, minute: 10, order: 1 }, side: "AGAINST", playerId: "fx-p-7", now: index * 1000 + 30 }),
   ];
   for (let foul = 2; foul <= 5; foul += 1) {
@@ -102,14 +122,15 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
   if (index === 7) {
     events.push(
       threat(matchId, `${matchId}-context-2-1`, 2, 10, 2, "FOR", "GOL", "POSITIONAL", "fx-p-10", secondHalfGoalkeeper),
-      threat(matchId, `${matchId}-context-3-1`, 2, 12, 2, "FOR", "GOL", "TRANSITION", "fx-p-9", secondHalfGoalkeeper),
-      threat(matchId, `${matchId}-context-3-2`, 2, 16, 1, "AGAINST", "GOL", "TRANSITION", undefined, secondHalfGoalkeeper),
+      threat(matchId, `${matchId}-context-2-2`, 2, 12, 2, "AGAINST", "GOL", "TRANSITION", undefined, secondHalfGoalkeeper),
+      threat(matchId, `${matchId}-context-3-2`, 2, 16, 1, "FOR", "GOL", "TRANSITION", "fx-p-9", secondHalfGoalkeeper),
       threat(matchId, `${matchId}-context-gold`, 2, 17, 1, "AGAINST", "PARADA", "POSITIONAL", undefined, secondHalfGoalkeeper),
     );
   }
   if (index === 4) {
     events.push(
       createGameStateEvent({ id: `${matchId}-pj-on`, matchId, position: { period: 2, minute: 16, order: 1 }, state: "FLYING_GOALKEEPER", active: true, playerId: "fx-p-10", side: "FOR", now: 5000 }),
+      possessionLost(matchId, `${matchId}-pj-loss`, 2, 16, 2, "fx-p-10"),
       threat(matchId, `${matchId}-pj-threat`, 2, 17, 1, "AGAINST", "GOL", "FLYING_GOALKEEPER", undefined, "fx-p-10"),
       createGameStateEvent({ id: `${matchId}-pj-off`, matchId, position: { period: 2, minute: 19, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "FOR", now: 5002 }),
     );
@@ -117,6 +138,7 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
   if (index === 5) {
     events.push(
       createGameStateEvent({ id: `${matchId}-pj-rival-on`, matchId, position: { period: 2, minute: 14, order: 2 }, state: "FLYING_GOALKEEPER", active: true, side: "AGAINST", now: 5100 }),
+      possessionLost(matchId, `${matchId}-pj-rival-loss`, 2, 15, 1, "fx-p-9"),
       threat(matchId, `${matchId}-pj-rival-cda`, 2, 16, 1, "FOR", "GOL", "TRANSITION", "fx-p-9", secondHalfGoalkeeper),
       threat(matchId, `${matchId}-pj-rival-threat`, 2, 17, 1, "AGAINST", "PARADA", "FLYING_GOALKEEPER", undefined, secondHalfGoalkeeper),
       createGameStateEvent({ id: `${matchId}-pj-rival-off`, matchId, position: { period: 2, minute: 18, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "AGAINST", now: 5103 }),

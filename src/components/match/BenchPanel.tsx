@@ -48,7 +48,7 @@ export function BenchPanel({ players, staff, playerMinutes, replacementForLabel,
       </div>
       {selectedPlayerId && !replacementForLabel && (
         <div className="mt-2 rounded-xl border border-slate-700 bg-slate-950 p-1.5">
-          <PlayerContextActions location="BENCH" showCancel onFoulCommitted={() => undefined} onFoulReceived={() => undefined} onYellow={() => onYellow(selectedPlayerId)} onRed={() => onRed(selectedPlayerId)} onRedOnly={() => undefined} onRedWithInferiority={() => undefined} onBack={() => undefined} onCancel={onCancel} />
+          <PlayerContextActions location="BENCH" showCancel onFoulCommitted={() => undefined} onFoulReceived={() => undefined} onPossessionLost={() => undefined} onYellow={() => onYellow(selectedPlayerId)} onRed={() => onRed(selectedPlayerId)} onRedOnly={() => undefined} onRedWithInferiority={() => undefined} onBack={() => undefined} onCancel={onCancel} />
         </div>
       )}
       {selectedStaff && (

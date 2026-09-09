@@ -9,7 +9,7 @@ import { PlayerPhotoCard } from "../player/PlayerPhotoCard";
 import { formatFutsalPosition } from "../../lib/positionFormat";
 
 type View = "GENERAL" | "ON_COURT" | "DANGER" | "CONTEXT" | "DISCIPLINE";
-type Column = "matches" | "minutes" | "avgMinutes" | "goals" | "assists" | "threats" | "points" | "plusMinus" | "goalsFor" | "goalsAgainst" | "threatsFor" | "threatsAgainst" | "threatBalance" | "onTargetFor" | "onTargetAgainst" | "onTargetBalance" | "nearFor" | "nearAgainst" | "nearBalance" | "keyMinutes" | "keyPercentage" | "goldMinutes" | "goldPercentage" | "foulsCommitted" | "foulsReceived" | "criticalCommitted" | "criticalReceived" | "score";
+type Column = "matches" | "minutes" | "avgMinutes" | "goals" | "assists" | "threats" | "possessionLosses" | "points" | "plusMinus" | "goalsFor" | "goalsAgainst" | "threatsFor" | "threatsAgainst" | "threatBalance" | "onTargetFor" | "onTargetAgainst" | "onTargetBalance" | "nearFor" | "nearAgainst" | "nearBalance" | "keyMinutes" | "keyPercentage" | "goldMinutes" | "goldPercentage" | "foulsCommitted" | "foulsReceived" | "criticalCommitted" | "criticalReceived" | "score";
 
 const format = (value: number | null) => value === null ? "N/D" : Number.isInteger(value) ? String(value) : value.toFixed(1).replace(".", ",");
 
@@ -29,12 +29,12 @@ export function PlayerTableV2({ players, scores, mode, detailQuery }: { players:
     else { setColumn(next); setDirection("desc"); }
   };
   const shown = view === "GENERAL"
-    ? (["matches", "minutes", "avgMinutes", "goals", "assists", "threats", "score"] as Column[])
+    ? (["matches", "minutes", "avgMinutes", "goals", "assists", "threats", "possessionLosses", "score"] as Column[])
     : view === "ON_COURT" ? (["minutes", "goalsFor", "goalsAgainst", "plusMinus", "threatsFor", "threatsAgainst", "threatBalance", "points"] as Column[])
       : view === "DANGER" ? (["minutes", "onTargetFor", "onTargetAgainst", "onTargetBalance", "nearFor", "nearAgainst", "nearBalance"] as Column[])
         : view === "CONTEXT" ? (["minutes", "keyMinutes", "keyPercentage", "goldMinutes", "goldPercentage", "points"] as Column[])
           : (["minutes", "foulsCommitted", "foulsReceived", "criticalCommitted", "criticalReceived"] as Column[]);
-  const labels: Record<Column, string> = { matches: "PJ", minutes: "MIN", avgMinutes: "MIN/PART.", goals: "G", assists: "ASIST.", threats: "REM.", points: "PTS PISTA", plusMinus: "DIF. GOLES", goalsFor: "GF", goalsAgainst: "GC", threatsFor: "REM. EQ.", threatsAgainst: "AMEN.", threatBalance: "BAL. REM/AME", onTargetFor: "REM. PUERTA", onTargetAgainst: "AME. PUERTA", onTargetBalance: "BAL. PUERTA", nearFor: "REM. CERCA", nearAgainst: "AME. CERCA", nearBalance: "BAL. CERCA", keyMinutes: "MIN. CLAVE", keyPercentage: "% CLAVE", goldMinutes: "MIN. ORO", goldPercentage: "% ORO", foulsCommitted: "FC", foulsReceived: "FR", criticalCommitted: "FC 5+", criticalReceived: "FR 5+", score: "SCORE" };
+  const labels: Record<Column, string> = { matches: "PJ", minutes: "MIN", avgMinutes: "MIN/PART.", goals: "G", assists: "ASIST.", threats: "REM.", possessionLosses: "PÉRD.", points: "PTS PISTA", plusMinus: "DIF. GOLES", goalsFor: "GF", goalsAgainst: "GC", threatsFor: "REM. EQ.", threatsAgainst: "AMEN.", threatBalance: "BAL. REM/AME", onTargetFor: "REM. PUERTA", onTargetAgainst: "AME. PUERTA", onTargetBalance: "BAL. PUERTA", nearFor: "REM. CERCA", nearAgainst: "AME. CERCA", nearBalance: "BAL. CERCA", keyMinutes: "MIN. CLAVE", keyPercentage: "% CLAVE", goldMinutes: "MIN. ORO", goldPercentage: "% ORO", foulsCommitted: "FC", foulsReceived: "FR", criticalCommitted: "FC 5+", criticalReceived: "FR 5+", score: "SCORE" };
   const averages = new Map(shown.map((id) => [id, squadAverage(players, (player) => metric(player, id))]));
   const eligiblePlayers = players.filter((player) => player.minutes > 0).length;
   return <section>

@@ -6,6 +6,7 @@ import {
   createFoulCountAdjustmentEvent,
   createGameStateEvent,
   createLiveThreatEvent,
+  createPossessionLostEvent,
   createRestartEvent,
   editEvent,
   replayMatch,
@@ -995,12 +996,13 @@ test("eventos Directo V2 sobreviven offline reload y sincronizan por el mismo ID
     createRestartEvent({ id: "restart-sync", matchId: session.matchId, position: { period: 1, minute: 4, order: 1 }, side: "FOR", restart: "CORNER", spatialSide: "TOP" }),
     createFoulCountAdjustmentEvent({ id: "adjust-sync", matchId: session.matchId, position: { period: 1, minute: 5, order: 1 }, side: "AGAINST", delta: 1 }),
     createGameStateEvent({ id: "pj-rival-sync", matchId: session.matchId, position: { period: 1, minute: 6, order: 1 }, state: "FLYING_GOALKEEPER", active: true, side: "AGAINST" }),
+    createPossessionLostEvent({ id: "loss-sync", matchId: session.matchId, position: { period: 1, minute: 7, order: 1 }, playerId: "p1", now: 7 }),
   ];
   local.save({ ...session, events });
   assert.equal(local.load(session.matchId)?.events.length, events.length);
   assert.ok(local.getSummary(session.matchId).pending > 0);
   await coordinator.syncMatch(session.matchId);
-  for (const id of ["restart-sync", "adjust-sync", "pj-rival-sync"]) {
+  for (const id of ["restart-sync", "adjust-sync", "pj-rival-sync", "loss-sync"]) {
     assert.equal((remote.documents.get(`${session.matchId}:event:${id}`)?.payload as { id?: string })?.id, id);
   }
   assert.equal(local.getSummary(session.matchId).pending, 0);

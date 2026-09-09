@@ -6,7 +6,7 @@ import { DashboardMatchRecord } from "../../lib/dashboardAnalytics";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "../../lib/dashboardFixture";
 import { listMatchCatalog, matchCatalogClubId, visibleMatchCatalog } from "../../lib/matchCatalog";
 import { loadMatchSession } from "../../lib/matchPersistence";
-import { buildDashboardV2, DashboardArea, DashboardReferencePreset, DashboardScopeV2, DashboardValueMode, defaultDashboardCompetition, emptyDashboardScope, matchCompetition, mergeDashboardSearchParams, referenceScopeForPreset, scopeFromSearchParams } from "../../lib/dashboardV2";
+import { buildDashboardV2, DashboardArea, DashboardReferencePreset, DashboardScopeV2, DashboardValueMode, defaultDashboardCompetition, emptyDashboardScope, hasDashboardScopeSearchParams, matchCompetition, mergeDashboardSearchParams, referenceScopeForPreset, scopeFromSearchParams } from "../../lib/dashboardV2";
 import { replayMatch } from "../../lib/matchEngine";
 import { useTeamStore } from "../../store/useTeamStore";
 
@@ -51,7 +51,7 @@ export function useDashboardProfileData(pathname: string, area: DashboardArea = 
     setScope(parsedScope);
     const preset = (params.get("reference") as DashboardReferencePreset) ?? "SEASON";
     setReferencePreset(preset);
-    setReferenceScope(params.has("rClub") ? scopeFromSearchParams(params, "r", referenceScopeForPreset(parsedScope, preset)) : referenceScopeForPreset(parsedScope, preset));
+    setReferenceScope(hasDashboardScopeSearchParams(params, "r") ? scopeFromSearchParams(params, "r", referenceScopeForPreset(parsedScope, preset)) : referenceScopeForPreset(parsedScope, preset));
     setMode((params.get("mode") as DashboardValueMode) ?? "TOTALS");
     setReady(true);
   }, [currentClubId, ensureTeam, fixture, ready, registryReady, searchParams]);

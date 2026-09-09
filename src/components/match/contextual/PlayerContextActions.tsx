@@ -9,6 +9,7 @@ interface PlayerContextActionsProps {
   captureBlocked?: boolean;
   onFoulCommitted: () => void;
   onFoulReceived: () => void;
+  onPossessionLost: () => void;
   onYellow: () => void;
   onRed: () => void;
   onRedOnly: () => void;
@@ -48,6 +49,7 @@ export function PlayerContextActions({
   captureBlocked = false,
   onFoulCommitted,
   onFoulReceived,
+  onPossessionLost,
   onYellow,
   onRed,
   onRedOnly,
@@ -127,6 +129,15 @@ export function PlayerContextActions({
             >
               <FoulDirectionGlyph direction="IN" />
               <span className="mt-1 text-[9px] font-black">RECIBE</span>
+            </button>
+            <button
+              type="button"
+              onClick={onPossessionLost}
+              className="col-span-2 flex min-h-14 items-center justify-center gap-3 rounded-xl border border-fuchsia-700 bg-fuchsia-950/90 px-2 text-fuchsia-100"
+              aria-label="Pérdida"
+            >
+              <span className="text-2xl" aria-hidden="true">◉↗</span>
+              <span className="text-[10px] font-black">PÉRDIDA</span>
             </button>
           </>
         )}

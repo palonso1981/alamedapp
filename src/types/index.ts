@@ -401,6 +401,12 @@ export interface FoulRecordedEvent extends MatchEventBase {
   origin?: NormalizedCoordinates;
 }
 
+/** Pérdida CDA con balón vivo, siempre atribuida a una persona en pista. */
+export interface PossessionLostEvent extends MatchEventBase {
+  type: "possession_lost";
+  playerId: string;
+}
+
 export interface CardRecordedEvent extends MatchEventBase {
   type: "card_recorded";
   side: DisciplineSide;
@@ -433,6 +439,7 @@ export type MatchEvent =
   | ThreatRecordedEvent
   | GameStateChangedEvent
   | FoulRecordedEvent
+  | PossessionLostEvent
   | CardRecordedEvent
   | RestartRecordedEvent
   | FoulCountAdjustedEvent;
@@ -477,7 +484,8 @@ export interface ReplayIssue {
     | "INVALID_SAVE_DETAIL"
     | "INVALID_CARD_TARGET"
     | "INVALID_INFERIORITY_SLOT"
-    | "INVALID_GAME_STATE_PLAYER";
+    | "INVALID_GAME_STATE_PLAYER"
+    | "INVALID_POSSESSION_LOST_PLAYER";
   message: string;
 }
 

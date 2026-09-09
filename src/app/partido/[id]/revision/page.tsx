@@ -103,7 +103,7 @@ export default function MatchReviewPage() {
         </section>
 
         <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-          {[['AMENAZAS', counts.threats], ['GOLES CDA', counts.goalsFor], ['GOLES RIV', counts.goalsAgainst], ['FALTAS', counts.fouls], ['TARJETAS', counts.cards], ['MANUAL', counts.manualReview]].map(([label, value]) => <div key={String(label)} className="rounded-2xl border border-slate-700 bg-slate-800 p-4"><p className="text-[10px] font-black text-slate-500">{label}</p><p className="mt-1 text-3xl font-black">{value}</p></div>)}
+          {[['AMENAZAS', counts.threats], ['GOLES CDA', counts.goalsFor], ['GOLES RIV', counts.goalsAgainst], ['PÉRDIDAS', counts.possessionLosses], ['FALTAS', counts.fouls], ['TARJETAS', counts.cards], ['MANUAL', counts.manualReview]].map(([label, value]) => <div key={String(label)} className="rounded-2xl border border-slate-700 bg-slate-800 p-4"><p className="text-[10px] font-black text-slate-500">{label}</p><p className="mt-1 text-3xl font-black">{value}</p></div>)}
         </section>
 
         <section className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">

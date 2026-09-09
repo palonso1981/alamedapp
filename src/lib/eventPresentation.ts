@@ -87,6 +87,9 @@ export function eventDescription(
       : "equipo · sin asignar";
     return `${number} · ${player} · ${direction}`;
   }
+  if (event.type === "possession_lost") {
+    return `PÉRDIDA · ${playerLabel(players, event.playerId)}`;
+  }
   if (event.type === "card_recorded") {
     const card = event.color === "YELLOW" ? "🟨" : "🟥";
     const target = event.staffId

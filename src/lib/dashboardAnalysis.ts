@@ -49,6 +49,7 @@ export interface TeamRates {
   goalsAgainst40: number | null;
   foulsFor40: number | null;
   foulsAgainst40: number | null;
+  possessionLosses40: number | null;
 }
 
 export interface PlayerOnCourtStats {
@@ -122,6 +123,9 @@ export interface PlayerAnalysis {
   ownNearPercentage: number | null;
   ownOutcomes: Record<ThreatOutcome, number>;
   ownShotPoints: Array<{ eventId: string; matchId: string; side: "FOR"; x: number; y: number; outcome: ThreatOutcome }>;
+  possessionLosses: number;
+  possessionLossesPerMatch: number | null;
+  possessionLosses40: number | null;
   foulsCommitted: number;
   foulsReceived: number;
   criticalFoulsCommitted: number;
@@ -221,6 +225,7 @@ export interface DashboardAnalysis {
   pitchZones: ZoneStats<PitchOriginZone>[];
   goalZones: ZoneStats<GoalZoneV1>[];
   criticalFouls: { for: number; against: number };
+  possessionLosses: number;
   flyingGoalkeeper: {
     for: PlayingStateAnalytics;
     against: PlayingStateAnalytics;
@@ -328,6 +333,8 @@ function finalizePlayer(player: PlayerAnalysis): void {
   player.ownThreats40 = per40(player.ownThreats, player.minutes);
   player.ownOnTargetPercentage = player.ownThreats > 0 ? player.ownOnTarget / player.ownThreats * 100 : null;
   player.ownNearPercentage = player.ownThreats > 0 ? player.ownNear / player.ownThreats * 100 : null;
+  player.possessionLossesPerMatch = player.matches > 0 ? player.possessionLosses / player.matches : null;
+  player.possessionLosses40 = per40(player.possessionLosses, player.minutes);
   player.foulsCommittedPerMatch = player.matches > 0 ? player.foulsCommitted / player.matches : null;
   player.foulsCommitted40 = per40(player.foulsCommitted, player.minutes);
   player.foulsReceivedPerMatch = player.matches > 0 ? player.foulsReceived / player.matches : null;
@@ -384,6 +391,9 @@ function createPlayer(player: Player): PlayerAnalysis {
     ownNearPercentage: null,
     ownOutcomes: emptyOutcomes(),
     ownShotPoints: [],
+    possessionLosses: 0,
+    possessionLossesPerMatch: null,
+    possessionLosses40: null,
     foulsCommitted: 0,
     foulsReceived: 0,
     criticalFoulsCommitted: 0,
@@ -573,6 +583,10 @@ export function buildDashboardAnalysis(
           }
         }
       }
+      if (event.type === "possession_lost") {
+        const player = playerMap.get(event.playerId);
+        if (player) player.possessionLosses += 1;
+      }
     }
     for (const [playerId, score] of Array.from(matchOnCourtScore.entries())) {
       const player = playerMap.get(playerId);
@@ -628,6 +642,7 @@ export function buildDashboardAnalysis(
       goalsAgainst40: per40(analytics.goalsAgainst, totalMinutes),
       foulsFor40: per40(analytics.discipline.for.fouls, totalMinutes),
       foulsAgainst40: per40(analytics.discipline.against.fouls, totalMinutes),
+      possessionLosses40: per40(selected.flatMap((record) => record.session.events).filter((event) => event.deletedAt === null && event.type === "possession_lost").length, totalMinutes),
     },
     players: players.sort((a, b) => b.minutes - a.minutes || a.number - b.number),
     goalkeepers,
@@ -637,6 +652,7 @@ export function buildDashboardAnalysis(
     pitchZones,
     goalZones,
     criticalFouls,
+    possessionLosses: selected.flatMap((record) => record.session.events).filter((event) => event.deletedAt === null && event.type === "possession_lost").length,
     flyingGoalkeeper,
   };
 }

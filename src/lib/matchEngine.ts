@@ -24,6 +24,7 @@ import {
   MatchEvent,
   NormalizedCoordinates,
   Player,
+  PossessionLostEvent,
   LineupValidation,
   ReplayIssue,
   ReplayResult,
@@ -182,6 +183,10 @@ export interface FoulEventInput extends EventFactoryBase {
   origin?: NormalizedCoordinates;
 }
 
+export interface PossessionLostEventInput extends EventFactoryBase {
+  playerId: string;
+}
+
 export interface RestartEventInput extends EventFactoryBase {
   side: ThreatSide;
   restart: RestartKind;
@@ -241,6 +246,7 @@ export interface EventEditChanges {
   };
   gameState?: Partial<Pick<GameStateChangedEvent, "state" | "active" | "playerId" | "side">>;
   foul?: Partial<Pick<FoulRecordedEvent, "side" | "playerId" | "origin">>;
+  possessionLost?: Partial<Pick<PossessionLostEvent, "playerId">>;
   card?: Partial<Pick<CardRecordedEvent, "side" | "color">> & {
     playerId?: string | null;
     staffId?: string | null;
@@ -317,6 +323,14 @@ export function createFoulEvent(input: FoulEventInput): FoulRecordedEvent {
     source: "live",
     playerId: input.playerId ?? null,
     origin: input.origin ? { ...input.origin } : undefined,
+  };
+}
+
+export function createPossessionLostEvent(input: PossessionLostEventInput): PossessionLostEvent {
+  return {
+    ...eventBase(input),
+    type: "possession_lost",
+    playerId: input.playerId,
   };
 }
 
@@ -1182,6 +1196,15 @@ export function replayMatch(
           }
         }
       }
+    } else if (event.type === "possession_lost") {
+      if (!squadPlayerIds.includes(event.playerId) || !onCourtPlayerIds.includes(event.playerId)) {
+        issue(
+          issues,
+          event,
+          "INVALID_POSSESSION_LOST_PLAYER",
+          "La pérdida debe atribuirse a un jugador que estaba en pista.",
+        );
+      }
     } else if (event.type === "foul_recorded") {
       if (event.origin && !validCoordinates(event.origin)) {
         issue(
@@ -1529,6 +1552,8 @@ export function editEvent(
     edited = { ...edited, ...changes.gameState };
   } else if (edited.type === "foul_recorded" && changes.foul) {
     edited = { ...edited, ...changes.foul };
+  } else if (edited.type === "possession_lost" && changes.possessionLost) {
+    edited = { ...edited, ...changes.possessionLost };
   } else if (edited.type === "card_recorded" && changes.card) {
     const { playerId, staffId, ...cardChanges } = changes.card;
     edited = {

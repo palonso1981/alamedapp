@@ -41,6 +41,7 @@ export const METRIC_DEFINITIONS = {
   SAVE_PERCENTAGE: { id: "SAVE_PERCENTAGE", name: "Porcentaje de parada", abbreviation: "% PARADA", description: "Paradas sobre acciones interiores dirigidas a portería.", formula: "PARADAS / (PARADAS + GOLES)", denominator: "Amenazas interiores", unit: "%", direction: "HIGHER_IS_BETTER", format: "PERCENT" },
   THREATS_AGAINST_40: { id: "THREATS_AGAINST_40", name: "Amenazas por 40", abbreviation: "AMENAZAS /40", description: "Amenazas rivales normalizadas a cuarenta minutos observados.", formula: "Amenazas × 40 / minutos", denominator: "Minutos observados", unit: "acciones/40", direction: "LOWER_IS_BETTER", format: "NUMBER" },
   MINUTES: { id: "MINUTES", name: "Minutos", abbreviation: "MIN", description: "Tiempo de participación derivado de alineaciones, sustituciones y reloj.", formula: "Suma de intervalos en pista", denominator: "Cronología", unit: "minutos", direction: "NEUTRAL", format: "MINUTES" },
+  POSSESSION_LOSSES: { id: "POSSESSION_LOSSES", name: "Pérdidas", abbreviation: "PÉRDIDAS", description: "Balones perdidos por CDA con el balón en juego y posibilidad inmediata de continuidad rival. No incluye todas las posesiones terminadas.", formula: "Conteo de eventos PÉRDIDA", denominator: "Partidos o minutos observados según modo", unit: "acciones", direction: "LOWER_IS_BETTER", format: "NUMBER" },
 } as const satisfies Record<string, MetricDefinition>;
 
 export type MetricId = keyof typeof METRIC_DEFINITIONS;

@@ -235,6 +235,9 @@ function isEvent(value: unknown, matchId: string): value is MatchEvent {
       (value.origin === undefined || isOrigin(value.origin))
     );
   }
+  if (value.type === "possession_lost") {
+    return typeof value.playerId === "string";
+  }
   if (value.type === "card_recorded") {
     return (
       (value.side === "FOR" || value.side === "AGAINST") &&

@@ -9,6 +9,7 @@ import {
   createGameStateEvent,
   createLineupInitializedEvent,
   createLiveThreatEvent,
+  createPossessionLostEvent,
   createRestartEvent,
   createSubstitutionEvent,
   goalkeeperAtPosition,
@@ -210,6 +211,7 @@ interface MatchState {
     playerId?: string | null,
     origin?: NormalizedCoordinates,
   ) => void;
+  recordPossessionLost: (matchId: string, playerId: string) => void;
   recordCard: (
     matchId: string,
     side: DisciplineSide,
@@ -953,6 +955,26 @@ export const useMatchStore = create<MatchState>((set) => ({
             provenance: captureProvenance(session),
           });
           return appendEvent(session.players, session.events, event);
+        }),
+      ),
+    ),
+
+  recordPossessionLost: (matchId, playerId) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) =>
+        command(session, () => {
+          assertSportsCaptureAllowed(session);
+          const clock = captureClock(session);
+          const replay = replayMatch(session.players, session.events, { throughClock: clock });
+          if (!replay.onCourtPlayerIds.includes(playerId)) {
+            throw new Error("La pérdida debe atribuirse a un jugador que está en pista.");
+          }
+          return appendEvent(session.players, session.events, createPossessionLostEvent({
+            matchId,
+            playerId,
+            position: { ...clock, order: getNextOrder(session.events, clock.period, clock.minute) },
+            provenance: captureProvenance(session),
+          }));
         }),
       ),
     ),

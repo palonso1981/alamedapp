@@ -10,6 +10,7 @@ import {
   createGameStateEvent,
   createLineupInitializedEvent,
   createLiveThreatEvent,
+  createPossessionLostEvent,
   createRestartEvent,
   createSubstitutionEvent,
   deriveGoalkeeperReference,
@@ -3982,4 +3983,56 @@ test("los controles contextuales consumen el gesto antes de llegar a la pista", 
   let stopped = 0;
   consumeContextualPointer({ preventDefault: () => { prevented += 1; }, stopPropagation: () => { stopped += 1; } });
   assert.deepEqual({ prevented, stopped }, { prevented: 1, stopped: 1 });
+});
+
+test("pérdida conserva autor, replay, edición y ciclo delete/restore", () => {
+  const session = createSession("possession-loss-domain");
+  const initial = replayMatch(session.players, session.events);
+  const playerId = initial.onCourtPlayerIds[0];
+  const alternateId = initial.onCourtPlayerIds[1];
+  const benchId = initial.benchPlayerIds[0];
+  const loss = createPossessionLostEvent({
+    id: "loss-domain-1",
+    matchId: session.matchId,
+    position: { period: 1, minute: 3, order: 1 },
+    playerId,
+    now: 123,
+  });
+  let events = appendEvent(session.players, session.events, loss);
+  assert.equal(events.at(-1)?.type, "possession_lost");
+  assert.equal("origin" in loss, false, "la captura no inventa coordenadas");
+  assert.equal(events.at(-1)?.createdAt, 123);
+  events = editEvent(session.players, events, loss.id, { possessionLost: { playerId: alternateId } }, 456);
+  const edited = events.find((event) => event.id === loss.id);
+  assert.equal(edited?.type === "possession_lost" && edited.playerId, alternateId);
+  assert.equal(edited?.createdAt, 123, "editar no altera la hora original de captura");
+  events = softDeleteEvent(session.players, events, loss.id, 500);
+  assert.equal(events.find((event) => event.id === loss.id)?.deletedAt, 500);
+  events = restoreEvent(session.players, events, loss.id, 600);
+  assert.equal(events.find((event) => event.id === loss.id)?.deletedAt, null);
+  assert.equal(reviewEventCounts(events).possessionLosses, 1);
+  assert.throws(() => appendEvent(session.players, session.events, createPossessionLostEvent({
+    id: "loss-invalid-bench",
+    matchId: session.matchId,
+    position: { period: 1, minute: 3, order: 2 },
+    playerId: benchId,
+    now: 124,
+  })), MatchIntegrityError);
+});
+
+test("PÉRDIDA entra en el historial normal de Zustand y admite undo/redo", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "possession-loss-store";
+  useMatchStore.getState().ensureMatch(matchId);
+  useMatchStore.getState().recordPossessionLost(matchId, "p1");
+  let session = useMatchStore.getState().matches[matchId];
+  const loss = session.events.find((event) => event.type === "possession_lost");
+  assert.equal(loss?.type === "possession_lost" && loss.playerId, "p1");
+  const eventId = loss?.id;
+  useMatchStore.getState().undo(matchId);
+  session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.events.some((event) => event.id === eventId), false);
+  useMatchStore.getState().redo(matchId);
+  session = useMatchStore.getState().matches[matchId];
+  assert.equal(session.events.some((event) => event.id === eventId), true);
 });

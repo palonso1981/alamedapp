@@ -23,7 +23,7 @@ import {
 import { effectiveThreatPhase, replayMatch } from "./matchEngine";
 import { deriveGoalZoneV1, GoalZoneV1 } from "./spatialZones";
 import { GOAL_FRAME } from "./goalTarget";
-import { CompetitiveContext, competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, PlayingStateContext } from "./dashboardCompetitiveContext";
+import { CompetitiveContext, competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, PlayingStateContext, ScoreStateContext } from "./dashboardCompetitiveContext";
 
 export type DashboardValueMode = "TOTALS" | "PER_MATCH" | "PER_40";
 export type DashboardArea = "SUMMARY" | "TEAM" | "PLAYERS" | "GOALKEEPERS" | "MAPS";
@@ -62,6 +62,7 @@ export interface DashboardScopeV2 {
   originDistance: "ALL" | "NEAR" | "FAR";
   competitiveContext: CompetitiveContext;
   playingState: PlayingStateContext;
+  scoreState: ScoreStateContext;
   includeArchived: boolean;
 }
 
@@ -137,6 +138,7 @@ export function emptyDashboardScope(
     originDistance: "ALL",
     competitiveContext: "ALL",
     playingState: "ALL",
+    scoreState: "ALL",
     includeArchived: false,
   };
 }
@@ -240,7 +242,7 @@ function eventMatches(
 ): boolean {
   if (scope.period !== "ALL" && event.period !== scope.period) return false;
   if (event.type === "threat_recorded") return threatMatches(event, record, scope);
-  if (scope.playerIds.length > 0 && (event.type === "foul_recorded" || event.type === "card_recorded")) {
+  if (scope.playerIds.length > 0 && (event.type === "foul_recorded" || event.type === "card_recorded" || event.type === "possession_lost")) {
     return Boolean(event.playerId && scope.playerIds.includes(event.playerId));
   }
   return true;
@@ -268,7 +270,7 @@ export function filterDashboardDataset(
     .filter((record) => scope.venues.length === 0 || scope.venues.includes(record.catalog.venue))
     .filter((record) => scope.results.length === 0 || Boolean(matchResult(record) && scope.results.includes(matchResult(record)!)))
     .map((record) => {
-      const contextIds = competitiveEventIds(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, scope.playingState);
+      const contextIds = competitiveEventIds(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, scope.playingState, scope.scoreState);
       return {
         catalog: record.catalog,
         session: {
@@ -311,9 +313,9 @@ export function buildDashboardV2(
   let teamKeyMinutes = 0;
   let teamGoldMinutes = 0;
   for (const record of originals) {
-    const key = deriveCompetitiveMinutes(record.session, scope.period, "KEY", scope.goalkeeperIds, scope.playingState);
-    const gold = deriveCompetitiveMinutes(record.session, scope.period, "GOLD", scope.goalkeeperIds, scope.playingState);
-    const current = deriveCompetitiveMinutes(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, scope.playingState);
+    const key = deriveCompetitiveMinutes(record.session, scope.period, "KEY", scope.goalkeeperIds, scope.playingState, scope.scoreState);
+    const gold = deriveCompetitiveMinutes(record.session, scope.period, "GOLD", scope.goalkeeperIds, scope.playingState, scope.scoreState);
+    const current = deriveCompetitiveMinutes(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, scope.playingState, scope.scoreState);
     teamKeyMinutes += key.observed;
     teamGoldMinutes += gold.observed;
     contextObserved += current.observed;
@@ -336,7 +338,7 @@ export function buildDashboardV2(
     player.goldMinutesPerMatch = player.matches > 0 ? player.goldMinutes / player.matches : null;
     player.keyMinutesPercentage = chronologicalParticipationPercentage(player.keyMinutes, teamKeyMinutes);
     player.goldMinutesPercentage = chronologicalParticipationPercentage(player.goldMinutes, teamGoldMinutes);
-    if (scope.competitiveContext !== "ALL" || scope.playingState !== "ALL") {
+    if (scope.competitiveContext !== "ALL" || scope.playingState !== "ALL" || scope.scoreState !== "ALL") {
       player.minutes = contextByPlayer[player.playerId] ?? 0;
       player.matches = contextMatchesByPlayer[player.playerId] ?? 0;
       player.averageMinutes = player.matches > 0 ? player.minutes / player.matches : null;
@@ -349,6 +351,8 @@ export function buildDashboardV2(
       player.assists40 = per40(player.assists, player.minutes);
       player.ownThreatsPerMatch = player.matches > 0 ? player.ownThreats / player.matches : null;
       player.ownThreats40 = per40(player.ownThreats, player.minutes);
+      player.possessionLossesPerMatch = player.matches > 0 ? player.possessionLosses / player.matches : null;
+      player.possessionLosses40 = per40(player.possessionLosses, player.minutes);
       player.foulsCommittedPerMatch = player.matches > 0 ? player.foulsCommitted / player.matches : null;
       player.foulsReceivedPerMatch = player.matches > 0 ? player.foulsReceived / player.matches : null;
       player.criticalFoulsCommittedPerMatch = player.matches > 0 ? player.criticalFoulsCommitted / player.matches : null;
@@ -375,7 +379,7 @@ export function buildDashboardV2(
     goalkeeper.keyMinutesPercentage = chronologicalParticipationPercentage(goalkeeper.keyMinutes, teamKeyMinutes);
     goalkeeper.goldMinutesPercentage = chronologicalParticipationPercentage(goalkeeper.goldMinutes, teamGoldMinutes);
   }
-  if (scope.competitiveContext !== "ALL" || scope.playingState !== "ALL") {
+  if (scope.competitiveContext !== "ALL" || scope.playingState !== "ALL" || scope.scoreState !== "ALL") {
     for (const goalkeeper of analysis.goalkeepers) {
       goalkeeper.minutes = contextByGoalkeeper[goalkeeper.playerId] ?? 0;
       goalkeeper.threatsAgainst40 = per40(goalkeeper.threatsAgainst, goalkeeper.minutes);
@@ -386,13 +390,14 @@ export function buildDashboardV2(
     analysis.rates.threatsAgainst40 = per40(analysis.analytics.threats.AGAINST.total, contextObserved);
     analysis.rates.goalsFor40 = per40(analysis.analytics.goalsFor, contextObserved);
     analysis.rates.goalsAgainst40 = per40(analysis.analytics.goalsAgainst, contextObserved);
+    analysis.rates.possessionLosses40 = per40(analysis.possessionLosses, contextObserved);
   }
   analysis.flyingGoalkeeper.for = summarizePlayingState(originals, scope, "PJ_CDA", analysis.samples);
   analysis.flyingGoalkeeper.against = summarizePlayingState(originals, scope, "PJ_RIVAL", analysis.samples);
   for (const trend of analysis.trends) {
     const record = originals.find((candidate) => candidate.catalog.matchId === trend.matchId);
-    trend.pjForMinutes = record ? deriveCompetitiveProjection(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, "PJ_CDA").observed : 0;
-    trend.pjAgainstMinutes = record ? deriveCompetitiveProjection(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, "PJ_RIVAL").observed : 0;
+    trend.pjForMinutes = record ? deriveCompetitiveProjection(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, "PJ_CDA", scope.scoreState).observed : 0;
+    trend.pjAgainstMinutes = record ? deriveCompetitiveProjection(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, "PJ_RIVAL", scope.scoreState).observed : 0;
   }
   return analysis;
 }
@@ -412,7 +417,7 @@ function summarizePlayingState(
   let onTargetFor = 0;
   let onTargetAgainst = 0;
   for (const record of records) {
-    const projection = deriveCompetitiveProjection(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, playingState);
+    const projection = deriveCompetitiveProjection(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, playingState, scope.scoreState);
     minutes += projection.observed;
     if (projection.observed > 0) matchesWithState += 1;
     for (const event of record.session.events) {
@@ -455,7 +460,7 @@ export function outcomeDistribution(
   }));
 }
 
-export type TeamMetricKey = "threatsFor" | "threatsAgainst" | "goalsFor" | "goalsAgainst" | "foulsFor" | "foulsAgainst";
+export type TeamMetricKey = "threatsFor" | "threatsAgainst" | "goalsFor" | "goalsAgainst" | "foulsFor" | "foulsAgainst" | "possessionLosses";
 
 export function teamMetricValue(
   analysis: DashboardAnalysis,
@@ -467,7 +472,8 @@ export function teamMetricValue(
       : metric === "goalsFor" ? analysis.analytics.goalsFor
         : metric === "goalsAgainst" ? analysis.analytics.goalsAgainst
           : metric === "foulsFor" ? analysis.analytics.discipline.for.fouls
-            : analysis.analytics.discipline.against.fouls;
+            : metric === "foulsAgainst" ? analysis.analytics.discipline.against.fouls
+              : analysis.possessionLosses;
   if (mode === "TOTALS") return total;
   if (mode === "PER_MATCH") return analysis.samples > 0 ? total / analysis.samples : null;
   return analysis.rates[
@@ -475,7 +481,8 @@ export function teamMetricValue(
       : metric === "threatsAgainst" ? "threatsAgainst40"
         : metric === "goalsFor" ? "goalsFor40"
           : metric === "goalsAgainst" ? "goalsAgainst40"
-            : metric === "foulsFor" ? "foulsFor40" : "foulsAgainst40"
+            : metric === "foulsFor" ? "foulsFor40"
+              : metric === "foulsAgainst" ? "foulsAgainst40" : "possessionLosses40"
   ];
 }
 
@@ -503,7 +510,7 @@ export function teamPairedMetricValue(analysis: DashboardAnalysis, id: PairedMet
 
 export function playerMetricValue(
   player: PlayerAnalysis,
-  metric: "minutes" | "goals" | "assists" | "threats" | "foulsCommitted" | "foulsReceived" | "criticalCommitted" | "criticalReceived" | "points",
+  metric: "minutes" | "goals" | "assists" | "threats" | "possessionLosses" | "foulsCommitted" | "foulsReceived" | "criticalCommitted" | "criticalReceived" | "points",
   mode: DashboardValueMode,
 ): number | null {
   if (metric === "minutes") return mode === "PER_MATCH" ? player.averageMinutes : mode === "PER_40" ? null : player.minutes;
@@ -511,6 +518,7 @@ export function playerMetricValue(
     goals: player.goals,
     assists: player.assists,
     threats: player.ownThreats,
+    possessionLosses: player.possessionLosses,
     foulsCommitted: player.foulsCommitted,
     foulsReceived: player.foulsReceived,
     criticalCommitted: player.criticalFoulsCommitted,
@@ -628,6 +636,7 @@ export function scopeToSearchParams(scope: DashboardScopeV2, prefix: "a" | "r"):
   if (scope.originDistance !== "ALL") params.set(`${prefix}Distance`, scope.originDistance);
   if (scope.competitiveContext !== "ALL") params.set(`${prefix}Context`, scope.competitiveContext);
   if (scope.playingState !== "ALL") params.set(`${prefix}PJState`, scope.playingState);
+  if (scope.scoreState !== "ALL") params.set(`${prefix}ScoreState`, scope.scoreState);
   for (const key of LIST_KEYS) if (scope[key].length > 0) params.set(`${prefix}${key}`, scope[key].join("~"));
   return params;
 }
@@ -652,6 +661,7 @@ export function scopeFromSearchParams(
     originDistance: params.get(`${prefix}Distance`) === "NEAR" ? "NEAR" : params.get(`${prefix}Distance`) === "FAR" ? "FAR" : fallback.originDistance,
     competitiveContext: params.get(`${prefix}Context`) === "KEY" ? "KEY" : params.get(`${prefix}Context`) === "GOLD" ? "GOLD" : fallback.competitiveContext,
     playingState: params.get(`${prefix}PJState`) === "PJ_CDA" ? "PJ_CDA" : params.get(`${prefix}PJState`) === "PJ_RIVAL" ? "PJ_RIVAL" : fallback.playingState,
+    scoreState: params.get(`${prefix}ScoreState`) === "LEADING" ? "LEADING" : params.get(`${prefix}ScoreState`) === "DRAWING" ? "DRAWING" : params.get(`${prefix}ScoreState`) === "TRAILING" ? "TRAILING" : fallback.scoreState,
     matchIds: read<string>("matchIds"),
     venues: read<Exclude<VenueFilter, "ALL">>("venues"),
     results: read<Exclude<ResultFilter, "ALL">>("results"),
@@ -663,6 +673,11 @@ export function scopeFromSearchParams(
     targetZones: read<GoalZoneV1>("targetZones"),
     outcomes: read<ThreatOutcome>("outcomes"),
   };
+}
+
+export function hasDashboardScopeSearchParams(params: URLSearchParams, prefix: "a" | "r"): boolean {
+  const scalarKeys = ["Club", "Team", "Season", "Competition", "Period", "Archived", "OutcomeGroup", "Distance", "Context", "PJState", "ScoreState"];
+  return [...scalarKeys, ...LIST_KEYS].some((key) => params.has(`${prefix}${key}`));
 }
 
 export function mergeDashboardSearchParams(

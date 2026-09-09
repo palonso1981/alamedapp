@@ -10,6 +10,7 @@ export function PlayerScopeComparison({ left, right }: { left: PlayerAnalysis; r
     ["GOLES/PARTIDO", left.goalsPerMatch, right.goalsPerMatch],
     ["ASIST./PARTIDO", left.assistsPerMatch, right.assistsPerMatch],
     ["REMATES/PARTIDO", left.ownThreatsPerMatch, right.ownThreatsPerMatch],
+    ["PÉRDIDAS/PARTIDO", left.possessionLossesPerMatch, right.possessionLossesPerMatch],
     ["A PUERTA/PARTIDO", perMatch(left.ownOnTarget, left.matches), perMatch(right.ownOnTarget, right.matches)],
     ["CERCANOS/PARTIDO", perMatch(left.ownNear, left.matches), perMatch(right.ownNear, right.matches)],
     ["GF EN PISTA/PART.", perMatch(left.onCourt.goalsFor, left.matches), perMatch(right.onCourt.goalsFor, right.matches)],

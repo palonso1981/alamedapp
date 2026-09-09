@@ -4,6 +4,7 @@ import { compareEventPosition, deriveGlobalMinute, goalkeeperAtPosition, REGULAT
 
 export type CompetitiveContext = "ALL" | "KEY" | "GOLD";
 export type PlayingStateContext = "ALL" | "PJ_CDA" | "PJ_RIVAL";
+export type ScoreStateContext = "ALL" | "LEADING" | "DRAWING" | "TRAILING";
 
 export interface PlayingStateInterval {
   period: number;
@@ -13,6 +14,12 @@ export interface PlayingStateInterval {
   endOrder: number | null;
   startEventId: string;
   endEventId: string | null;
+  startGlobalMinute: number;
+  endGlobalMinute: number;
+}
+
+export interface ScoreStateInterval {
+  state: Exclude<ScoreStateContext, "ALL">;
   startGlobalMinute: number;
   endGlobalMinute: number;
 }
@@ -134,6 +141,58 @@ function intervalDuration(
     sum + Math.max(0, Math.min(to, interval.endGlobalMinute) - Math.max(from, interval.startGlobalMinute)), 0);
 }
 
+function scoreState(scoreFor: number, scoreAgainst: number): Exclude<ScoreStateContext, "ALL"> {
+  return scoreFor > scoreAgainst ? "LEADING" : scoreFor < scoreAgainst ? "TRAILING" : "DRAWING";
+}
+
+const scoreStateIntervalCache = new WeakMap<MatchSession, Map<DashboardPeriod, ScoreStateInterval[]>>();
+
+/** Intervalos deportivos derivados solo de los goles y el orden del event log. */
+export function deriveScoreStateIntervals(
+  session: MatchSession,
+  period: DashboardPeriod = "ALL",
+): ScoreStateInterval[] {
+  const cached = scoreStateIntervalCache.get(session)?.get(period);
+  if (cached) return cached;
+  const end = matchEnd(session);
+  const [scopeStart, scopeEnd] = periodBounds(period, end);
+  if (scopeEnd <= scopeStart) return [];
+  const goals = replayMatch(session.players, session.events).timeline
+    .map((entry) => entry.event)
+    .filter((event): event is Extract<MatchEvent, { type: "threat_recorded" }> => event.type === "threat_recorded" && event.outcome === "GOL");
+  let scoreFor = 0;
+  let scoreAgainst = 0;
+  let start = scopeStart;
+  const intervals: ScoreStateInterval[] = [];
+  for (const goal of goals) {
+    const at = deriveGlobalMinute(goal.period, goal.minute);
+    if (at < scopeStart) {
+      if (goal.side === "FOR") scoreFor += 1; else scoreAgainst += 1;
+      continue;
+    }
+    if (at > scopeEnd) break;
+    if (at > start) intervals.push({ state: scoreState(scoreFor, scoreAgainst), startGlobalMinute: start, endGlobalMinute: at });
+    if (goal.side === "FOR") scoreFor += 1; else scoreAgainst += 1;
+    start = at;
+  }
+  if (scopeEnd > start) intervals.push({ state: scoreState(scoreFor, scoreAgainst), startGlobalMinute: start, endGlobalMinute: scopeEnd });
+  const byPeriod = scoreStateIntervalCache.get(session) ?? new Map<DashboardPeriod, ScoreStateInterval[]>();
+  byPeriod.set(period, intervals);
+  scoreStateIntervalCache.set(session, byPeriod);
+  return intervals;
+}
+
+function scoreStateMatches(context: ScoreStateContext, scoreFor: number, scoreAgainst: number): boolean {
+  return context === "ALL" || scoreState(scoreFor, scoreAgainst) === context;
+}
+
+function scoreStateDuration(from: number, to: number, intervals: readonly ScoreStateInterval[], context: ScoreStateContext): number {
+  if (context === "ALL") return to - from;
+  return intervals.reduce((sum, interval) => interval.state === context
+    ? sum + Math.max(0, Math.min(to, interval.endGlobalMinute) - Math.max(from, interval.startGlobalMinute))
+    : sum, 0);
+}
+
 export function isCompetitiveMoment(context: CompetitiveContext, period: number, minute: number, scoreFor: number, scoreAgainst: number): boolean {
   if (context === "ALL") return true;
   if (Math.abs(scoreFor - scoreAgainst) > 1) return false;
@@ -145,13 +204,14 @@ export function isCompetitiveMoment(context: CompetitiveContext, period: number,
  * a él; si es gol, el marcador nuevo rige desde ese mismo minuto hasta el
  * siguiente evento. Sin segundos deportivos, no se inventa una fracción menor.
  */
-export function deriveCompetitiveProjection(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext, goalkeeperIds: readonly string[] = [], playingState: PlayingStateContext = "ALL"): CompetitiveProjection {
+export function deriveCompetitiveProjection(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext, goalkeeperIds: readonly string[] = [], playingState: PlayingStateContext = "ALL", scoreContext: ScoreStateContext = "ALL"): CompetitiveProjection {
   const end = matchEnd(session);
   const [scopeStart, scopeEnd] = periodBounds(period, end);
   const projection: CompetitiveProjection = { observed: 0, byPlayer: {}, byGoalkeeper: {}, eventIds: new Set<string>() };
   if (scopeEnd <= scopeStart) return projection;
   const replay = replayMatch(session.players, session.events, { currentClock: { period: session.matchFinished ? 2 : session.period, minute: session.matchFinished ? 20 : session.minute } });
   const playingIntervals = playingState === "ALL" ? [] : derivePlayingStateIntervals(session, period, playingState);
+  const scoreIntervals = scoreContext === "ALL" ? [] : deriveScoreStateIntervals(session, period);
   let scoreFor = 0;
   let scoreAgainst = 0;
   replay.timeline.forEach((entry, index) => {
@@ -163,7 +223,7 @@ export function deriveCompetitiveProjection(session: MatchSession, period: Dashb
       || (goalkeeper?.status === "PLAYER" && goalkeeperIds.includes(goalkeeper.playerId));
     const start = deriveGlobalMinute(event.period, event.minute);
     const playingStateMatches = playingState === "ALL" || playingStateContainsEvent(event, playingIntervals);
-    if (goalkeeperMatches && playingStateMatches && start >= scopeStart && start <= scopeEnd && isCompetitiveMoment(context, event.period, event.minute, scoreFor, scoreAgainst)) {
+    if (goalkeeperMatches && playingStateMatches && start >= scopeStart && start <= scopeEnd && isCompetitiveMoment(context, event.period, event.minute, scoreFor, scoreAgainst) && scoreStateMatches(scoreContext, scoreFor, scoreAgainst)) {
       projection.eventIds.add(event.id);
     }
     if (entry.event.type === "threat_recorded" && entry.event.outcome === "GOL") {
@@ -175,8 +235,13 @@ export function deriveCompetitiveProjection(session: MatchSession, period: Dashb
     let from = Math.max(scopeStart, start);
     const to = Math.min(scopeEnd, finish);
     if (context === "GOLD") from = Math.max(from, GOLD_WINDOW_START_GLOBAL_MINUTE);
-    if (!goalkeeperMatches || to <= from || (context !== "ALL" && Math.abs(scoreFor - scoreAgainst) > 1)) return;
-    const duration = playingState === "ALL" ? to - from : intervalDuration(from, to, playingIntervals);
+    if (!goalkeeperMatches || to <= from || (context !== "ALL" && Math.abs(scoreFor - scoreAgainst) > 1) || !scoreStateMatches(scoreContext, scoreFor, scoreAgainst)) return;
+    const scoreDuration = scoreStateDuration(from, to, scoreIntervals, scoreContext);
+    const duration = playingState === "ALL"
+      ? scoreDuration
+      : scoreDuration <= 0
+        ? 0
+        : intervalDuration(from, to, playingIntervals);
     if (duration <= 0) return;
     projection.observed += duration;
     entry.lineupPlayerIds.forEach((id) => { projection.byPlayer[id] = (projection.byPlayer[id] ?? 0) + duration; });
@@ -185,11 +250,11 @@ export function deriveCompetitiveProjection(session: MatchSession, period: Dashb
   return projection;
 }
 
-export function deriveCompetitiveMinutes(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext, goalkeeperIds: readonly string[] = [], playingState: PlayingStateContext = "ALL"): CompetitiveMinutes {
-  const { observed, byPlayer, byGoalkeeper } = deriveCompetitiveProjection(session, period, context, goalkeeperIds, playingState);
+export function deriveCompetitiveMinutes(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext, goalkeeperIds: readonly string[] = [], playingState: PlayingStateContext = "ALL", scoreContext: ScoreStateContext = "ALL"): CompetitiveMinutes {
+  const { observed, byPlayer, byGoalkeeper } = deriveCompetitiveProjection(session, period, context, goalkeeperIds, playingState, scoreContext);
   return { observed, byPlayer, byGoalkeeper };
 }
 
-export function competitiveEventIds(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext, goalkeeperIds: readonly string[] = [], playingState: PlayingStateContext = "ALL"): Set<string> {
-  return deriveCompetitiveProjection(session, period, context, goalkeeperIds, playingState).eventIds;
+export function competitiveEventIds(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext, goalkeeperIds: readonly string[] = [], playingState: PlayingStateContext = "ALL", scoreContext: ScoreStateContext = "ALL"): Set<string> {
+  return deriveCompetitiveProjection(session, period, context, goalkeeperIds, playingState, scoreContext).eventIds;
 }

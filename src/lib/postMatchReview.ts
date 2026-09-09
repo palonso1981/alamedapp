@@ -6,6 +6,7 @@ export interface ReviewEventCounts {
   goalsFor: number;
   goalsAgainst: number;
   fouls: number;
+  possessionLosses: number;
   cards: number;
   pending: number;
   manualReview: number;
@@ -39,6 +40,7 @@ export function reviewEventCounts(events: readonly MatchEvent[]): ReviewEventCou
       (event) => event.type === "threat_recorded" && event.side === "AGAINST" && event.outcome === "GOL",
     ).length,
     fouls: active.filter((event) => event.type === "foul_recorded").length,
+    possessionLosses: active.filter((event) => event.type === "possession_lost").length,
     cards: active.filter((event) => event.type === "card_recorded").length,
     pending: active.filter((event) => event.pendingReview).length,
     manualReview: active.filter((event) => event.provenance === "MANUAL_REVIEW").length,

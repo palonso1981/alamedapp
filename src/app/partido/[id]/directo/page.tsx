@@ -116,6 +116,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const recordThreat = useMatchStore((state) => state.recordThreat);
   const toggleGameState = useMatchStore((state) => state.toggleGameState);
   const recordFoul = useMatchStore((state) => state.recordFoul);
+  const recordPossessionLost = useMatchStore((state) => state.recordPossessionLost);
   const recordRestart = useMatchStore((state) => state.recordRestart);
   const adjustFoulCount = useMatchStore((state) => state.adjustFoulCount);
   const recordCard = useMatchStore((state) => state.recordCard);
@@ -406,6 +407,11 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const recordPlayerFoul = (playerId: string, received: boolean) => {
     recordFoul(matchId, received ? "AGAINST" : "FOR", playerId);
     finishPlayerAction(received ? "✓ Falta recibida" : "✓ Falta cometida");
+  };
+
+  const recordPlayerPossessionLost = (playerId: string) => {
+    recordPossessionLost(matchId, playerId);
+    finishPlayerAction("✓ Pérdida");
   };
 
   const recordGenericFoul = (side: "FOR" | "AGAINST") => {
@@ -734,12 +740,12 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   <LivePlayerCard player={player} minutes={minutes} selected={selected} />
                 </button>
                 {selected && <div className="directo-player-popover absolute left-[calc(100%+.5rem)] top-1/2 z-40 hidden w-44 -translate-y-1/2 rounded-2xl border border-amber-300 bg-slate-950 p-2 shadow-2xl sm:block" aria-label="Acciones del jugador seleccionado">
-                  <PlayerContextActions location="COURT" captureBlocked={captureBlocked} redDecision={redDecisionPlayerId === player.id} onFoulCommitted={() => recordPlayerFoul(player.id, false)} onFoulReceived={() => recordPlayerFoul(player.id, true)} onYellow={() => recordPlayerCard(player.id, "YELLOW")} onRed={() => setRedDecisionPlayerId(player.id)} onRedOnly={() => recordPlayerCard(player.id, "RED")} onRedWithInferiority={() => recordPlayerCard(player.id, "RED", true)} onBack={() => setRedDecisionPlayerId(null)} onCancel={() => applyInteraction({ type: "CANCEL" })} />
+                  <PlayerContextActions location="COURT" captureBlocked={captureBlocked} redDecision={redDecisionPlayerId === player.id} onFoulCommitted={() => recordPlayerFoul(player.id, false)} onFoulReceived={() => recordPlayerFoul(player.id, true)} onPossessionLost={() => recordPlayerPossessionLost(player.id)} onYellow={() => recordPlayerCard(player.id, "YELLOW")} onRed={() => setRedDecisionPlayerId(player.id)} onRedOnly={() => recordPlayerCard(player.id, "RED")} onRedWithInferiority={() => recordPlayerCard(player.id, "RED", true)} onBack={() => setRedDecisionPlayerId(null)} onCancel={() => applyInteraction({ type: "CANCEL" })} />
                 </div>}
               </div>;
             })}
           </aside>
-          {selectedCourtPlayerId && selectedCourtPlayerId !== INFERIORITY_SLOT_ID && <div className="rounded-2xl border border-amber-300 bg-slate-950 p-2 shadow-2xl sm:hidden" aria-label="Acciones del jugador seleccionado"><PlayerContextActions location="COURT" captureBlocked={captureBlocked} redDecision={redDecisionPlayerId === selectedCourtPlayerId} onFoulCommitted={() => recordPlayerFoul(selectedCourtPlayerId, false)} onFoulReceived={() => recordPlayerFoul(selectedCourtPlayerId, true)} onYellow={() => recordPlayerCard(selectedCourtPlayerId, "YELLOW")} onRed={() => setRedDecisionPlayerId(selectedCourtPlayerId)} onRedOnly={() => recordPlayerCard(selectedCourtPlayerId, "RED")} onRedWithInferiority={() => recordPlayerCard(selectedCourtPlayerId, "RED", true)} onBack={() => setRedDecisionPlayerId(null)} onCancel={() => applyInteraction({ type: "CANCEL" })} /></div>}
+          {selectedCourtPlayerId && selectedCourtPlayerId !== INFERIORITY_SLOT_ID && <div className="rounded-2xl border border-amber-300 bg-slate-950 p-2 shadow-2xl sm:hidden" aria-label="Acciones del jugador seleccionado"><PlayerContextActions location="COURT" captureBlocked={captureBlocked} redDecision={redDecisionPlayerId === selectedCourtPlayerId} onFoulCommitted={() => recordPlayerFoul(selectedCourtPlayerId, false)} onFoulReceived={() => recordPlayerFoul(selectedCourtPlayerId, true)} onPossessionLost={() => recordPlayerPossessionLost(selectedCourtPlayerId)} onYellow={() => recordPlayerCard(selectedCourtPlayerId, "YELLOW")} onRed={() => setRedDecisionPlayerId(selectedCourtPlayerId)} onRedOnly={() => recordPlayerCard(selectedCourtPlayerId, "RED")} onRedWithInferiority={() => recordPlayerCard(selectedCourtPlayerId, "RED", true)} onBack={() => setRedDecisionPlayerId(null)} onCancel={() => applyInteraction({ type: "CANCEL" })} /></div>}
           <div className="relative p-2">
             <RestartTargets onRestart={quickRestart} />
           <div
@@ -825,7 +831,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   )}
                   <button type="button" onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); applyInteraction({ type: "COURT_PLAYER_TAPPED", playerId: player.id }); if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN"); }} className="pointer-events-auto absolute -right-3 -top-3 grid h-11 w-11 place-items-center rounded-full border-2 border-white bg-slate-950 text-lg shadow-xl active:scale-95" aria-pressed={selected} aria-label={`Seleccionar ${player.name}`}>◎</button>
                   {selected && <div className="pointer-events-auto absolute left-[calc(100%+.5rem)] top-1/2 z-40 w-44 -translate-y-1/2 rounded-2xl border border-amber-300 bg-slate-950 p-2 shadow-2xl" aria-label="Acciones del portero seleccionado">
-                    <PlayerContextActions location="COURT" captureBlocked={captureBlocked} redDecision={redDecisionPlayerId === player.id} onFoulCommitted={() => recordPlayerFoul(player.id, false)} onFoulReceived={() => recordPlayerFoul(player.id, true)} onYellow={() => recordPlayerCard(player.id, "YELLOW")} onRed={() => setRedDecisionPlayerId(player.id)} onRedOnly={() => recordPlayerCard(player.id, "RED")} onRedWithInferiority={() => recordPlayerCard(player.id, "RED", true)} onBack={() => setRedDecisionPlayerId(null)} onCancel={() => applyInteraction({ type: "CANCEL" })} />
+                    <PlayerContextActions location="COURT" captureBlocked={captureBlocked} redDecision={redDecisionPlayerId === player.id} onFoulCommitted={() => recordPlayerFoul(player.id, false)} onFoulReceived={() => recordPlayerFoul(player.id, true)} onPossessionLost={() => recordPlayerPossessionLost(player.id)} onYellow={() => recordPlayerCard(player.id, "YELLOW")} onRed={() => setRedDecisionPlayerId(player.id)} onRedOnly={() => recordPlayerCard(player.id, "RED")} onRedWithInferiority={() => recordPlayerCard(player.id, "RED", true)} onBack={() => setRedDecisionPlayerId(null)} onCancel={() => applyInteraction({ type: "CANCEL" })} />
                   </div>}
                 </div>
               );

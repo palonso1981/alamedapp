@@ -4,7 +4,7 @@ import test from "node:test";
 import { MatchEvent } from "../types";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
 import { PitchOriginZone } from "./dashboardAnalysis";
-import { competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, derivePlayingStateIntervals, isCompetitiveMoment } from "./dashboardCompetitiveContext";
+import { competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, derivePlayingStateIntervals, deriveScoreStateIntervals, isCompetitiveMoment } from "./dashboardCompetitiveContext";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "./dashboardFixture";
 import { compareMetricValues, METRIC_DEFINITIONS } from "./dashboardMetricDefinitions";
 import { dashboardMapPointTitle, resolveDashboardMapPoint } from "./dashboardTrace";
@@ -24,7 +24,7 @@ test("returnTo acepta solo rutas Dashboard internas y conserva la identidad del 
   assert.equal(url.searchParams.get("fixture"), "1");
 });
 import { formatFutsalPosition } from "./positionFormat";
-import { createGameStateEvent, createLineupInitializedEvent, createLiveThreatEvent, createSubstitutionEvent, editEvent } from "./matchEngine";
+import { createGameStateEvent, createLineupInitializedEvent, createLiveThreatEvent, createPossessionLostEvent, createSubstitutionEvent, editEvent, replayMatch } from "./matchEngine";
 import {
   buildDashboardV2,
   buildPlayerScores,
@@ -35,6 +35,7 @@ import {
   filterDashboardDataset,
   homogeneousComparisonMode,
   mergeDashboardSearchParams,
+  hasDashboardScopeSearchParams,
   outcomeDistribution,
   playerMetricValue,
   referenceScopeForPreset,
@@ -148,14 +149,21 @@ test("ABP agrega córner, banda y falta sin incluir fases abiertas", () => {
 });
 
 test("scope y referencia viajan separados por URL y sobreviven reload", () => {
-  const analysis = { ...baseScope(), rivals: ["Racing Norte", "Sala Centro"], originZones: ["Z2" as const], period: 2 as const, outcomeGroup: "ON_TARGET" as const, originDistance: "NEAR" as const, competitiveContext: "GOLD" as const, playingState: "PJ_CDA" as const };
-  const reference = { ...baseScope(), venues: ["AWAY" as const], period: 2 as const, playingState: "PJ_RIVAL" as const };
+  const analysis = { ...baseScope(), rivals: ["Racing Norte", "Sala Centro"], originZones: ["Z2" as const], period: 2 as const, outcomeGroup: "ON_TARGET" as const, originDistance: "NEAR" as const, competitiveContext: "GOLD" as const, playingState: "PJ_CDA" as const, scoreState: "TRAILING" as const };
+  const reference = { ...baseScope(), venues: ["AWAY" as const], period: 2 as const, playingState: "PJ_RIVAL" as const, scoreState: "LEADING" as const };
   const query = mergeDashboardSearchParams({ analysis, reference, referencePreset: "AWAY", mode: "PER_40", area: "PLAYERS" });
   const params = new URLSearchParams(query);
   assert.deepEqual(scopeFromSearchParams(params, "a", baseScope()), analysis);
   assert.deepEqual(scopeFromSearchParams(params, "r", baseScope()), reference);
   assert.equal(params.get("mode"), "PER_40");
   assert.equal(params.get("area"), "PLAYERS");
+});
+
+test("una URL parcial de referencia se reconoce sin exigir rClub", () => {
+  const params = new URLSearchParams("fixture=1&reference=CUSTOM&aScoreState=LEADING&rScoreState=TRAILING");
+  assert.equal(hasDashboardScopeSearchParams(params, "r"), true);
+  assert.equal(scopeFromSearchParams(params, "r", baseScope()).scoreState, "TRAILING");
+  assert.equal(hasDashboardScopeSearchParams(new URLSearchParams("reference=CUSTOM"), "r"), false);
 });
 
 test("cambiar referencia no modifica analysisScope", () => {
@@ -269,7 +277,28 @@ test("fixture poblado cubre temporada, sedes, resultados, jugadores, porteros, f
   const allContext = buildDashboardV2(records, { ...baseScope(), matchIds: [contextMatch.catalog.matchId] });
   const keyContext = buildDashboardV2(records, { ...baseScope(), matchIds: [contextMatch.catalog.matchId], competitiveContext: "KEY" });
   assert.equal(allContext.goalkeepers.find((keeper) => keeper.playerId === "fx-gk-1")?.minutes, 40);
-  assert.equal(keyContext.goalkeepers.find((keeper) => keeper.playerId === "fx-gk-1")?.minutes, 36);
+  assert.equal(keyContext.goalkeepers.find((keeper) => keeper.playerId === "fx-gk-1")?.minutes, 40);
+});
+
+test("fixture contiene pérdidas multicontexto y secuencia completa 0-0→0-1→1-1→2-1→2-2→3-2", () => {
+  const records = buildDashboardFixture();
+  const losses = records.flatMap((record) => record.session.events).filter((event) => event.type === "possession_lost");
+  assert.ok(losses.length >= records.length * 2);
+  assert.ok(new Set(losses.map((event) => event.playerId)).size >= 4);
+  assert.ok(losses.some((event) => event.period === 1) && losses.some((event) => event.period === 2));
+  assert.ok(losses.some((event) => event.id.includes("pj-loss")));
+  assert.ok(losses.some((event) => event.id.includes("pj-rival-loss")));
+  const match = records.find((record) => record.catalog.matchId === "dashboard-fixture-8")!;
+  let scoreFor = 0;
+  let scoreAgainst = 0;
+  const sequence = ["0-0"];
+  for (const entry of replayMatch(match.session.players, match.session.events).timeline) {
+    const event = entry.event;
+    if (event.type !== "threat_recorded" || event.outcome !== "GOL") continue;
+    if (event.side === "FOR") scoreFor += 1; else scoreAgainst += 1;
+    sequence.push(`${scoreFor}-${scoreAgainst}`);
+  }
+  assert.deepEqual(sequence, ["0-0", "0-1", "1-1", "2-1", "2-2", "3-2"]);
 });
 
 test("definiciones centrales mantienen fórmulas, denominadores y dirección semántica", () => {
@@ -594,4 +623,109 @@ test("mapas del mismo jugador respetan eventIds distintos de analysis y referenc
   assert.ok(a.every((point) => point.matchId === records[0].catalog.matchId));
   assert.ok(b.every((point) => point.matchId === records[1].catalog.matchId));
   assert.equal(new Set([...a, ...b].map((point) => `${point.matchId}:${point.eventId}`)).size, a.length + b.length);
+});
+
+function scoreStateRecord(): DashboardMatchRecord {
+  const source = buildDashboardFixture()[0];
+  const matchId = "score-state-sequence";
+  const squad = source.session.players.map((player) => player.id);
+  const p1 = ["fx-gk-1", "fx-p-2", "fx-p-4", "fx-p-5", "fx-p-7"];
+  const p2 = ["fx-gk-2", "fx-p-5", "fx-p-7", "fx-p-9", "fx-p-10"];
+  const goal = (id: string, minute: number, order: number, side: "FOR" | "AGAINST") => createLiveThreatEvent({
+    id, matchId, position: { period: 1, minute, order }, side,
+    playerId: side === "FOR" ? "fx-p-4" : undefined,
+    origin: { x: .5, y: .5 }, outcome: "GOL", phase: "POSITIONAL",
+    assist: side === "FOR" ? { status: "NONE" as const } : undefined,
+    defensive: side === "AGAINST" ? { version: 2 as const, goalTarget: { x: .5, y: .5, geometryVersion: 3 as const }, goalkeeper: { status: "PLAYER" as const, playerId: "fx-gk-1" } } : undefined,
+    now: minute * 10 + order,
+  });
+  const loss = (id: string, period: number, minute: number, order: number, playerId: string) => createPossessionLostEvent({ id, matchId, position: { period, minute, order }, playerId, now: 100 + minute * 10 + order });
+  const events: MatchEvent[] = [
+    createLineupInitializedEvent({ id: "score-p1", matchId, position: { period: 1, minute: 0, order: 1 }, squadPlayerIds: squad, onCourtPlayerIds: p1, goalkeeperPlayerId: "fx-gk-1", now: 1 }),
+    loss("loss-drawing-a", 1, 1, 1, "fx-p-4"),
+    goal("goal-0-1", 2, 1, "AGAINST"),
+    loss("loss-trailing", 1, 2, 2, "fx-p-4"),
+    goal("goal-1-1", 4, 1, "FOR"),
+    loss("loss-drawing-b", 1, 4, 2, "fx-p-4"),
+    goal("goal-2-1", 6, 1, "FOR"),
+    loss("loss-leading-a", 1, 6, 2, "fx-p-4"),
+    goal("goal-2-2", 8, 1, "AGAINST"),
+    loss("loss-drawing-c", 1, 8, 2, "fx-p-4"),
+    goal("goal-3-2", 10, 1, "FOR"),
+    loss("loss-leading-b", 1, 10, 2, "fx-p-4"),
+    createGameStateEvent({ id: "score-pj-on", matchId, position: { period: 1, minute: 12, order: 1 }, state: "FLYING_GOALKEEPER", active: true, playerId: "fx-p-4", side: "FOR", now: 220 }),
+    loss("loss-leading-pj", 1, 13, 1, "fx-p-4"),
+    createGameStateEvent({ id: "score-pj-off", matchId, position: { period: 1, minute: 14, order: 1 }, state: "FLYING_GOALKEEPER", active: false, side: "FOR", now: 240 }),
+    createLineupInitializedEvent({ id: "score-p2", matchId, position: { period: 2, minute: 0, order: 1 }, squadPlayerIds: squad, onCourtPlayerIds: p2, goalkeeperPlayerId: "fx-gk-2", now: 300 }),
+    loss("loss-leading-p2", 2, 1, 1, "fx-p-9"),
+  ];
+  return {
+    catalog: { ...source.catalog, matchId, opponent: "Secuencia marcador" },
+    session: { ...source.session, matchId, preparation: { ...source.session.preparation!, opponent: "Secuencia marcador" }, events },
+  };
+}
+
+test("estado del marcador deriva intervalos 0-0→0-1→1-1→2-1→2-2→3-2 sin segundos", () => {
+  const record = scoreStateRecord();
+  assert.deepEqual(deriveScoreStateIntervals(record.session), [
+    { state: "DRAWING", startGlobalMinute: 0, endGlobalMinute: 2 },
+    { state: "TRAILING", startGlobalMinute: 2, endGlobalMinute: 4 },
+    { state: "DRAWING", startGlobalMinute: 4, endGlobalMinute: 6 },
+    { state: "LEADING", startGlobalMinute: 6, endGlobalMinute: 8 },
+    { state: "DRAWING", startGlobalMinute: 8, endGlobalMinute: 10 },
+    { state: "LEADING", startGlobalMinute: 10, endGlobalMinute: 40 },
+  ]);
+  assert.equal(deriveCompetitiveMinutes(record.session, "ALL", "ALL", [], "ALL", "DRAWING").observed, 6);
+  assert.equal(deriveCompetitiveMinutes(record.session, "ALL", "ALL", [], "ALL", "TRAILING").observed, 2);
+  assert.equal(deriveCompetitiveMinutes(record.session, "ALL", "ALL", [], "ALL", "LEADING").observed, 32);
+});
+
+test("cada evento usa el marcador inmediatamente anterior y el orden resuelve el mismo minuto", () => {
+  const session = scoreStateRecord().session;
+  const drawing = competitiveEventIds(session, "ALL", "ALL", [], "ALL", "DRAWING");
+  const trailing = competitiveEventIds(session, "ALL", "ALL", [], "ALL", "TRAILING");
+  const leading = competitiveEventIds(session, "ALL", "ALL", [], "ALL", "LEADING");
+  assert.equal(drawing.has("goal-0-1"), true, "el gol que rompe el empate pertenece al estado previo");
+  assert.equal(trailing.has("goal-1-1"), true, "el empate pertenece al estado previo perdiendo");
+  assert.equal(trailing.has("loss-trailing"), true, "order posterior al gol ya ve 0-1");
+  assert.equal(drawing.has("loss-trailing"), false);
+  assert.equal(leading.has("goal-2-2"), true, "el gol rival que empata pertenece al estado previo ganando");
+  assert.equal(drawing.has("loss-drawing-c"), true);
+});
+
+test("pérdidas y minutos cruzan estado de marcador, periodo, P-J, KEY/GOLD y URL independiente", () => {
+  const record = scoreStateRecord();
+  const leading = buildDashboardV2([record], { ...baseScope(), matchIds: [record.catalog.matchId], scoreState: "LEADING" });
+  assert.equal(leading.possessionLosses, 4);
+  assert.equal(leading.players.find((player) => player.playerId === "fx-p-4")?.possessionLosses, 3);
+  assert.equal(leading.players.find((player) => player.playerId === "fx-p-9")?.possessionLosses, 1);
+  assert.equal(buildDashboardV2([record], { ...baseScope(), matchIds: [record.catalog.matchId], scoreState: "LEADING", period: 1 }).rates.observedMinutes, 12);
+  assert.equal(buildDashboardV2([record], { ...baseScope(), matchIds: [record.catalog.matchId], scoreState: "LEADING", playingState: "PJ_CDA" }).possessionLosses, 1);
+  assert.equal(deriveCompetitiveProjection(record.session, "ALL", "GOLD", [], "ALL", "LEADING").observed, 5);
+  const analysis = { ...baseScope(), scoreState: "TRAILING" as const };
+  const reference = { ...baseScope(), scoreState: "LEADING" as const };
+  const params = new URLSearchParams(mergeDashboardSearchParams({ analysis, reference, referencePreset: "CUSTOM", mode: "PER_40", area: "PLAYERS" }));
+  assert.equal(params.get("aScoreState"), "TRAILING");
+  assert.equal(params.get("rScoreState"), "LEADING");
+  assert.equal(scopeFromSearchParams(params, "a", baseScope()).scoreState, "TRAILING");
+  assert.equal(scopeFromSearchParams(params, "r", baseScope()).scoreState, "LEADING");
+});
+
+test("pérdidas se agregan en total, por partido y por 40 sin entrar en SCORE ALAM", () => {
+  const records = buildDashboardFixture();
+  const analysis = buildDashboardV2(records, baseScope());
+  assert.ok(analysis.possessionLosses > 0);
+  assert.equal(teamMetricValue(analysis, "possessionLosses", "TOTALS"), analysis.possessionLosses);
+  assert.equal(teamMetricValue(analysis, "possessionLosses", "PER_MATCH"), analysis.possessionLosses / analysis.samples);
+  assert.equal(teamMetricValue(analysis, "possessionLosses", "PER_40"), analysis.rates.possessionLosses40);
+  assert.equal(METRIC_DEFINITIONS.POSSESSION_LOSSES.direction, "LOWER_IS_BETTER");
+  const player = analysis.players.find((candidate) => candidate.possessionLosses > 0)!;
+  const before = buildPlayerScores([{ ...player, possessionLosses: 0, possessionLossesPerMatch: 0, possessionLosses40: 0 }])[0].score;
+  assert.equal(buildPlayerScores([player])[0].score, before);
+  const average = squadAverage(
+    [{ minutes: 10, losses: 2 }, { minutes: 20, losses: 4 }, { minutes: 30, losses: 6 }, { minutes: 0, losses: 999 }],
+    (item) => item.minutes > 0 ? item.losses : null,
+  );
+  assert.equal(average.value, 4);
+  assert.equal(average.validValues, 3);
 });
