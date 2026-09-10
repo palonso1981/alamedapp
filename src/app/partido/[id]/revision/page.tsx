@@ -94,7 +94,7 @@ export default function MatchReviewPage() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-white">
-      <AppHeader title={`Revisión · ${session.preparation.opponent}`} actions={<SyncStatusBadge matchId={matchId} />} />
+      <AppHeader title={`Revisión · ${session.preparation.opponent}`} actions={<><Link href={`/partidos/${matchId}/video`} className="grid min-h-10 place-items-center rounded-lg bg-red-950 px-3 text-[10px] font-black text-red-300">▶ VÍDEO</Link><SyncStatusBadge matchId={matchId} /></>} />
       <main className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
         {returnTo && <Link href={returnTo} className="sticky top-2 z-40 inline-flex min-h-11 items-center rounded-xl border border-cyan-700 bg-slate-950/95 px-4 text-xs font-black text-cyan-200 shadow-xl backdrop-blur">← VOLVER AL ANÁLISIS</Link>}
         <section className="grid gap-4 rounded-3xl border border-slate-700 bg-slate-800 p-5 sm:grid-cols-[1fr_auto] sm:items-center">

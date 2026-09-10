@@ -4,8 +4,10 @@ import { PointerEvent, useEffect, useRef, useState } from "react";
 import { EventEditChanges } from "../../lib/matchEngine";
 import { eventDescription } from "../../lib/eventPresentation";
 import { filterTimelineEvents, TimelineFilter } from "../../lib/matchReview";
-import { EventPosition, MatchEvent, Player, StaffMember, TimelineEntry } from "../../types";
+import { EventPosition, MatchEvent, MatchSession, Player, StaffMember, TimelineEntry } from "../../types";
 import { EventEditor } from "./EventEditor";
+import { VideoStatusLink } from "../video/VideoStatusLink";
+import { useMatchStore } from "../../store/useMatchStore";
 
 interface RecentEventsPanelProps {
   events: MatchEvent[];
@@ -28,6 +30,7 @@ interface RecentEventsPanelProps {
   onClose: () => void;
   initialFilter?: TimelineFilter;
   focusEventId?: string;
+  videoSession?: MatchSession;
 }
 
 export interface DisciplineFocusRequest {
@@ -37,7 +40,9 @@ export interface DisciplineFocusRequest {
   period: number;
 }
 
-export function RecentEventsPanel({ events, timeline, players, staff, onDelete, onRestore, onPendingReview, onSave, onMoveWithinMinute, errorMessage, onDismissError, disciplineFocusRequest, activePeriod, matchFinished = false, closedPeriods, reviewPeriod, onStartPeriodReview, onClose, initialFilter = "ACTIVE", focusEventId }: RecentEventsPanelProps) {
+export function RecentEventsPanel({ events, timeline, players, staff, onDelete, onRestore, onPendingReview, onSave, onMoveWithinMinute, errorMessage, onDismissError, disciplineFocusRequest, activePeriod, matchFinished = false, closedPeriods, reviewPeriod, onStartPeriodReview, onClose, initialFilter = "ACTIVE", focusEventId, videoSession }: RecentEventsPanelProps) {
+  const storedVideoSession = useMatchStore((state) => events[0] ? state.matches[events[0].matchId] : undefined);
+  const effectiveVideoSession = videoSession ?? storedVideoSession;
   const [filter, setFilter] = useState<TimelineFilter>(initialFilter);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -128,6 +133,7 @@ export function RecentEventsPanel({ events, timeline, players, staff, onDelete, 
               </span>
               <button type="button" onClick={() => setEditingId(event.id)} className="min-w-0 truncate text-left font-semibold text-slate-100">{eventDescription(event, players, entry, staff)}</button>
               <div className="flex justify-end gap-1">
+                {effectiveVideoSession && !deleted && <VideoStatusLink session={effectiveVideoSession} eventId={event.id} compact/>}
                 {!deleted && <button type="button" onClick={() => onPendingReview(event.id, !event.pendingReview)} className={`min-h-9 min-w-9 rounded-lg text-base font-black ${event.pendingReview ? "bg-amber-500 text-slate-950" : "bg-slate-800 text-slate-500"}`} aria-label={event.pendingReview ? "Quitar pendiente" : "Marcar pendiente"}>?</button>}
                 {!deleted && <button type="button" onPointerDown={(pointer) => pointerDown(pointer, event)} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={resetDrag} className="hidden min-h-9 min-w-9 touch-none rounded-lg bg-slate-800 text-base text-slate-400 sm:block" aria-label="Reordenar dentro del mismo minuto">⠿</button>}
                 <button type="button" onClick={() => deleted ? onRestore(event.id) : onDelete(event.id)} className="min-h-9 min-w-9 rounded-lg bg-slate-800 text-base" aria-label={deleted ? "Restaurar" : "Eliminar"}>{deleted ? "↺" : "×"}</button>

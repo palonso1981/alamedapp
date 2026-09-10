@@ -160,7 +160,7 @@ export function createVideoSegment(input: {
     id: input.id ?? globalThis.crypto.randomUUID(),
     provider: "YOUTUBE",
     videoId,
-    label: input.label?.trim() || (periods.length === 2 ? "Partido completo" : `Parte ${periods[0]}`),
+    label: input.label?.trim() || (periods.length === 2 ? "Partido completo" : periods[0] === 1 ? "1ª parte" : "2ª parte"),
     periods,
     leadSeconds: normalizeLeadSeconds(input.leadSeconds ?? DEFAULT_VIDEO_LEAD_SECONDS),
     anchors: [],

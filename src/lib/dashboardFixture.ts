@@ -189,6 +189,19 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
     closedPeriods: [1, 2],
     matchFinished: true,
     reviewStatus: "VALIDATED",
+    videoSegments: index === 0 ? [{
+      id: `${matchId}-video-full`, provider: "YOUTUBE", videoId: "fixture0001", label: "Partido completo", periods: [1, 2], leadSeconds: 6,
+      anchors: [{ id: `${matchId}-anchor`, eventId: `${matchId}-for-0`, videoSecond: 120 }], createdAt: index + 1, updatedAt: index + 101,
+    }] : index === 1 ? [{
+      id: `${matchId}-video-p1`, provider: "YOUTUBE", videoId: "fixture0002", label: "Primera parte", periods: [1], leadSeconds: 6,
+      anchors: [{ id: `${matchId}-anchor-p1`, eventId: `${matchId}-for-1`, videoSecond: 90 }], createdAt: index + 1, updatedAt: index + 101,
+    }, {
+      id: `${matchId}-video-p2`, provider: "YOUTUBE", videoId: "fixture0003", label: "Segunda parte", periods: [2], leadSeconds: 6,
+      anchors: [{ id: `${matchId}-anchor-p2`, eventId: `${matchId}-against-2`, videoSecond: 80 }], createdAt: index + 1, updatedAt: index + 101,
+    }] : index === 2 ? [{
+      id: `${matchId}-video-pending`, provider: "YOUTUBE", videoId: "fixture0004", label: "Vídeo pendiente", periods: [1, 2], leadSeconds: 6,
+      anchors: [], createdAt: index + 1, updatedAt: index + 101,
+    }] : [],
     events,
     past: [],
     future: [],

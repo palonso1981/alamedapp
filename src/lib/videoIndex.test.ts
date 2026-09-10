@@ -126,6 +126,45 @@ test("cambiar videoId limpia anchors para no conservar una calibración inválid
   assert.deepEqual(current.videoSegments?.[0].anchors, []);
 });
 
+test("etiqueta humana se deriva de cobertura y sigue siendo editable", () => {
+  assert.equal(createVideoSegment({ urlOrVideoId: "abcdefghijk", periods: [1], now: 1 }).label, "1ª parte");
+  assert.equal(createVideoSegment({ urlOrVideoId: "abcdefghijk", periods: [2], now: 1 }).label, "2ª parte");
+  assert.equal(createVideoSegment({ urlOrVideoId: "abcdefghijk", periods: [1, 2], now: 1 }).label, "Partido completo");
+  assert.equal(createVideoSegment({ urlOrVideoId: "abcdefghijk", periods: [2], label: "P2 cámara grada", now: 1 }).label, "P2 cámara grada");
+});
+
+test("dos segmentos conservan identidad cobertura y anchors independientes", () => {
+  const events = [event("p1", 100_000, 1), event("p2", 200_000, 2)];
+  let current = session(events);
+  current = upsertVideoSegment(current, createVideoSegment({ id: "p1-video", urlOrVideoId: "abcdefghijk", periods: [1], now: 1 }));
+  current = upsertVideoSegment(current, createVideoSegment({ id: "p2-video", urlOrVideoId: "zyxwvutsrqp", periods: [2], now: 2 }));
+  current = addVideoAnchor(current, "p1-video", { id: "p1-anchor", eventId: "p1", videoSecond: 30 });
+  current = addVideoAnchor(current, "p2-video", { id: "p2-anchor", eventId: "p2", videoSecond: 40 });
+  assert.equal(current.videoSegments?.length, 2);
+  assert.equal(current.videoSegments?.[0].videoId, "abcdefghijk");
+  assert.equal(current.videoSegments?.[0].anchors[0].eventId, "p1");
+  assert.equal(current.videoSegments?.[1].videoId, "zyxwvutsrqp");
+  assert.equal(current.videoSegments?.[1].anchors[0].eventId, "p2");
+  const p1 = resolveEventVideoPosition(current, "p1");
+  const p2 = resolveEventVideoPosition(current, "p2");
+  assert.equal(p1.status, "RESOLVED");
+  assert.equal(p2.status, "RESOLVED");
+  if (p1.status === "RESOLVED") assert.equal(p1.videoId, "abcdefghijk");
+  if (p2.status === "RESOLVED") assert.equal(p2.videoId, "zyxwvutsrqp");
+});
+
+test("un segmento completo resuelve eventos de ambas partes sin modificar eventos históricos", () => {
+  const events = [event("p1", 100_000, 1), event("p2", 200_000, 2)];
+  const originalEvents = structuredClone(events);
+  let current = session(events);
+  current = upsertVideoSegment(current, createVideoSegment({ id: "full", urlOrVideoId: "abcdefghijk", periods: [1, 2], now: 1 }));
+  current = addVideoAnchor(current, "full", { id: "p1-anchor", eventId: "p1", videoSecond: 30 });
+  current = addVideoAnchor(current, "full", { id: "p2-anchor", eventId: "p2", videoSecond: 1230 });
+  assert.equal(resolveEventVideoPosition(current, "p1").status, "RESOLVED");
+  assert.equal(resolveEventVideoPosition(current, "p2").status, "RESOLVED");
+  assert.deepEqual(current.events.slice(1), originalEvents);
+});
+
 test("persistencia V3 conserva segmentos y anchors y acepta sesiones sin vídeo", () => {
   const values = new Map<string, string>();
   const storage: LocalStorageAdapter = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); } };
