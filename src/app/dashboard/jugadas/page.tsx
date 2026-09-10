@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { AppHeader } from "../../../components/app/AppHeader";
 import { VideoStatusLink, videoResolutionLabel } from "../../../components/video/VideoStatusLink";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "../../../lib/dashboardFixture";
@@ -21,7 +21,7 @@ function localRecords(): DashboardMatchRecord[] {
 
 const KIND_LABEL: Record<VideoReviewKind, string> = { ALL: "TODAS", GOALS: "GOLES CDA", SAVES: "PARADAS", LOSSES: "PÉRDIDAS" };
 
-export default function VideoReviewPage() {
+function VideoReviewContent() {
   const searchParams = useSearchParams();
   const fixture = searchParams.get("fixture") === "1";
   const currentClubId = useTeamStore((state) => state.currentClubId);
@@ -63,4 +63,8 @@ export default function VideoReviewPage() {
     <div className="space-y-2">{rows.map(({ record, event, resolution }) => <article key={`${record.catalog.matchId}:${event.id}`} className="grid gap-2 rounded-2xl border border-slate-800 bg-slate-900 p-3 sm:grid-cols-[8rem_1fr_auto] sm:items-center"><div><p className="text-[10px] font-black text-cyan-300">{record.catalog.date}</p><p className="truncate text-xs font-bold">{record.catalog.opponent}</p></div><div className="min-w-0"><p className="text-[10px] font-black text-slate-500">P{event.period} · min {event.minute} · order {event.order}</p><p className="truncate text-sm font-bold">{eventDescription(event, record.session.players)}</p><p className="mt-0.5 text-[9px] text-slate-500">{resolution.status === "RESOLVED" ? `${resolution.quality.replaceAll("_", " ")} · abre −${resolution.leadSeconds}s` : videoResolutionLabel(resolution.status)}</p></div><div className="flex items-center gap-2"><VideoStatusLink session={record.session} eventId={event.id}/><Link href={revisionEventHref(record.catalog.matchId, event.id, `/dashboard/jugadas?${query}`, fixture)} className="inline-grid min-h-10 place-items-center rounded-xl bg-slate-800 px-3 text-[10px] font-black">VER EVENTO</Link>{fixture ? <span className="inline-grid min-h-10 place-items-center rounded-xl bg-slate-800 px-3 text-[10px] font-black text-slate-500">FIXTURE</span> : <Link href={`/partidos/${record.catalog.matchId}/video`} className="inline-grid min-h-10 place-items-center rounded-xl bg-slate-800 px-3 text-[10px] font-black">AJUSTAR</Link>}</div></article>)}</div>
     {rows.length === 0 && <section className="rounded-3xl border border-dashed border-slate-700 p-10 text-center text-slate-400">No hay jugadas para esta intersección de filtros.</section>}
   </main></div>;
+}
+
+export default function VideoReviewPage() {
+  return <Suspense fallback={<div className="min-h-screen bg-slate-950 p-10 text-center text-slate-500">Preparando jugadas…</div>}><VideoReviewContent /></Suspense>;
 }
