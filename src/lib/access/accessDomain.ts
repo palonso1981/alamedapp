@@ -54,21 +54,6 @@ export function assertCanRetireAccess(
   }
 }
 
-export function regenerateAccessProfile(
-  profile: ClubAccessProfile,
-  activeCodeHash: string,
-  now: number,
-): ClubAccessProfile {
-  if (profile.status === "DELETED") throw new Error("Un acceso eliminado no puede regenerarse.");
-  return {
-    ...profile,
-    status: "ACTIVE",
-    credentialVersion: profile.credentialVersion + 1,
-    activeCodeHash,
-    updatedAt: now,
-  };
-}
-
 export interface AccessTechnicalSession {
   uid: string;
   clubId: string;
@@ -98,20 +83,48 @@ export interface AccessUsageDay {
 }
 
 const ACCESS_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const CODE_LENGTH = 12;
+const LEGACY_CODE_LENGTH = 12;
+const GENERATED_CODE_LENGTH = 16;
+const MAX_CODE_LENGTH = 64;
+
+function compactAccessCode(value: string): string | null {
+  const compact = value.trim().toUpperCase().replace(/[\s-]+/g, "");
+  return /^[A-Z0-9]+$/.test(compact) ? compact : null;
+}
 
 export function normalizeAccessCode(value: string): string | null {
-  const compact = value.toUpperCase().replace(/[\s-]+/g, "");
-  if (compact.length !== CODE_LENGTH) return null;
-  if (compact.split("").some((character) => !ACCESS_ALPHABET.includes(character))) return null;
+  const compact = compactAccessCode(value);
+  if (!compact || (compact.length !== LEGACY_CODE_LENGTH && (compact.length < 14 || compact.length > MAX_CODE_LENGTH))) return null;
   return compact.match(/.{1,4}/g)?.join("-") ?? null;
 }
 
 export function generateAccessCode(randomBytes?: Uint8Array): string {
-  const bytes = randomBytes ?? globalThis.crypto.getRandomValues(new Uint8Array(CODE_LENGTH));
-  if (bytes.length < CODE_LENGTH) throw new Error("Se necesitan 12 bytes aleatorios.");
-  const compact = Array.from(bytes.slice(0, CODE_LENGTH), (byte) => ACCESS_ALPHABET[byte & 31]).join("");
+  const bytes = randomBytes ?? globalThis.crypto.getRandomValues(new Uint8Array(GENERATED_CODE_LENGTH));
+  if (bytes.length < GENERATED_CODE_LENGTH) throw new Error("Se necesitan 16 bytes aleatorios.");
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const digits = "23456789";
+  const compact = letters[bytes[0] % letters.length] + digits[bytes[1] % digits.length] +
+    Array.from(bytes.slice(2, GENERATED_CODE_LENGTH), (byte) => ACCESS_ALPHABET[byte & 31]).join("");
   return normalizeAccessCode(compact)!;
+}
+
+export function newAccessCodeValidationError(value: string, label: string): string | null {
+  const compact = compactAccessCode(value);
+  if (!compact) return "Usa únicamente letras, números, espacios o guiones.";
+  if (compact.length < 14) return "Usa al menos 14 letras o números.";
+  if (compact.length > MAX_CODE_LENGTH) return "El código no puede superar 64 letras o números.";
+  if (!/[A-Z]/.test(compact)) return "Incluye al menos una letra.";
+  if (!/[0-9]/.test(compact)) return "Incluye al menos un número.";
+  if (/^(.{1,4})\1{3,}$/.test(compact)) return "Este código es demasiado sencillo.";
+  const compactLabel = label.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "");
+  if (compactLabel && compact === compactLabel) return "El código no puede ser igual al nombre del acceso.";
+  return null;
+}
+
+export function normalizeNewAccessCode(value: string, label: string): string {
+  const error = newAccessCodeValidationError(value, label);
+  if (error) throw new Error(error);
+  return normalizeAccessCode(value)!;
 }
 
 export async function hashAccessCode(value: string): Promise<string> {
@@ -123,7 +136,7 @@ export async function hashAccessCode(value: string): Promise<string> {
 }
 
 export function normalizeAccessScope(role: AccessRole, scope: AccessScope): AccessScope {
-  if (role === "ADMIN" || scope.type === "CLUB") return { type: "CLUB" };
+  if (role !== "VIEWER" || scope.type === "CLUB") return { type: "CLUB" };
   const teamIds = Array.from(new Set(scope.teamIds.map((teamId) => teamId.trim()).filter(Boolean))).sort();
   if (teamIds.length === 0) throw new Error("Elige al menos un equipo.");
   return { type: "TEAMS", teamIds };
@@ -147,7 +160,7 @@ export function canAccessClub(grant: ActiveAccessGrant | null, clubId: string): 
 
 export function canAccessTeam(grant: ActiveAccessGrant | null, clubId: string, teamId?: string | null): boolean {
   if (!isActiveGrant(grant) || grant.profile.clubId !== clubId) return false;
-  if (grant.profile.role === "ADMIN" || grant.profile.scope.type === "CLUB") return true;
+  if (grant.profile.role !== "VIEWER" || grant.profile.scope.type === "CLUB") return true;
   return Boolean(teamId && grant.profile.scope.teamIds.includes(teamId));
 }
 
@@ -172,7 +185,8 @@ export function accessRouteRequiresWrite(pathname: string): boolean {
 
 export function canOpenRoute(grant: ActiveAccessGrant | null, pathname: string): boolean {
   if (!isActiveGrant(grant)) return false;
-  if (pathname === "/accesos" || pathname === "/configuracion") return canManageAccess(grant);
+  if (pathname === "/accesos") return canManageAccess(grant);
+  if (pathname === "/configuracion") return canMutateSports(grant);
   if (accessRouteRequiresWrite(pathname)) return canMutateSports(grant);
   return true;
 }

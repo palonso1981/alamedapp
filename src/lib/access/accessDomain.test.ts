@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { activeAdminCount, assertCanRetireAccess, canAccessTeam, canManageAccess, canMutateSports, canOpenRoute, generateAccessCode, hashAccessCode, normalizeAccessCode, normalizeAccessScope, regenerateAccessProfile, utcUsageDay, visibleTeamIds, ActiveAccessGrant, ClubAccessProfile } from "./accessDomain";
+import { activeAdminCount, assertCanRetireAccess, canAccessTeam, canManageAccess, canMutateSports, canOpenRoute, generateAccessCode, hashAccessCode, newAccessCodeValidationError, normalizeAccessCode, normalizeAccessScope, normalizeNewAccessCode, utcUsageDay, visibleTeamIds, ActiveAccessGrant, ClubAccessProfile } from "./accessDomain";
 import { ACCESS_STORAGE_KEY, AccessStorage, clearRememberedAccess, getOrCreateDeviceInstallId, loadRememberedAccess, pendingLocalOperations, saveRememberedAccess } from "./accessPersistence";
 import { resetRuntimeAccessGrantForTests, setRuntimeAccessGrant } from "./accessRuntime";
 import { listMatchCatalog } from "../matchCatalog";
@@ -29,11 +29,23 @@ function grant(role: ClubAccessProfile["role"], scope?: ClubAccessProfile["scope
 
 test("código normaliza mayúsculas espacios y guiones y rechaza ambiguos", async () => {
   assert.equal(normalizeAccessCode("abcd efgh-jkmn"), "ABCD-EFGH-JKMN");
-  assert.equal(normalizeAccessCode("abcd-efgh-ijkl"), null);
-  const code = generateAccessCode(new Uint8Array(12).map((_, index) => index));
-  assert.match(code, /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
+  assert.equal(normalizeAccessCode("abcd-efgh-ij$l"), null);
+  const code = generateAccessCode(new Uint8Array(16).map((_, index) => index));
+  assert.match(code, /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/);
+  assert.equal(newAccessCodeValidationError(code, "Acceso"), null);
   assert.equal((await hashAccessCode(code)).length, 64);
   assert.equal(await hashAccessCode(code.toLowerCase().replaceAll("-", " ")), await hashAccessCode(code));
+});
+
+test("código personalizado aplica una política simple y una identidad única", async () => {
+  assert.equal(normalizeNewAccessCode("GRABA-ALAMEDA-27", "Graba partidos"), "GRAB-AALA-MEDA-27");
+  assert.equal(await hashAccessCode("GRABA-ALAMEDA-27"), await hashAccessCode("graba alameda 27"));
+  assert.match(newAccessCodeValidationError("CORTO-2", "Acceso") ?? "", /14/);
+  assert.match(newAccessCodeValidationError("12345678901234", "Acceso") ?? "", /letra/);
+  assert.match(newAccessCodeValidationError("SOLOLETRASLARGAS", "Acceso") ?? "", /número/);
+  assert.match(newAccessCodeValidationError("A1-A1-A1-A1-A1-A1-A1", "Acceso") ?? "", /sencillo/);
+  assert.match(newAccessCodeValidationError("GRABA-PARTIDOS-27", "Graba partidos 27") ?? "", /igual/);
+  assert.equal(newAccessCodeValidationError("JUVENIL-PISTA-48", "Visor"), null);
 });
 
 test("ADMIN EDITOR y VIEWER aplican rol y scope club uno o varios equipos", () => {
@@ -45,11 +57,11 @@ test("ADMIN EDITOR y VIEWER aplican rol y scope club uno o varios equipos", () =
   assert.equal(canMutateSports(viewer), false);
   assert.equal(canAccessTeam(admin, "club-a", "z"), true);
   assert.equal(canAccessTeam(editor, "club-a", "a"), true);
-  assert.equal(canAccessTeam(editor, "club-a", "c"), false);
+  assert.equal(canAccessTeam(editor, "club-a", "c"), true);
   assert.equal(canAccessTeam(viewer, "club-a", "b"), false);
-  assert.deepEqual(visibleTeamIds(editor, "club-a", ["a", "b", "c"]), ["a", "b"]);
+  assert.deepEqual(visibleTeamIds(editor, "club-a", ["a", "b", "c"]), ["a", "b", "c"]);
   assert.deepEqual(normalizeAccessScope("ADMIN", { type: "TEAMS", teamIds: ["a"] }), { type: "CLUB" });
-  assert.deepEqual(normalizeAccessScope("EDITOR", { type: "TEAMS", teamIds: ["b", "a", "b"] }), { type: "TEAMS", teamIds: ["a", "b"] });
+  assert.deepEqual(normalizeAccessScope("EDITOR", { type: "TEAMS", teamIds: ["b", "a", "b"] }), { type: "CLUB" });
 });
 
 test("VIEWER no abre rutas de mutación ni Accesos y credencial desactivada no autoriza", () => {
@@ -59,7 +71,14 @@ test("VIEWER no abre rutas de mutación ni Accesos y credencial desactivada no a
   assert.equal(canOpenRoute(viewer, "/partidos/nuevo"), false);
   assert.equal(canOpenRoute(viewer, "/partido/m1/directo"), false);
   assert.equal(canOpenRoute(viewer, "/accesos"), false);
-  assert.equal(canOpenRoute(grant("EDITOR"), "/configuracion"), false);
+  const editor = grant("EDITOR", { type: "TEAMS", teamIds: ["legacy"] });
+  assert.equal(canOpenRoute(editor, "/configuracion"), true);
+  assert.equal(canOpenRoute(editor, "/partidos/nuevo"), true);
+  assert.equal(canOpenRoute(editor, "/partido/m1/prepartido"), true);
+  assert.equal(canOpenRoute(editor, "/partido/m1/directo"), true);
+  assert.equal(canOpenRoute(editor, "/partidos/m1/video"), true);
+  assert.equal(canOpenRoute(editor, "/accesos"), false);
+  assert.equal(canManageAccess(editor), false);
   assert.equal(canOpenRoute(grant("ADMIN"), "/configuracion"), true);
   const disabled = { ...viewer, profile: { ...viewer.profile, status: "DISABLED" as const } };
   assert.equal(canOpenRoute(disabled, "/dashboard"), false);
@@ -159,16 +178,6 @@ test("un ADMIN puede retirar otro ADMIN cuando quedan dos", () => {
   );
 });
 
-test("regenerar conserva accessId, incrementa versión y no revive un DELETED", () => {
-  const current = { ...grant("EDITOR").profile, credentialVersion: 4, activeCodeHash: "old" };
-  const next = regenerateAccessProfile(current, "new", 99);
-  assert.equal(next.accessId, current.accessId);
-  assert.equal(next.credentialVersion, 5);
-  assert.equal(next.activeCodeHash, "new");
-  assert.equal(next.status, "ACTIVE");
-  assert.throws(() => regenerateAccessProfile({ ...current, status: "DELETED" }, "other", 100), /eliminado/);
-});
-
 test("heartbeat agrupa por día UTC sin contar navegaciones", () => {
   assert.equal(utcUsageDay(Date.UTC(2026, 8, 12, 23, 59)), "2026-09-12");
 });
@@ -196,15 +205,17 @@ test("repositorio local rechaza mutación de plantilla por VISOR", () => {
   } finally { resetRuntimeAccessGrantForTests(); }
 });
 
-test("repositorio local rechaza a EDITOR un equipo fuera de su scope", () => {
+test("EDITOR legacy obtiene club deportivo completo pero no puede mutar el Club", () => {
   const storage = new MemoryStorage();
   const repository = new LocalTeamRepository({ storage, now: () => 1, idFactory: () => "op" });
   const workspace = emptyTeamWorkspace("club-a", 1);
   workspace.teams = [{ ...workspace.team, clubId: "club-a", teamId: "b", name: "Equipo B" }];
   setRuntimeAccessGrant(grant("EDITOR", { type: "TEAMS", teamIds: ["a"] }));
   try {
-    assert.equal(repository.save(workspace), false);
-    assert.equal(storage.length, 0);
+    assert.equal(repository.save(workspace), true);
+    assert.equal(repository.getSyncState("club-a").outbox.some((item) => item.entityType === "TEAM_UNIT"), true);
+    const changedClub = { ...repository.load("club-a"), club: { ...repository.load("club-a").club, name: "Club ajeno" } };
+    assert.equal(repository.save(changedClub), false);
   } finally { resetRuntimeAccessGrantForTests(); }
 });
 

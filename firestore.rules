@@ -20,7 +20,9 @@ service cloud.firestore {
         && get(codePath(session(clubId).codeHash)).data.credentialVersion == session(clubId).credentialVersion;
     }
     function isAdmin(clubId) { return validAccess(clubId) && access(clubId).role == 'ADMIN'; }
-    function hasClubScope(clubId) { return validAccess(clubId) && (access(clubId).role == 'ADMIN' || access(clubId).scope.type == 'CLUB'); }
+    // V1: EDITOR tiene alcance deportivo efectivo de club aunque un perfil
+    // legacy conserve scope TEAMS. VIEWER sí respeta CLUB/TEAMS.
+    function hasClubScope(clubId) { return validAccess(clubId) && (access(clubId).role in ['ADMIN', 'EDITOR'] || access(clubId).scope.type == 'CLUB'); }
     function teamAllowed(clubId, teamId) { return validAccess(clubId) && (hasClubScope(clubId) || (access(clubId).scope.type == 'TEAMS' && teamId in access(clubId).scope.teamIds)); }
     function canWriteClub(clubId) { return hasClubScope(clubId) && access(clubId).role != 'VIEWER'; }
     function canWriteTeam(clubId, teamId) { return teamAllowed(clubId, teamId) && access(clubId).role != 'VIEWER'; }

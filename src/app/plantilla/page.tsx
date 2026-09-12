@@ -141,7 +141,7 @@ export default function RosterPage() {
       .filter(
         (player) =>
           scope !== "CLUB" ||
-          grant.profile.role === "ADMIN" ||
+          grant.profile.role !== "VIEWER" ||
           grant.profile.scope.type === "CLUB" ||
           allowedIds.has(player.playerId),
       )
@@ -167,7 +167,7 @@ export default function RosterPage() {
       .filter(
         (member) =>
           scope !== "CLUB" ||
-          grant.profile.role === "ADMIN" ||
+          grant.profile.role !== "VIEWER" ||
           grant.profile.scope.type === "CLUB" ||
           allowedIds.has(member.staffId),
       )

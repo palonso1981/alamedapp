@@ -1,8 +1,8 @@
-import { collection, doc, getDoc, getDocs, runTransaction, serverTimestamp, setDoc, writeBatch } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc, writeBatch } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
 import { getFirebaseDevServices } from "../firebase";
-import { AccessCodeMapping, AccessRole, AccessScope, AccessStatus, AccessTechnicalSession, AccessUsageDay, ActiveAccessGrant, ClubAccessProfile, assertCanRetireAccess, generateAccessCode, hashAccessCode, normalizeAccessScope, regenerateAccessProfile, utcUsageDay } from "./accessDomain";
+import { AccessCodeMapping, AccessRole, AccessScope, AccessStatus, AccessTechnicalSession, AccessUsageDay, ActiveAccessGrant, ClubAccessProfile, assertCanRetireAccess, hashAccessCode, normalizeAccessScope, normalizeNewAccessCode, utcUsageDay } from "./accessDomain";
 import { getOrCreateDeviceInstallId } from "./accessPersistence";
 
 export type AccessFailure = "INVALID_CODE" | "DISABLED" | "OFFLINE" | "UNAUTHORIZED";
@@ -94,7 +94,7 @@ export async function validateRememberedGrant(grant: ActiveAccessGrant, now = Da
     const rawProfile = profileSnapshot.data();
     if (!profileSnapshot.exists() || !validProfile(rawProfile)) throw new AccessError("UNAUTHORIZED", "Este acceso ya no existe.");
     const profile = rawProfile;
-    if (profile.status !== "ACTIVE" || session.credentialVersion !== profile.credentialVersion || session.accessId !== profile.accessId) throw new AccessError("DISABLED", "Este acceso está desactivado o su código fue regenerado.");
+    if (profile.status !== "ACTIVE" || session.credentialVersion !== profile.credentialVersion || session.accessId !== profile.accessId) throw new AccessError("DISABLED", "Este acceso está desactivado o ya no es válido.");
     return { ...grant, uid: user.uid, profile, credentialVersion: profile.credentialVersion, lastValidatedAt: now, offline: false };
   } catch (error) {
     throw firebaseAccessError(error, "No se pudo volver a validar el acceso.");
@@ -140,18 +140,22 @@ async function listAccessProfiles(clubId: string): Promise<ClubAccessProfile[]> 
     .filter(validProfile);
 }
 
-export async function createClubAccess(input: { clubId: string; label: string; role: AccessRole; scope: AccessScope }, now = Date.now()): Promise<{ profile: ClubAccessProfile; code: string }> {
+export async function createClubAccess(input: { clubId: string; label: string; role: AccessRole; scope: AccessScope; code: string }, now = Date.now()): Promise<{ profile: ClubAccessProfile; code: string }> {
   const { db } = await servicesWithUser();
-  const code = generateAccessCode();
+  const label = input.label.trim();
+  if (!label) throw new Error("Escribe un nombre para el acceso.");
+  const code = normalizeNewAccessCode(input.code, label);
   const codeHash = await hashAccessCode(code);
+  if ((await getDoc(doc(db, "accessCodes", codeHash))).exists()) {
+    throw new Error("Este código ya está en uso. Elige otro.");
+  }
   const accessId = globalThis.crypto.randomUUID();
   const role = input.role;
   const profile: ClubAccessProfile & { entityType: "ACCESS_PROFILE"; serverUpdatedAt: unknown } = {
-    entityType: "ACCESS_PROFILE", accessId, clubId: input.clubId, label: input.label.trim(), role,
+    entityType: "ACCESS_PROFILE", accessId, clubId: input.clubId, label, role,
     scope: normalizeAccessScope(role, input.scope), status: "ACTIVE", credentialVersion: 1, activeCodeHash: codeHash,
     createdAt: now, updatedAt: now, serverUpdatedAt: serverTimestamp(),
   };
-  if (!profile.label) throw new Error("Escribe un nombre para el acceso.");
   const mapping: AccessCodeMapping & { entityType: "ACCESS_CODE"; serverUpdatedAt: unknown } = {
     entityType: "ACCESS_CODE", codeHash, clubId: input.clubId, accessId, credentialVersion: 1, status: "ACTIVE", createdAt: now, serverUpdatedAt: serverTimestamp(),
   };
@@ -195,30 +199,6 @@ export async function updateClubAccess(profile: ClubAccessProfile, input: { labe
   return next;
 }
 
-export async function regenerateClubAccess(profile: ClubAccessProfile, now = Date.now()): Promise<{ profile: ClubAccessProfile; code: string }> {
-  const code = generateAccessCode();
-  const codeHash = await hashAccessCode(code);
-  const { db } = await servicesWithUser();
-  const profileRef = doc(db, "clubs", profile.clubId, "accesses", profile.accessId);
-  const next = await runTransaction(db, async (transaction) => {
-    const snapshot = await transaction.get(profileRef);
-    const rawProfile = snapshot.data();
-    if (!snapshot.exists() || !validProfile(rawProfile)) throw new Error("El acceso ya no existe.");
-    const current = rawProfile;
-    if (current.status === "DELETED") throw new Error("Un acceso eliminado no puede regenerarse.");
-    const updated = regenerateAccessProfile(current, codeHash, now);
-    const previousMappingRef = current.activeCodeHash ? doc(db, "accessCodes", current.activeCodeHash) : null;
-    const previousMapping = previousMappingRef ? await transaction.get(previousMappingRef) : null;
-    if (previousMappingRef && previousMapping?.data()?.status === "ACTIVE") {
-      transaction.set(previousMappingRef, { status: "REVOKED", replacedAt: now, serverUpdatedAt: serverTimestamp() }, { merge: true });
-    }
-    transaction.set(doc(db, "accessCodes", codeHash), { entityType: "ACCESS_CODE", codeHash, clubId: current.clubId, accessId: current.accessId, credentialVersion: updated.credentialVersion, status: "ACTIVE", createdAt: now, serverUpdatedAt: serverTimestamp() });
-    transaction.set(profileRef, { ...updated, entityType: "ACCESS_PROFILE", serverUpdatedAt: serverTimestamp() });
-    return updated;
-  }).catch((error) => { throw accessOperationError(error, "No se pudo regenerar el código."); });
-  return { profile: next, code };
-}
-
 export async function deleteClubAccess(
   profile: ClubAccessProfile,
   actorAccessId: string,
@@ -230,12 +210,4 @@ export async function deleteClubAccess(
     now,
     actorAccessId,
   );
-}
-
-export async function reactivateClubAccess(
-  profile: ClubAccessProfile,
-  now = Date.now(),
-): Promise<{ profile: ClubAccessProfile; code: string }> {
-  if (profile.status !== "DISABLED") throw new Error("Solo puede reactivarse un acceso desactivado.");
-  return regenerateClubAccess(profile, now);
 }

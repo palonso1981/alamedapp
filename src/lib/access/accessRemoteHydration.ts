@@ -76,7 +76,7 @@ export async function hydrateAuthorizedRemoteData(grant: ActiveAccessGrant): Pro
     [teamEntityKey("CLUB", clubId)]: revision(clubSnapshot),
   };
 
-  const teamIds = grant.profile.role === "ADMIN" || grant.profile.scope.type === "CLUB"
+  const teamIds = grant.profile.role !== "VIEWER" || grant.profile.scope.type === "CLUB"
     ? null
     : grant.profile.scope.teamIds;
   const teamSnapshots = teamIds

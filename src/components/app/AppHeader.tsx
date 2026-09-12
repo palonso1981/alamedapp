@@ -20,7 +20,7 @@ export function AppHeader({ title, actions, clubId }: { title: string; actions?:
           <Link href="/plantilla" aria-label="Plantilla" className="grid min-h-10 min-w-10 place-items-center rounded-lg px-2 hover:bg-slate-800 sm:block sm:min-w-0 sm:px-3 sm:py-2.5"><span className="sm:hidden" aria-hidden="true">●</span><span className="hidden sm:inline">PLANTILLA</span></Link>
           <Link href="/partidos" aria-label="Partidos" className="grid min-h-10 min-w-10 place-items-center rounded-lg px-2 hover:bg-slate-800 sm:block sm:min-w-0 sm:px-3 sm:py-2.5"><span className="sm:hidden" aria-hidden="true">▦</span><span className="hidden sm:inline">PARTIDOS</span></Link>
           <Link href="/dashboard" aria-label="Dashboard" className="grid min-h-10 min-w-10 place-items-center rounded-lg px-2 hover:bg-slate-800 sm:block sm:min-w-0 sm:px-3 sm:py-2.5"><span className="sm:hidden" aria-hidden="true">▥</span><span className="hidden sm:inline">DASHBOARD</span></Link>
-          {grant.profile.role === "ADMIN" && <Link href="/configuracion" aria-label="Configuración" className="grid min-h-10 min-w-10 place-items-center rounded-lg px-2 text-base hover:bg-slate-800">⚙</Link>}
+          {grant.profile.role !== "VIEWER" && <Link href="/configuracion" aria-label="Configuración deportiva" className="grid min-h-10 min-w-10 place-items-center rounded-lg px-2 text-base hover:bg-slate-800">⚙</Link>}
           {actions}
           <AccessIdentityBadge />
         </nav>

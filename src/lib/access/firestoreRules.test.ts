@@ -42,6 +42,29 @@ test("Rules: roles, scope y revocación protegen deporte", () => {
   assert.match(rules, /match \/matches\/\{matchId\}[\s\S]*?canWriteTeam/);
 });
 
+test("Rules: EDITOR hereda club deportivo pero no Club institucional ni Access", () => {
+  assert.match(rules, /access\(clubId\)\.role in \['ADMIN', 'EDITOR'\]/);
+  assert.match(rules, /match \/clubs\/\{clubId\} \{[\s\S]*?allow create, update: if isAdmin\(clubId\)/);
+  assert.match(rules, /match \/clubs\/\{clubId\}\/accesses\/\{accessId\} \{[\s\S]*?allow create, update: if isAdmin\(clubId\)/);
+  assert.match(rules, /match \/teams\/\{teamId\} \{[\s\S]*?allow create, update: if canWriteTeam\(clubId, teamId\)[\s\S]*?request\.resource\.data\.payload\.clubId == clubId/);
+});
+
+test("creación comprueba colisión y no persiste plaintext; regeneración no se expone", () => {
+  const implementation = readFileSync("src/lib/access/accessFirestore.ts", "utf8");
+  const ui = readFileSync("src/app/accesos/page.tsx", "utf8");
+  const collisionRead = implementation.indexOf('getDoc(doc(db, "accessCodes", codeHash))');
+  const batchCommit = implementation.indexOf("await batch.commit()", collisionRead);
+  assert.ok(collisionRead >= 0 && batchCommit > collisionRead);
+  assert.match(implementation, /Este código ya está en uso/);
+  assert.doesNotMatch(implementation, /regenerateClubAccess|reactivateClubAccess/);
+  assert.doesNotMatch(ui, /NUEVO CÓDIGO|regenerateClubAccess|reactivateClubAccess/);
+  assert.match(ui, /GENERAR OTRO/);
+  assert.match(ui, /value=\{code\} onChange=\{\(event\) => setCode\(event\.target\.value\)\}/);
+  assert.match(ui, /role === "VIEWER" && <fieldset/);
+  assert.match(ui, /createClubAccess\(\{ clubId, label, role, scope, code \}\)/);
+  assert.doesNotMatch(implementation, /plaintext|plainText|rawCode/);
+});
+
 test("Rules: matches permite query solo evaluando club y equipo autorizado", () => {
   const block = rules.match(/match \/matches\/\{matchId\} \{([\s\S]*?)\n      match \/events/)?.[1] ?? "";
   assert.match(block, /allow list: if teamAllowed\(matchClub\(resource\.data\), matchTeam\(resource\.data\)\)/);

@@ -8,12 +8,14 @@ import { TeamSyncStatusBadge } from "../../components/team/TeamSyncStatusBadge";
 import { availableTeams, calculateDeletionImpact, impactSummary, isSeasonVisible } from "../../lib/adminDomain";
 import { listMatchCatalog } from "../../lib/matchCatalog";
 import { useTeamStore } from "../../store/useTeamStore";
+import { useAccess } from "../../components/access/AccessProvider";
 
 function Help({ children }: { children: string }) {
   return <span className="mt-1 block text-[11px] font-normal leading-4 text-slate-500">{children}</span>;
 }
 
 export default function ConfigurationPage() {
+  const { canManage } = useAccess();
   const currentClubId = useTeamStore((state) => state.currentClubId);
   const clubIds = useTeamStore((state) => state.clubIds);
   const workspaces = useTeamStore((state) => state.teams);
@@ -80,11 +82,11 @@ export default function ConfigurationPage() {
   return <div className="min-h-screen bg-slate-900 text-white">
     <AppHeader title="Configuración" actions={<TeamSyncStatusBadge teamId={currentClubId} />} />
     <main className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
-      <section className="rounded-3xl border border-slate-700 bg-slate-800 p-5">
+      {canManage && <section className="rounded-3xl border border-slate-700 bg-slate-800 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wider text-cyan-300">Club actual</p><h1 className="mt-2 text-2xl font-black">{workspace.club.name}</h1><Help>Entidad principal que agrupa jugadores, equipos y temporadas.</Help></div><label className="flex min-h-11 items-center gap-2 rounded-xl bg-slate-950 px-3 text-xs font-bold"><input type="checkbox" checked={showArchivedClubs} onChange={(event) => setShowArchivedClubs(event.target.checked)} className="h-5 w-5" />Mostrar archivados</label></div>
         <div className="mt-4 grid gap-2 sm:grid-cols-2">{clubIds.flatMap((clubId) => { const candidate = workspaces[clubId]?.club; if (!candidate || candidate.deletedAt || (!showArchivedClubs && candidate.archivedAt)) return []; const impact = calculateDeletionImpact(workspaces[clubId], "CLUB", clubId, matches); return [<div key={clubId} className={`flex min-h-16 items-center gap-2 rounded-2xl border px-3 ${clubId === currentClubId ? "border-cyan-300 bg-cyan-950/30" : "border-slate-700 bg-slate-900"}`}><button type="button" disabled={Boolean(candidate.archivedAt)} onClick={() => setCurrentClub(clubId)} className="min-w-0 flex-1 text-left disabled:opacity-50"><span className="block truncate font-black">{candidate.name}</span><span className="text-xs text-slate-500">{candidate.shortName || candidate.clubId}{candidate.archivedAt ? " · ARCHIVADO" : ""}</span></button><AdminEntityActions label={`club ${candidate.name}`} archived={Boolean(candidate.archivedAt)} impact={`${impactSummary(impact)}. No se borrarán en cascada jugadores, equipos, partidos ni eventos.`} onArchive={() => changeClubLifecycle(clubId, "ARCHIVE")} onReactivate={() => changeClubLifecycle(clubId, "REACTIVATE")} onDelete={() => changeClubLifecycle(clubId, "DELETE")} /></div>]; })}</div>
         <details className="mt-4 rounded-2xl bg-slate-950 p-4"><summary className="min-h-11 cursor-pointer text-sm font-black text-cyan-300">+ CREAR CLUB</summary><form onSubmit={addClub} className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-xs font-bold text-slate-300">NOMBRE<input name="name" required placeholder="Club Pruebas" className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /></label><label className="text-xs font-bold text-slate-300">NOMBRE CORTO · OPCIONAL<input name="shortName" className="mt-1 min-h-12 w-full rounded-xl bg-slate-800 px-3" /></label><button type="submit" className="min-h-12 rounded-xl bg-cyan-400 font-black text-slate-950 sm:col-span-2">CREAR CLUB</button></form></details>
-      </section>
+      </section>}
 
       <section className="rounded-3xl border border-slate-700 bg-slate-800 p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">

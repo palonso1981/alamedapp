@@ -4,11 +4,15 @@
 
 APP ALAM utiliza credenciales compartibles, no cuentas personales. Un acceso tiene identidad estable (`accessId`), nombre humano (`label`), rol y alcance. El nombre puede cambiar y dos accesos pueden compartir nombre, rol o alcance. La identidad técnica del dispositivo sigue siendo Firebase Anonymous Auth y no se muestra al usuario.
 
-Roles V1: `ADMIN`, `EDITOR` y `VIEWER` (VISOR en pantalla). ADMIN tiene todo el club; EDITOR gestiona deporte dentro de `CLUB` o de uno o varios `teamIds`; VISOR consulta dentro del mismo modelo de alcance y no puede mutar. No hay permisos granulares.
+Roles V1: `ADMIN`, `EDITOR` y `VIEWER` (VISOR en pantalla). ADMIN gestiona tanto el deporte como el club y sus accesos. EDITOR es el administrador deportivo de todo su club, pero no puede crear/modificar clubes ni gestionar accesos, códigos, roles o permisos. VISOR solo consulta: su alcance puede ser todo el club o uno o varios `teamIds`. No hay permisos granulares.
+
+Los perfiles EDITOR antiguos que conserven `scope: TEAMS` no se reescriben destructivamente: aplicación, hidratación, repositorios y Rules interpretan su alcance deportivo efectivo como `CLUB`. El scope por equipos queda reservado a VIEWER.
 
 ## Código y secreto
 
-El código tiene doce símbolos no ambiguos, agrupados `XXXX-XXXX-XXXX`, y 60 bits de entropía. Se genera con CSPRNG, se normaliza en mayúsculas y tolera guiones o espacios. Se muestra solo al crear o regenerar y no aparece en el listado normal.
+Al crear un acceso se propone un código automático de dieciséis símbolos no ambiguos, agrupado en bloques de cuatro y generado con CSPRNG. El ADMIN puede conservarlo, editarlo o pedir otro. Un código personalizado debe contener entre 14 y 64 caracteres alfanuméricos después de normalizar, incluir letras y números, no ser una repetición trivial ni coincidir exactamente con el nombre del acceso. Se normaliza mediante una única función: trim, mayúsculas y eliminación de espacios/guiones para su identidad. Los códigos legacy válidos de doce símbolos continúan entrando sin migración.
+
+El código solo se muestra después de que perfil y mapping hayan sido persistidos juntos correctamente. Puede copiarse en esa confirmación; después no existe “ver código” ni edición del código de un Access existente.
 
 Firestore usa SHA-256 del código normalizado como ID de consulta exacta. Esto evita guardar/mostrar accidentalmente el texto original, pero **el hash es un bearer equivalente**: quien lo obtenga podría utilizarlo como secreto. La defensa real es la alta entropía, impedir `list`, las reglas, la revocación y la separación entre mapping, perfil y sesión. No se afirma que el hash proteja ante lectura completa de la base.
 
@@ -19,7 +23,7 @@ Modelo remoto:
 - `clubs/{clubId}/accessSessions/{anonymousUid}`: sesión técnica activa y versión validada.
 - `clubs/{clubId}/accessUsage/{accessId}/days/{day_deviceInstallId}`: señal mínima de uso.
 
-Regenerar conserva `accessId`, label, rol y scope, incrementa `credentialVersion`, cambia el mapping anterior de `ACTIVE` a `REVOKED` y crea uno nuevo `ACTIVE`. Reactivar un acceso desactivado también emite una credencial nueva; nunca revive el código anterior. `DELETED` es un soft delete irreversible en RC1: oculta el perfil de la operativa, revoca su mapping y no concede permisos. No existe hard delete.
+V1 no ofrece regeneración ni reactivación de códigos. Para sustituir una credencial se desactiva o elimina funcionalmente el Access antiguo y se crea otro con un código nuevo. `DELETED` es un soft delete irreversible en RC1: oculta el perfil de la operativa, revoca su mapping y no concede permisos. No existe hard delete. Los campos estructurales de versión y hash se conservan para validar y revocar credenciales existentes.
 
 ## Sesión, offline y outbox
 
@@ -27,7 +31,7 @@ El grant validado se recuerda localmente por dispositivo junto con un `deviceIns
 
 No se permite cambiar de acceso mientras exista trabajo que el coordinador todavía pueda enviar (`PENDING`, `SYNCING` o error reintentable). Conflictos y errores terminales se conservan íntegros, pero no se reenvían por sí solos bajo otra identidad y por eso no bloquean el cambio. Cambiar acceso solo elimina el grant de acceso, no los datos deportivos. Los catálogos y repositorios filtran la caché por el scope actual sin borrar entradas ocultas.
 
-Tras validar una sesión online, el cliente consulta Firestore con filtros explícitos de `clubId` y, para scope `TEAMS`, de cada `teamId`. Reconstruye club, equipos, temporadas, memberships, personas legibles y partidos/eventos en el almacenamiento local. Este seed no crea outbox y nunca pisa un agregado local existente, protegiendo cambios offline. Firestore Rules no filtra resultados de una query: una consulta sin las restricciones compatibles debe ser rechazada.
+Tras validar una sesión online, el cliente consulta Firestore con filtros explícitos de `clubId` y, solo para VIEWER con scope `TEAMS`, de cada `teamId`. ADMIN y EDITOR reconstruyen todo el catálogo deportivo del club; VIEWER reconstruye únicamente su alcance. Se recuperan club, equipos, temporadas, memberships, personas legibles y partidos/eventos en el almacenamiento local. Este seed no crea outbox y nunca pisa un agregado local existente, protegiendo cambios offline. Firestore Rules no filtra resultados de una query: una consulta sin las restricciones compatibles debe ser rechazada.
 
 ## Límites de datos y trazabilidad
 
@@ -35,7 +39,7 @@ El mismo código puede utilizarse en varios dispositivos. La actividad y las mut
 
 La métrica registra como máximo una señal por credencial, instalación y día desde ese navegador. ADMIN ve último uso, dispositivos aproximados y días activos en 30 días. No son usuarios únicos ni pageviews.
 
-Los maestros de jugadores/staff son entidades compartidas por club. Un EDITOR con scope TEAMS solo puede actualizar un maestro cuando aporta un equipo/temporada permitido y ya existe la membership correspondiente; la creación permite crear el maestro antes de sincronizar su membership. La UI solo expone personas vinculadas a equipos autorizados.
+Los maestros de jugadores/staff son entidades compartidas por club. ADMIN y EDITOR pueden mantener toda la configuración deportiva de su propio club —equipos, temporadas, plantilla, partidos, eventos y recursos deportivos—. Solo ADMIN puede mutar el documento institucional Club o administrar Access. VIEWER no escribe y la UI oculta cualquier dato cacheado fuera de su alcance.
 
 ## Bootstrap del primer ADMIN
 
@@ -56,7 +60,7 @@ Las Rules impiden que el Access ADMIN de la sesión actual sea degradado, desact
 Comando previsto, exclusivamente para DEV:
 
 ```powershell
-firebase deploy --only firestore:rules --project cdalameda-dev
+npx firebase-tools deploy --only firestore:rules --project cdalameda-dev
 ```
 
 Estas reglas no se consideran producción. Antes de PROD deben revisarse entorno, backups, observabilidad, recuperación, auditoría y gestión de usuarios real.

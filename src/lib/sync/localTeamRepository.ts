@@ -509,32 +509,9 @@ export class LocalTeamRepository {
     const grant = getRuntimeAccessGrant();
     if (grant !== undefined) {
       if (!grant || !canMutateSports(grant) || grant.profile.clubId !== workspace.clubId) return false;
-      if (grant.profile.role !== "ADMIN" && grant.profile.scope.type === "TEAMS") {
+      if (grant.profile.role === "EDITOR") {
         const previousWorkspace = readEnvelope(workspace.teamId, this.storage())?.roster;
         if (previousWorkspace && !sameValue(previousWorkspace.club, workspace.club)) return false;
-        const changedTeamIds = new Set<string>();
-        for (const team of workspace.teams) {
-          const prior = previousWorkspace?.teams.find((item) => item.teamId === team.teamId);
-          if (!sameValue(prior, team)) changedTeamIds.add(team.teamId);
-        }
-        for (const season of workspace.seasons) {
-          const prior = previousWorkspace?.seasons.find((item) => item.seasonId === season.seasonId);
-          if (!sameValue(prior, season)) changedTeamIds.add(season.teamId);
-        }
-        for (const membership of [...workspace.seasonPlayers, ...workspace.seasonStaff]) {
-          const source = "playerId" in membership ? previousWorkspace?.seasonPlayers : previousWorkspace?.seasonStaff;
-          const prior = source?.find((item) => item.seasonId === membership.seasonId && ("playerId" in membership ? "playerId" in item && item.playerId === membership.playerId : "staffId" in item && item.staffId === membership.staffId));
-          if (!sameValue(prior, membership)) changedTeamIds.add(membership.teamId);
-        }
-        const changedPlayerIds = workspace.players
-          .filter((player) => !sameValue(previousWorkspace?.players.find((item) => item.playerId === player.playerId), player))
-          .map((player) => player.playerId);
-        const changedStaffIds = workspace.staff
-          .filter((member) => !sameValue(previousWorkspace?.staff.find((item) => item.staffId === member.staffId), member))
-          .map((member) => member.staffId);
-        if (changedPlayerIds.some((playerId) => !workspace.seasonPlayers.some((membership) => membership.playerId === playerId && canAccessTeam(grant, workspace.clubId, membership.teamId)))) return false;
-        if (changedStaffIds.some((staffId) => !workspace.seasonStaff.some((membership) => membership.staffId === staffId && canAccessTeam(grant, workspace.clubId, membership.teamId)))) return false;
-        if (Array.from(changedTeamIds).some((teamId) => !canAccessTeam(grant, workspace.clubId, teamId))) return false;
       }
     }
     const previous = readEnvelope(workspace.teamId, this.storage());
@@ -544,7 +521,7 @@ export class LocalTeamRepository {
     const hasCanonicalClubOperation = sync.outbox.some((operation) =>
       operation.entityType === "CLUB" && operation.entityId === workspace.clubId && operation.namespace === "CLUBS",
     );
-    const canQueueClub = grant === undefined || Boolean(grant && (grant.profile.role === "ADMIN" || grant.profile.scope.type === "CLUB"));
+    const canQueueClub = grant === undefined || grant?.profile.role === "ADMIN";
     if (canQueueClub && (!previous || !sameValue(previous.roster.club, workspace.club) || (sync.knownRemoteRevisions[canonicalClubKey] === undefined && !hasCanonicalClubOperation))) {
       sync = enqueue(sync, workspace.clubId, "CLUB", workspace.clubId, workspace.club, now, this.idFactory);
     }
