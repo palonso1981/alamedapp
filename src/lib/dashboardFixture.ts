@@ -6,6 +6,7 @@ import {
   createLineupInitializedEvent,
   createLiveThreatEvent,
   createPossessionLostEvent,
+  createRestartEvent,
   createSubstitutionEvent,
 } from "./matchEngine";
 import { CompetitionType, MatchEvent, MatchSession, Player, ThreatPhase } from "../types";
@@ -116,6 +117,14 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
     possessionLost(matchId, `${matchId}-loss-2`, 2, 8, 1, index % 3 === 0 ? secondHalfGoalkeeper : "fx-p-10"),
     createFoulEvent({ id: `${matchId}-f2`, matchId, position: { period: 2, minute: 10, order: 1 }, side: "AGAINST", playerId: "fx-p-7", now: index * 1000 + 30 }),
   ];
+  if (index === 0) {
+    events.push(
+      createRestartEvent({ id: `${matchId}-corner-for`, matchId, position: { period: 1, minute: 3, order: 20 }, side: "FOR", restart: "CORNER", spatialSide: "TOP", now: 10_000 }),
+      createRestartEvent({ id: `${matchId}-corner-against`, matchId, position: { period: 1, minute: 5, order: 20 }, side: "AGAINST", restart: "CORNER", spatialSide: "BOTTOM", now: 11_000 }),
+      createRestartEvent({ id: `${matchId}-kick-for`, matchId, position: { period: 2, minute: 4, order: 20 }, side: "FOR", restart: "DANGEROUS_KICK_IN", spatialSide: "TOP", now: 12_000 }),
+      createRestartEvent({ id: `${matchId}-kick-against`, matchId, position: { period: 2, minute: 6, order: 20 }, side: "AGAINST", restart: "DANGEROUS_KICK_IN", spatialSide: "BOTTOM", now: 13_000 }),
+    );
+  }
   for (let foul = 2; foul <= 5; foul += 1) {
     events.push(createFoulEvent({ id: `${matchId}-critical-${foul}`, matchId, position: { period: 2, minute: 10 + foul, order: 1 }, side: "FOR", playerId: foul === 5 ? "fx-p-5" : null, now: index * 1000 + 30 + foul }));
   }
@@ -201,6 +210,10 @@ function buildFixtureRecord(index: number): DashboardMatchRecord {
     }] : index === 2 ? [{
       id: `${matchId}-video-pending`, provider: "YOUTUBE", videoId: "fixture0004", label: "Vídeo pendiente", periods: [1, 2], leadSeconds: 6,
       anchors: [], createdAt: index + 1, updatedAt: index + 101,
+    }] : [],
+    videoEventOverrides: index === 0 ? [{
+      eventId: `${matchId}-for-0`, segmentId: `${matchId}-video-full`, videoSecond: 17,
+      createdAt: index + 1, updatedAt: index + 101,
     }] : [],
     events,
     past: [],

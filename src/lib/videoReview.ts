@@ -5,7 +5,10 @@ import { resolveEventVideoPosition } from "./videoIndex";
 import { MatchEvent } from "../types";
 import { eventDescription } from "./eventPresentation";
 
-export type VideoReviewKind = "ALL" | "GOALS" | "SAVES" | "LOSSES";
+export type VideoReviewKind =
+  | "ALL" | "GOALS" | "SHOTS_FOR" | "THREATS_AGAINST" | "SAVES" | "LOSSES"
+  | "CORNERS_FOR" | "CORNERS_AGAINST" | "KICK_INS_FOR" | "KICK_INS_AGAINST"
+  | "FOULS" | "CARDS";
 
 export interface VideoReviewRow {
   record: DashboardMatchRecord;
@@ -13,11 +16,21 @@ export interface VideoReviewRow {
   resolution: ReturnType<typeof resolveEventVideoPosition>;
 }
 
+export function isVideoReviewableEvent(event: MatchEvent): boolean {
+  return ["threat_recorded", "possession_lost", "restart_recorded", "foul_recorded", "card_recorded"].includes(event.type);
+}
+
 function matchesKind(event: MatchEvent, kind: VideoReviewKind, actorId?: string): boolean {
   if (kind === "GOALS") return event.type === "threat_recorded" && event.side === "FOR" && event.outcome === "GOL" && (!actorId || event.playerId === actorId);
+  if (kind === "SHOTS_FOR") return event.type === "threat_recorded" && event.side === "FOR" && (!actorId || event.playerId === actorId);
+  if (kind === "THREATS_AGAINST") return event.type === "threat_recorded" && event.side === "AGAINST";
   if (kind === "SAVES") return event.type === "threat_recorded" && event.side === "AGAINST" && event.outcome === "PARADA" && (!actorId || (event.defensive?.goalkeeper.status === "PLAYER" && event.defensive.goalkeeper.playerId === actorId));
   if (kind === "LOSSES") return event.type === "possession_lost" && (!actorId || event.playerId === actorId);
-  return !["lineup_initialized", "substitution", "game_state_changed"].includes(event.type);
+  if (kind === "CORNERS_FOR" || kind === "CORNERS_AGAINST") return event.type === "restart_recorded" && event.restart === "CORNER" && event.side === (kind === "CORNERS_FOR" ? "FOR" : "AGAINST");
+  if (kind === "KICK_INS_FOR" || kind === "KICK_INS_AGAINST") return event.type === "restart_recorded" && event.restart === "DANGEROUS_KICK_IN" && event.side === (kind === "KICK_INS_FOR" ? "FOR" : "AGAINST");
+  if (kind === "FOULS") return event.type === "foul_recorded";
+  if (kind === "CARDS") return event.type === "card_recorded";
+  return isVideoReviewableEvent(event);
 }
 
 export function buildVideoReviewRows(records: readonly DashboardMatchRecord[], scope: DashboardScopeV2, kind: VideoReviewKind, actorId?: string): VideoReviewRow[] {

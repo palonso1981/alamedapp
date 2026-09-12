@@ -268,6 +268,17 @@ export interface MatchVideoSegment {
   updatedAt: number;
 }
 
+export interface MatchVideoEventOverride {
+  /** Identidad estable del evento deportivo; el evento no se modifica. */
+  eventId: string;
+  /** Segmento lógico sobre el que se introdujo la posición real. */
+  segmentId: string;
+  /** Segundo real de la acción, antes de aplicar el lead del segmento. */
+  videoSecond: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export const MATCH_EVENT_SCHEMA_VERSION = 1 as const;
 export const INFERIORITY_SLOT_ID = "slot:inferiority" as const;
 
@@ -637,6 +648,8 @@ export interface MatchSession {
   reviewReopenedAt?: number;
   /** Índice hacia vídeo externo. Los eventos no almacenan URLs ni posiciones derivadas. */
   videoSegments?: MatchVideoSegment[];
+  /** Correcciones puntuales de vídeo, separadas de eventos y anchors globales. */
+  videoEventOverrides?: MatchVideoEventOverride[];
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];

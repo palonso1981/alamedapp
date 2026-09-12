@@ -44,3 +44,20 @@ test("WhatsApp incluye deep links completos y declara jugadas sin vídeo", () =>
   assert.match(text, /ALAMEDAPP · GOLES/);
   assert.doesNotMatch(text, /undefined/);
 });
+
+test("córner y banda independientes se filtran por lado aunque no tengan amenaza", () => {
+  const records = buildDashboardFixture();
+  assert.deepEqual(buildVideoReviewRows(records, scope, "CORNERS_FOR").map((row) => row.event.id), ["dashboard-fixture-1-corner-for"]);
+  assert.deepEqual(buildVideoReviewRows(records, scope, "CORNERS_AGAINST").map((row) => row.event.id), ["dashboard-fixture-1-corner-against"]);
+  assert.deepEqual(buildVideoReviewRows(records, scope, "KICK_INS_FOR").map((row) => row.event.id), ["dashboard-fixture-1-kick-for"]);
+  assert.deepEqual(buildVideoReviewRows(records, scope, "KICK_INS_AGAINST").map((row) => row.event.id), ["dashboard-fixture-1-kick-against"]);
+});
+
+test("copiar selección usa solo las filas elegidas y copiar filtradas conserva todas", () => {
+  const rows = buildVideoReviewRows(buildDashboardFixture(), scope, "ALL").slice(0, 5);
+  assert.equal(rows.length, 5);
+  const selected = buildWhatsAppVideoText("SELECCIÓN", [rows[1], rows[3]]);
+  assert.equal((selected.match(/ · P[12] min /g) ?? []).length, 2);
+  const all = buildWhatsAppVideoText("TODAS", rows);
+  assert.equal((all.match(/ · P[12] min /g) ?? []).length, 5);
+});

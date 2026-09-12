@@ -10,6 +10,7 @@ import {
   MatchEvent,
   MatchPreparation,
   MatchSession,
+  MatchVideoEventOverride,
   MatchVideoSegment,
   Player,
   StaffMember,
@@ -49,6 +50,7 @@ interface PersistedMatchSession {
   reviewValidatedAt?: number;
   reviewReopenedAt?: number;
   videoSegments?: MatchVideoSegment[];
+  videoEventOverrides?: MatchVideoEventOverride[];
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];
@@ -134,6 +136,15 @@ function isVideoSegment(value: unknown): value is MatchVideoSegment {
     value.periods.every((period) => period === 1 || period === 2) &&
     typeof value.leadSeconds === "number" && Number.isInteger(value.leadSeconds) && value.leadSeconds >= 0 && value.leadSeconds <= 20 &&
     Array.isArray(value.anchors) && value.anchors.every((anchor) => isObject(anchor) && typeof anchor.id === "string" && typeof anchor.eventId === "string" && typeof anchor.videoSecond === "number" && Number.isSafeInteger(anchor.videoSecond) && anchor.videoSecond >= 0) &&
+    typeof value.createdAt === "number" &&
+    typeof value.updatedAt === "number";
+}
+
+function isVideoEventOverride(value: unknown): value is MatchVideoEventOverride {
+  return isObject(value) &&
+    typeof value.eventId === "string" &&
+    typeof value.segmentId === "string" &&
+    typeof value.videoSecond === "number" && Number.isSafeInteger(value.videoSecond) && value.videoSecond >= 0 &&
     typeof value.createdAt === "number" &&
     typeof value.updatedAt === "number";
 }
@@ -434,6 +445,7 @@ function migratePersistedSession(value: unknown): unknown {
     reviewValidatedAt: typeof value.reviewValidatedAt === "number" ? value.reviewValidatedAt : undefined,
     reviewReopenedAt: typeof value.reviewReopenedAt === "number" ? value.reviewReopenedAt : undefined,
     videoSegments: Array.isArray(value.videoSegments) ? value.videoSegments : [],
+    videoEventOverrides: Array.isArray(value.videoEventOverrides) ? value.videoEventOverrides : [],
     events: migrateChronology(value.events, value.matchId),
     past: Array.isArray(value.past)
       ? value.past.map((events) => migrateChronology(events, value.matchId))
@@ -565,6 +577,8 @@ function validPersistedSession(
       (typeof value.reviewRevision !== "number" || !Number.isInteger(value.reviewRevision) || value.reviewRevision < 0)) ||
     (value.videoSegments !== undefined &&
       (!Array.isArray(value.videoSegments) || !value.videoSegments.every(isVideoSegment))) ||
+    (value.videoEventOverrides !== undefined &&
+      (!Array.isArray(value.videoEventOverrides) || !value.videoEventOverrides.every(isVideoEventOverride))) ||
     !isEventList(value.events, expectedMatchId) ||
     !Array.isArray(value.past) ||
     !value.past.every((events) => isEventList(events, expectedMatchId)) ||
@@ -648,6 +662,7 @@ export function saveMatchRecord(
       reviewValidatedAt: session.reviewValidatedAt,
       reviewReopenedAt: session.reviewReopenedAt,
       videoSegments: session.videoSegments ?? [],
+      videoEventOverrides: session.videoEventOverrides ?? [],
       events: session.events,
       past: session.past,
       future: session.future,

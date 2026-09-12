@@ -2,6 +2,7 @@ import {
   MatchEvent,
   MatchSession,
   MatchVideoAnchor,
+  MatchVideoEventOverride,
   MatchVideoPeriod,
   MatchVideoSegment,
 } from "../types";
@@ -11,6 +12,7 @@ export const MAX_VIDEO_LEAD_SECONDS = 20;
 export const COHERENT_ANCHOR_SPREAD_SECONDS = 5;
 
 export type VideoResolutionQuality =
+  | "MANUAL"
   | "SINGLE_ANCHOR"
   | "MULTI_ANCHOR_COHERENT"
   | "MULTI_ANCHOR_WARNING";
@@ -89,7 +91,7 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-function compatibleSegments(session: MatchSession, event: MatchEvent): MatchVideoSegment[] {
+export function compatibleVideoSegments(session: MatchSession, event: MatchEvent): MatchVideoSegment[] {
   return (session.videoSegments ?? [])
     .filter((segment) => segment.periods.includes(event.period as MatchVideoPeriod))
     .sort((a, b) => {
@@ -104,7 +106,24 @@ export function resolveEventVideoPosition(
 ): VideoPositionResolution {
   const event = session.events.find((candidate) => candidate.id === eventId);
   if (!event) return { status: "NO_VIDEO" };
-  const segment = compatibleSegments(session, event)[0];
+  const compatible = compatibleVideoSegments(session, event);
+  const override = (session.videoEventOverrides ?? []).find((candidate) =>
+    candidate.eventId === event.id &&
+    Number.isSafeInteger(candidate.videoSecond) && candidate.videoSecond >= 0 &&
+    compatible.some((segment) => segment.id === candidate.segmentId),
+  );
+  if (override) {
+    const segment = compatible.find((candidate) => candidate.id === override.segmentId)!;
+    const leadSeconds = normalizeLeadSeconds(segment.leadSeconds);
+    const openSecond = Math.max(0, override.videoSecond - leadSeconds);
+    return {
+      status: "RESOLVED", segmentId: segment.id, videoId: segment.videoId,
+      estimatedSecond: override.videoSecond, openSecond, leadSeconds,
+      url: youtubeDeepLink(segment.videoId, openSecond), quality: "MANUAL",
+      anchorSpreadSeconds: 0,
+    };
+  }
+  const segment = compatible[0];
   if (!segment) return { status: "NO_VIDEO" };
   if (!isVideoTimeResolvable(event)) return { status: "NO_POSITION", segmentId: segment.id };
   const eventById = new Map(session.events.map((candidate) => [candidate.id, candidate]));
@@ -183,11 +202,48 @@ export function upsertVideoSegment(session: MatchSession, segment: MatchVideoSeg
     videoSegments: previous
       ? segments.map((candidate) => candidate.id === normalized.id ? normalized : candidate)
       : [...segments, normalized],
+    videoEventOverrides: previous && previous.videoId !== segment.videoId
+      ? (session.videoEventOverrides ?? []).filter((item) => item.segmentId !== segment.id)
+      : session.videoEventOverrides,
   };
 }
 
 export function removeVideoSegment(session: MatchSession, segmentId: string): MatchSession {
-  return { ...session, videoSegments: (session.videoSegments ?? []).filter((segment) => segment.id !== segmentId) };
+  return {
+    ...session,
+    videoSegments: (session.videoSegments ?? []).filter((segment) => segment.id !== segmentId),
+    videoEventOverrides: (session.videoEventOverrides ?? []).filter((item) => item.segmentId !== segmentId),
+  };
+}
+
+export function upsertVideoEventOverride(
+  session: MatchSession,
+  input: { eventId: string; segmentId: string; videoSecond: number; now?: number },
+): MatchSession {
+  const event = session.events.find((candidate) => candidate.id === input.eventId);
+  const segment = (session.videoSegments ?? []).find((candidate) => candidate.id === input.segmentId);
+  if (!event || !segment) throw new Error("No se encontró el vídeo o el evento elegido.");
+  if (!segment.periods.includes(event.period as MatchVideoPeriod)) throw new Error("El evento no pertenece a una parte cubierta por este vídeo.");
+  if (!Number.isSafeInteger(input.videoSecond) || input.videoSecond < 0) throw new Error("El tiempo de vídeo no es válido.");
+  const now = input.now ?? Date.now();
+  const previous = (session.videoEventOverrides ?? []).find((item) => item.eventId === input.eventId);
+  const override: MatchVideoEventOverride = {
+    eventId: input.eventId,
+    segmentId: input.segmentId,
+    videoSecond: input.videoSecond,
+    createdAt: previous?.createdAt ?? now,
+    updatedAt: now,
+  };
+  return {
+    ...session,
+    videoEventOverrides: previous
+      ? (session.videoEventOverrides ?? []).map((item) => item.eventId === input.eventId ? override : item)
+      : [...(session.videoEventOverrides ?? []), override],
+  };
+}
+
+export function removeVideoEventOverride(session: MatchSession, eventId: string): MatchSession {
+  return { ...session, videoEventOverrides: (session.videoEventOverrides ?? []).filter((item) => item.eventId !== eventId) };
 }
 
 export function addVideoAnchor(
