@@ -28,9 +28,10 @@ test("canje: crea la sesión técnica antes de leer el perfil Access", () => {
 test("Rules: la sesión técnica valida internamente mapping y Access", () => {
   const block = rules.match(/match \/clubs\/\{clubId\}\/accessSessions\/\{uid\} \{([\s\S]*?)\n    \}/)?.[1] ?? "";
   assert.match(block, /request\.auth\.uid == uid/);
-  assert.match(block, /exists\(codePath\(request\.resource\.data\.codeHash\)\)/);
-  assert.match(block, /get\(accessPath\(clubId, request\.resource\.data\.accessId\)\)\.data\.status == "ACTIVE"/);
-  assert.match(block, /credentialVersion/);
+  assert.match(block, /validSessionCandidate\(request\.resource\.data, clubId, uid\)/);
+  assert.match(rules, /exists\(codePath\(data\.codeHash\)\)/);
+  assert.match(rules, /get\(accessPath\(clubId, data\.accessId\)\)\.data\.status == 'ACTIVE'/);
+  assert.match(rules, /data\.credentialVersion/);
 });
 
 test("Rules: roles, scope y revocación protegen deporte", () => {
@@ -39,6 +40,34 @@ test("Rules: roles, scope y revocación protegen deporte", () => {
   assert.match(rules, /teamId in access\(clubId\)\.scope\.teamIds/);
   assert.match(rules, /access\(clubId\)\.role != 'VIEWER'/);
   assert.match(rules, /match \/matches\/\{matchId\}[\s\S]*?canWriteTeam/);
+});
+
+test("Rules: matches permite query solo evaluando club y equipo autorizado", () => {
+  const block = rules.match(/match \/matches\/\{matchId\} \{([\s\S]*?)\n      match \/events/)?.[1] ?? "";
+  assert.match(block, /allow list: if teamAllowed\(matchClub\(resource\.data\), matchTeam\(resource\.data\)\)/);
+  assert.match(block, /Firestore no filtra resultados/);
+});
+
+test("Rules: una sesión CLOSED solo se reemplaza por candidato completo del mismo UID", () => {
+  const block = rules.match(/match \/clubs\/\{clubId\}\/accessSessions\/\{uid\} \{([\s\S]*?)\n    \}/)?.[1] ?? "";
+  assert.match(block, /resource\.data\.status == "CLOSED"/);
+  assert.match(block, /validSessionCandidate\(request\.resource\.data, clubId, uid\)/);
+  assert.match(rules, /data\.activeCodeHash == data\.codeHash/);
+  assert.match(rules, /request\.auth\.uid == uid/);
+});
+
+test("Rules: accessCodes solo admite ACTIVE a REVOKED sin cambiar identidad", () => {
+  const block = rules.match(/match \/accessCodes\/\{codeHash\} \{([\s\S]*?)\n    \}/)?.[1] ?? "";
+  assert.match(block, /resource\.data\.status == "ACTIVE"/);
+  assert.match(block, /request\.resource\.data\.status == "REVOKED"/);
+  assert.match(block, /affectedKeys\(\)\.hasOnly\(\["status", "replacedAt", "serverUpdatedAt"\]\)/);
+});
+
+test("Rules: DELETED es soft delete y el ADMIN de la sesión no puede retirarse", () => {
+  assert.match(rules, /data\.status in \['ACTIVE', 'DISABLED', 'DELETED'\]/);
+  assert.match(rules, /data\.status != 'DELETED' \|\| data\.deletedAt is int/);
+  assert.match(rules, /accessId != session\(clubId\)\.accessId/);
+  assert.match(rules, /request\.resource\.data\.role == "ADMIN" && request\.resource\.data\.status == "ACTIVE"/);
 });
 
 test("Rules: no existe borrado físico autorizado", () => {

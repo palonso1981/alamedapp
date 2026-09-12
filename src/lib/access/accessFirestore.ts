@@ -2,7 +2,7 @@ import { collection, doc, getDoc, getDocs, runTransaction, serverTimestamp, setD
 import { signInAnonymously } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
 import { getFirebaseDevServices } from "../firebase";
-import { AccessCodeMapping, AccessRole, AccessScope, AccessStatus, AccessTechnicalSession, AccessUsageDay, ActiveAccessGrant, ClubAccessProfile, generateAccessCode, hashAccessCode, normalizeAccessScope, utcUsageDay } from "./accessDomain";
+import { AccessCodeMapping, AccessRole, AccessScope, AccessStatus, AccessTechnicalSession, AccessUsageDay, ActiveAccessGrant, ClubAccessProfile, assertCanRetireAccess, generateAccessCode, hashAccessCode, normalizeAccessScope, regenerateAccessProfile, utcUsageDay } from "./accessDomain";
 import { getOrCreateDeviceInstallId } from "./accessPersistence";
 
 export type AccessFailure = "INVALID_CODE" | "DISABLED" | "OFFLINE" | "UNAUTHORIZED";
@@ -21,12 +21,25 @@ function firebaseAccessError(error: unknown, fallback: string): AccessError {
 
 function validProfile(value: unknown): value is ClubAccessProfile {
   const profile = value as Partial<ClubAccessProfile> | null;
-  return Boolean(profile && typeof profile.accessId === "string" && typeof profile.clubId === "string" && typeof profile.label === "string" && ["ADMIN", "EDITOR", "VIEWER"].includes(profile.role ?? "") && ["ACTIVE", "DISABLED"].includes(profile.status ?? "") && typeof profile.credentialVersion === "number");
+  return Boolean(profile && typeof profile.accessId === "string" && typeof profile.clubId === "string" && typeof profile.label === "string" && ["ADMIN", "EDITOR", "VIEWER"].includes(profile.role ?? "") && ["ACTIVE", "DISABLED", "DELETED"].includes(profile.status ?? "") && typeof profile.credentialVersion === "number");
 }
 
 function validMapping(value: unknown, codeHash: string): value is AccessCodeMapping {
   const mapping = value as (Partial<AccessCodeMapping> & { entityType?: string }) | null;
-  return Boolean(mapping && mapping.entityType === "ACCESS_CODE" && mapping.codeHash === codeHash && typeof mapping.clubId === "string" && typeof mapping.accessId === "string" && typeof mapping.credentialVersion === "number" && ["ACTIVE", "DISABLED"].includes(mapping.status ?? ""));
+  return Boolean(mapping && mapping.entityType === "ACCESS_CODE" && mapping.codeHash === codeHash && typeof mapping.clubId === "string" && typeof mapping.accessId === "string" && typeof mapping.credentialVersion === "number" && ["ACTIVE", "REVOKED", "DISABLED"].includes(mapping.status ?? ""));
+}
+
+function accessOperationError(error: unknown, action: string): Error {
+  if (error instanceof AccessError) return error;
+  if (error instanceof FirebaseError) {
+    const code = error.code.replace(/^firestore\//, "");
+    return new Error(
+      process.env.NODE_ENV === "development"
+        ? `${action} [${code}]. ${error.message}`
+        : action,
+    );
+  }
+  return error instanceof Error ? error : new Error(action);
 }
 
 async function servicesWithUser() {
@@ -120,6 +133,13 @@ export async function listClubAccesses(clubId: string, now = Date.now()): Promis
   }));
 }
 
+async function listAccessProfiles(clubId: string): Promise<ClubAccessProfile[]> {
+  const { db } = await servicesWithUser();
+  return (await getDocs(collection(db, "clubs", clubId, "accesses"))).docs
+    .map((item) => item.data())
+    .filter(validProfile);
+}
+
 export async function createClubAccess(input: { clubId: string; label: string; role: AccessRole; scope: AccessScope }, now = Date.now()): Promise<{ profile: ClubAccessProfile; code: string }> {
   const { db } = await servicesWithUser();
   const code = generateAccessCode();
@@ -138,23 +158,40 @@ export async function createClubAccess(input: { clubId: string; label: string; r
   const batch = writeBatch(db);
   batch.set(doc(db, "clubs", input.clubId, "accesses", accessId), profile);
   batch.set(doc(db, "accessCodes", codeHash), mapping);
-  await batch.commit();
+  try {
+    await batch.commit();
+  } catch (error) {
+    throw accessOperationError(error, "No se pudo confirmar conjuntamente el perfil y su código.");
+  }
   return { profile, code };
 }
 
-export async function updateClubAccess(profile: ClubAccessProfile, input: { label: string; role: AccessRole; scope: AccessScope; status?: AccessStatus }, now = Date.now()): Promise<ClubAccessProfile> {
+export async function updateClubAccess(profile: ClubAccessProfile, input: { label: string; role: AccessRole; scope: AccessScope; status?: AccessStatus }, now = Date.now(), actorAccessId?: string): Promise<ClubAccessProfile> {
   const { db } = await servicesWithUser();
+  const profiles = await listAccessProfiles(profile.clubId);
+  const nextStatus = input.status ?? profile.status;
   const next: ClubAccessProfile & { entityType: "ACCESS_PROFILE"; serverUpdatedAt: unknown } = {
     ...profile, entityType: "ACCESS_PROFILE", label: input.label.trim(), role: input.role,
-    scope: normalizeAccessScope(input.role, input.scope), status: input.status ?? profile.status, updatedAt: now, serverUpdatedAt: serverTimestamp(),
+    scope: normalizeAccessScope(input.role, input.scope), status: nextStatus,
+    ...(nextStatus === "DELETED" ? { deletedAt: profile.deletedAt ?? now } : {}),
+    updatedAt: now, serverUpdatedAt: serverTimestamp(),
   };
   if (!next.label) throw new Error("Escribe un nombre para el acceso.");
+  assertCanRetireAccess(actorAccessId ?? "", profile, profiles, next);
+  const activeMappingRef = next.activeCodeHash ? doc(db, "accessCodes", next.activeCodeHash) : null;
+  const activeMapping = activeMappingRef && next.status !== "ACTIVE"
+    ? await getDoc(activeMappingRef)
+    : null;
   const batch = writeBatch(db);
   batch.set(doc(db, "clubs", profile.clubId, "accesses", profile.accessId), next);
-  if (next.activeCodeHash && next.status !== profile.status) {
-    batch.set(doc(db, "accessCodes", next.activeCodeHash), { status: next.status, serverUpdatedAt: serverTimestamp() }, { merge: true });
+  if (activeMappingRef && activeMapping?.data()?.status === "ACTIVE") {
+    batch.set(activeMappingRef, { status: "REVOKED", replacedAt: now, serverUpdatedAt: serverTimestamp() }, { merge: true });
   }
-  await batch.commit();
+  try {
+    await batch.commit();
+  } catch (error) {
+    throw accessOperationError(error, "No se pudo actualizar el acceso.");
+  }
   return next;
 }
 
@@ -168,12 +205,37 @@ export async function regenerateClubAccess(profile: ClubAccessProfile, now = Dat
     const rawProfile = snapshot.data();
     if (!snapshot.exists() || !validProfile(rawProfile)) throw new Error("El acceso ya no existe.");
     const current = rawProfile;
-    const credentialVersion = current.credentialVersion + 1;
-    if (current.activeCodeHash) transaction.set(doc(db, "accessCodes", current.activeCodeHash), { status: "DISABLED", replacedAt: now, serverUpdatedAt: serverTimestamp() }, { merge: true });
-    transaction.set(doc(db, "accessCodes", codeHash), { entityType: "ACCESS_CODE", codeHash, clubId: current.clubId, accessId: current.accessId, credentialVersion, status: "ACTIVE", createdAt: now, serverUpdatedAt: serverTimestamp() });
-    const updated: ClubAccessProfile = { ...current, credentialVersion, activeCodeHash: codeHash, updatedAt: now };
+    if (current.status === "DELETED") throw new Error("Un acceso eliminado no puede regenerarse.");
+    const updated = regenerateAccessProfile(current, codeHash, now);
+    const previousMappingRef = current.activeCodeHash ? doc(db, "accessCodes", current.activeCodeHash) : null;
+    const previousMapping = previousMappingRef ? await transaction.get(previousMappingRef) : null;
+    if (previousMappingRef && previousMapping?.data()?.status === "ACTIVE") {
+      transaction.set(previousMappingRef, { status: "REVOKED", replacedAt: now, serverUpdatedAt: serverTimestamp() }, { merge: true });
+    }
+    transaction.set(doc(db, "accessCodes", codeHash), { entityType: "ACCESS_CODE", codeHash, clubId: current.clubId, accessId: current.accessId, credentialVersion: updated.credentialVersion, status: "ACTIVE", createdAt: now, serverUpdatedAt: serverTimestamp() });
     transaction.set(profileRef, { ...updated, entityType: "ACCESS_PROFILE", serverUpdatedAt: serverTimestamp() });
     return updated;
-  });
+  }).catch((error) => { throw accessOperationError(error, "No se pudo regenerar el código."); });
   return { profile: next, code };
+}
+
+export async function deleteClubAccess(
+  profile: ClubAccessProfile,
+  actorAccessId: string,
+  now = Date.now(),
+): Promise<ClubAccessProfile> {
+  return updateClubAccess(
+    profile,
+    { label: profile.label, role: profile.role, scope: profile.scope, status: "DELETED" },
+    now,
+    actorAccessId,
+  );
+}
+
+export async function reactivateClubAccess(
+  profile: ClubAccessProfile,
+  now = Date.now(),
+): Promise<{ profile: ClubAccessProfile; code: string }> {
+  if (profile.status !== "DISABLED") throw new Error("Solo puede reactivarse un acceso desactivado.");
+  return regenerateClubAccess(profile, now);
 }

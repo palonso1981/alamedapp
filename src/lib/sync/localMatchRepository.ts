@@ -232,6 +232,19 @@ export class LocalMatchRepository {
     return loadMatchRecord(matchId, this.storage())?.session ?? null;
   }
 
+  /** Seed remoto sin generar outbox. Nunca pisa trabajo local existente. */
+  hydrateRemote(session: MatchSession, knownRemoteRevisions: Record<string, number>): boolean {
+    const storage = this.storage();
+    if (loadMatchRecord(session.matchId, storage)) return true;
+    const result = saveMatchRecord(session, {
+      ...emptyMatchSyncState(),
+      knownRemoteRevisions,
+      lastSyncedAt: this.now(),
+    }, storage, this.now());
+    if (result.ok) updateMatchCatalog(session, storage);
+    return result.ok;
+  }
+
   getSyncState(matchId: string): PersistedMatchSyncState {
     const sync = loadMatchRecord(matchId, this.storage())?.sync ?? emptyMatchSyncState();
     return this.withLiveInFlightState(sync);

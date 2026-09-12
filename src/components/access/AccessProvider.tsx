@@ -6,6 +6,7 @@ import { AccessError, closeTechnicalSession, recordDailyUsage, redeemAccessCode,
 import { ActiveAccessGrant, canAccessTeam, canManageAccess, canMutateSports, canOpenRoute, roleLabel } from "../../lib/access/accessDomain";
 import { clearRememberedAccess, loadRememberedAccess, pendingLocalOperations, saveRememberedAccess } from "../../lib/access/accessPersistence";
 import { setRuntimeAccessGrant } from "../../lib/access/accessRuntime";
+import { hydrateAuthorizedRemoteData } from "../../lib/access/accessRemoteHydration";
 import { loadMatchSession } from "../../lib/matchPersistence";
 import { useTeamStore } from "../../store/useTeamStore";
 
@@ -35,13 +36,13 @@ function developmentFixtureGrant(): ActiveAccessGrant | null {
   };
 }
 
-function AccessLogin({ onAuthorized, initialMessage }: { onAuthorized(grant: ActiveAccessGrant): void; initialMessage?: string | null }) {
+function AccessLogin({ onAuthorized, initialMessage }: { onAuthorized(grant: ActiveAccessGrant): Promise<void>; initialMessage?: string | null }) {
   const [code, setCode] = useState("");
   const [message, setMessage] = useState(initialMessage ?? "");
   const [busy, setBusy] = useState(false);
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setMessage("");
-    try { onAuthorized(await redeemAccessCode(code)); }
+    try { await onAuthorized(await redeemAccessCode(code)); }
     catch (error) { setMessage(error instanceof AccessError ? error.message : "No se pudo validar el acceso."); }
     finally { setBusy(false); }
   }
@@ -73,8 +74,11 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     if (fixture) { setRuntimeAccessGrant(fixture); setGrant(fixture); setReady(true); return () => { active = false; }; }
     const remembered = loadRememberedAccess();
     if (!remembered) { setRuntimeAccessGrant(null); setReady(true); return () => { active = false; }; }
-    void validateRememberedGrant(remembered).then((validated) => {
-      if (!active) return; saveRememberedAccess(validated); setRuntimeAccessGrant(validated); setGrant(validated); setReady(true); void recordDailyUsage(validated).catch(() => undefined);
+    void validateRememberedGrant(remembered).then(async (validated) => {
+      if (!active) return;
+      setRuntimeAccessGrant(validated);
+      await hydrateAuthorizedRemoteData(validated);
+      if (!active) return; saveRememberedAccess(validated); setGrant(validated); setReady(true); void recordDailyUsage(validated).catch(() => undefined);
     }).catch((error) => {
       if (!active) return;
       if (error instanceof AccessError && error.kind === "OFFLINE") {
@@ -87,12 +91,19 @@ export function AccessProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { if (grant) setCurrentClub(grant.profile.clubId); }, [grant, setCurrentClub]);
 
-  function authorized(next: ActiveAccessGrant) {
-    saveRememberedAccess(next); setRuntimeAccessGrant(next); setGrant(next); setMessage(null); setReady(true); void recordDailyUsage(next).catch(() => undefined);
+  async function authorized(next: ActiveAccessGrant) {
+    setRuntimeAccessGrant(next);
+    try {
+      await hydrateAuthorizedRemoteData(next);
+    } catch (error) {
+      setRuntimeAccessGrant(null);
+      throw error;
+    }
+    saveRememberedAccess(next); setGrant(next); setMessage(null); setReady(true); void recordDailyUsage(next).catch(() => undefined);
   }
   async function refresh() {
     if (!grant) return;
-    const next = await validateRememberedGrant(grant); authorized(next);
+    const next = await validateRememberedGrant(grant); await authorized(next);
   }
   async function changeAccess() {
     if (!grant) return;

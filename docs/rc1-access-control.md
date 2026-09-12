@@ -19,13 +19,15 @@ Modelo remoto:
 - `clubs/{clubId}/accessSessions/{anonymousUid}`: sesión técnica activa y versión validada.
 - `clubs/{clubId}/accessUsage/{accessId}/days/{day_deviceInstallId}`: señal mínima de uso.
 
-Regenerar conserva `accessId`, label, rol y scope, incrementa `credentialVersion`, desactiva el mapping anterior y crea uno nuevo. Desactivar o cambiar permisos se aplica en el siguiente chequeo online. El código anterior y las sesiones de versión anterior dejan de ser válidos.
+Regenerar conserva `accessId`, label, rol y scope, incrementa `credentialVersion`, cambia el mapping anterior de `ACTIVE` a `REVOKED` y crea uno nuevo `ACTIVE`. Reactivar un acceso desactivado también emite una credencial nueva; nunca revive el código anterior. `DELETED` es un soft delete irreversible en RC1: oculta el perfil de la operativa, revoca su mapping y no concede permisos. No existe hard delete.
 
 ## Sesión, offline y outbox
 
 El grant validado se recuerda localmente por dispositivo junto con un `deviceInstallId` aleatorio. Sin conexión puede restaurarse una autorización previamente válida; una revocación remota no puede conocerse offline. Al reconectar, las reglas vuelven a validar sesión, perfil, versión y mapping. Si fue revocado, la sincronización falla de forma conservadora: la outbox y la captura local se preservan para revisión ADMIN; no se descarta ni reasigna información.
 
-No se permite cambiar de acceso mientras exista cualquier operación de partido o plantilla en la outbox, incluidas operaciones con error o conflicto. El usuario debe conectar y sincronizar antes. Cambiar acceso solo elimina el grant de acceso, no los datos deportivos. Los catálogos y repositorios filtran la caché por el scope actual sin borrar entradas ocultas.
+No se permite cambiar de acceso mientras exista trabajo que el coordinador todavía pueda enviar (`PENDING`, `SYNCING` o error reintentable). Conflictos y errores terminales se conservan íntegros, pero no se reenvían por sí solos bajo otra identidad y por eso no bloquean el cambio. Cambiar acceso solo elimina el grant de acceso, no los datos deportivos. Los catálogos y repositorios filtran la caché por el scope actual sin borrar entradas ocultas.
+
+Tras validar una sesión online, el cliente consulta Firestore con filtros explícitos de `clubId` y, para scope `TEAMS`, de cada `teamId`. Reconstruye club, equipos, temporadas, memberships, personas legibles y partidos/eventos en el almacenamiento local. Este seed no crea outbox y nunca pisa un agregado local existente, protegiendo cambios offline. Firestore Rules no filtra resultados de una query: una consulta sin las restricciones compatibles debe ser rechazada.
 
 ## Límites de datos y trazabilidad
 
@@ -48,6 +50,8 @@ El comando genera localmente un `accessId`, un código y dos payloads. No usa cr
 ## Reglas DEV y despliegue
 
 Las reglas RC1 deben desplegarse únicamente tras revisar el diff y disponer del ADMIN bootstrap. Requieren `request.auth != null`, sesión/perfil/mapping activos, rol y scope; VISOR nunca escribe y no hay borrado físico. Los deep-links se protegen también en la aplicación y los repositorios locales constituyen un segundo firewall.
+
+Las Rules impiden que el Access ADMIN de la sesión actual sea degradado, desactivado o eliminado por esa misma operación. No pueden contar de forma fiable todos los ADMIN activos del club con este modelo documental; la garantía de “último ADMIN” se mantiene en la aplicación y sus tests. Una garantía transaccional global futura requerirá un documento de control/índice administrado, no una afirmación ficticia en Rules.
 
 Comando previsto, exclusivamente para DEV:
 

@@ -26,9 +26,25 @@ service cloud.firestore {
     function canWriteTeam(clubId, teamId) { return teamAllowed(clubId, teamId) && access(clubId).role != 'VIEWER'; }
     function validProfile(data, clubId, accessId) {
       return data.entityType == 'ACCESS_PROFILE' && data.clubId == clubId && data.accessId == accessId
-        && data.status in ['ACTIVE', 'DISABLED'] && data.role in ['ADMIN', 'EDITOR', 'VIEWER']
+        && data.status in ['ACTIVE', 'DISABLED', 'DELETED'] && data.role in ['ADMIN', 'EDITOR', 'VIEWER']
+        && (data.status != 'DELETED' || data.deletedAt is int)
         && data.credentialVersion is int && data.credentialVersion >= 1
         && ((data.role == 'ADMIN' && data.scope.type == 'CLUB') || (data.role != 'ADMIN' && (data.scope.type == 'CLUB' || (data.scope.type == 'TEAMS' && data.scope.teamIds is list && data.scope.teamIds.size() > 0))));
+    }
+    function validSessionCandidate(data, clubId, uid) {
+      return signedIn() && request.auth.uid == uid
+        && data.entityType == 'ACCESS_SESSION' && data.uid == uid && data.clubId == clubId
+        && data.status == 'ACTIVE' && exists(codePath(data.codeHash))
+        && get(codePath(data.codeHash)).data.entityType == 'ACCESS_CODE'
+        && get(codePath(data.codeHash)).data.codeHash == data.codeHash
+        && get(codePath(data.codeHash)).data.status == 'ACTIVE'
+        && get(codePath(data.codeHash)).data.clubId == clubId
+        && get(codePath(data.codeHash)).data.accessId == data.accessId
+        && get(codePath(data.codeHash)).data.credentialVersion == data.credentialVersion
+        && exists(accessPath(clubId, data.accessId))
+        && get(accessPath(clubId, data.accessId)).data.status == 'ACTIVE'
+        && get(accessPath(clubId, data.accessId)).data.activeCodeHash == data.codeHash
+        && get(accessPath(clubId, data.accessId)).data.credentialVersion == data.credentialVersion;
     }
     // DEV: exige identidad Firebase, incluida anónima si se habilita.
     // Producción deberá restringir además club, rol y partido autorizado.
@@ -36,7 +52,9 @@ service cloud.firestore {
       function matchClub(data) { return data.payload.preparation.clubId; }
       function matchTeam(data) { return data.payload.preparation.teamId; }
       allow get: if teamAllowed(matchClub(resource.data), matchTeam(resource.data));
-      allow list: if false;
+      // Firestore no filtra resultados: el cliente debe consultar siempre por
+      // club y, para scope TEAMS, por cada teamId autorizado.
+      allow list: if teamAllowed(matchClub(resource.data), matchTeam(resource.data));
       allow create: if canWriteTeam(matchClub(request.resource.data), matchTeam(request.resource.data))
         && request.resource.data.matchId == matchId
         && request.resource.data.entityType == "MATCH";
@@ -246,7 +264,11 @@ service cloud.firestore {
         && request.resource.data.clubId == resource.data.clubId
         && request.resource.data.accessId == resource.data.accessId
         && request.resource.data.codeHash == codeHash
-        && request.resource.data.entityType == "ACCESS_CODE";
+        && request.resource.data.entityType == "ACCESS_CODE"
+        && resource.data.status == "ACTIVE"
+        && request.resource.data.status == "REVOKED"
+        && request.resource.data.credentialVersion == resource.data.credentialVersion
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "replacedAt", "serverUpdatedAt"]);
       allow delete: if false;
     }
 
@@ -255,6 +277,8 @@ service cloud.firestore {
       allow list: if isAdmin(clubId);
       allow create, update: if isAdmin(clubId)
         && validProfile(request.resource.data, clubId, accessId)
+        && (accessId != session(clubId).accessId
+          || (request.resource.data.role == "ADMIN" && request.resource.data.status == "ACTIVE"))
         && request.resource.data.activeCodeHash is string
         && getAfter(codePath(request.resource.data.activeCodeHash)).data.clubId == clubId
         && getAfter(codePath(request.resource.data.activeCodeHash)).data.accessId == accessId
@@ -265,25 +289,15 @@ service cloud.firestore {
     match /clubs/{clubId}/accessSessions/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;
       allow list: if isAdmin(clubId);
-      allow create: if signedIn() && request.auth.uid == uid
-        && request.resource.data.entityType == "ACCESS_SESSION"
-        && request.resource.data.uid == uid && request.resource.data.clubId == clubId
-        && request.resource.data.status == "ACTIVE"
-        && exists(codePath(request.resource.data.codeHash))
-        && get(codePath(request.resource.data.codeHash)).data.entityType == "ACCESS_CODE"
-        && get(codePath(request.resource.data.codeHash)).data.codeHash == request.resource.data.codeHash
-        && get(codePath(request.resource.data.codeHash)).data.status == "ACTIVE"
-        && get(codePath(request.resource.data.codeHash)).data.clubId == clubId
-        && get(codePath(request.resource.data.codeHash)).data.accessId == request.resource.data.accessId
-        && get(codePath(request.resource.data.codeHash)).data.credentialVersion == request.resource.data.credentialVersion
-        && get(accessPath(clubId, request.resource.data.accessId)).data.status == "ACTIVE"
-        && get(accessPath(clubId, request.resource.data.accessId)).data.credentialVersion == request.resource.data.credentialVersion;
+      allow create: if validSessionCandidate(request.resource.data, clubId, uid);
       allow update: if signedIn() && request.auth.uid == uid
         && request.resource.data.uid == uid && request.resource.data.clubId == clubId
-        && request.resource.data.accessId == resource.data.accessId
-        && request.resource.data.credentialVersion == resource.data.credentialVersion
-        && request.resource.data.codeHash == resource.data.codeHash
-        && request.resource.data.status in ["ACTIVE", "CLOSED"];
+        && ((request.resource.data.accessId == resource.data.accessId
+          && request.resource.data.credentialVersion == resource.data.credentialVersion
+          && request.resource.data.codeHash == resource.data.codeHash
+          && request.resource.data.status in ["ACTIVE", "CLOSED"])
+        || (resource.data.status == "CLOSED"
+          && validSessionCandidate(request.resource.data, clubId, uid)));
       allow delete: if false;
     }
 

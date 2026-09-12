@@ -478,6 +478,17 @@ export class LocalTeamRepository {
     return readEnvelope(teamId, this.storage())?.roster ?? emptyTeamWorkspace(teamId);
   }
 
+  /** Seed remoto sin generar outbox. Nunca pisa trabajo local existente. */
+  hydrateRemote(teamId: string, roster: TeamWorkspace, knownRemoteRevisions: Record<string, number>): boolean {
+    const existing = readEnvelope(teamId, this.storage());
+    if (existing) return true;
+    return this.write(teamId, roster, {
+      ...emptyTeamSyncState(),
+      knownRemoteRevisions,
+      lastSyncedAt: this.now(),
+    });
+  }
+
   getSyncState(teamId: string): TeamSyncState {
     const sync = readEnvelope(teamId, this.storage())?.sync ?? emptyTeamSyncState();
     return this.withLiveInFlightState(sync);

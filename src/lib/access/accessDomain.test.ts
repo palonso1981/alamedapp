@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canAccessTeam, canManageAccess, canMutateSports, canOpenRoute, generateAccessCode, hashAccessCode, normalizeAccessCode, normalizeAccessScope, utcUsageDay, visibleTeamIds, ActiveAccessGrant, ClubAccessProfile } from "./accessDomain";
+import { activeAdminCount, assertCanRetireAccess, canAccessTeam, canManageAccess, canMutateSports, canOpenRoute, generateAccessCode, hashAccessCode, normalizeAccessCode, normalizeAccessScope, regenerateAccessProfile, utcUsageDay, visibleTeamIds, ActiveAccessGrant, ClubAccessProfile } from "./accessDomain";
 import { ACCESS_STORAGE_KEY, AccessStorage, clearRememberedAccess, getOrCreateDeviceInstallId, loadRememberedAccess, pendingLocalOperations, saveRememberedAccess } from "./accessPersistence";
 import { resetRuntimeAccessGrantForTests, setRuntimeAccessGrant } from "./accessRuntime";
 import { listMatchCatalog } from "../matchCatalog";
 import { LocalTeamRepository } from "../sync/localTeamRepository";
+import { LocalMatchRepository } from "../sync/localMatchRepository";
 import { emptyTeamWorkspace } from "../seasonDomain";
+import { remoteMatchSession, remoteWorkspace } from "./accessRemoteHydration";
+import { MATCH_REMOTE_SCHEMA_VERSION } from "../sync/syncTypes";
 
 class MemoryStorage implements AccessStorage {
   values = new Map<string, string>();
@@ -131,6 +134,41 @@ test("guard conserva el bloqueo para trabajo enviable y excluye conflictos o ACK
   );
 });
 
+test("último ADMIN activo no puede degradarse, desactivarse ni eliminarse", () => {
+  const admin = grant("ADMIN").profile;
+  assert.equal(activeAdminCount([admin]), 1);
+  assert.throws(
+    () => assertCanRetireAccess(admin.accessId, admin, [admin], { role: "EDITOR", status: "ACTIVE" }),
+    /último ADMIN/,
+  );
+  assert.throws(
+    () => assertCanRetireAccess(admin.accessId, admin, [admin], { role: "ADMIN", status: "DELETED" }),
+    /último ADMIN/,
+  );
+});
+
+test("un ADMIN puede retirar otro ADMIN cuando quedan dos", () => {
+  const first = grant("ADMIN").profile;
+  const second = { ...first, accessId: "admin-2", label: "Segundo ADMIN" };
+  assert.equal(activeAdminCount([first, second]), 2);
+  assert.doesNotThrow(() =>
+    assertCanRetireAccess(first.accessId, second, [first, second], {
+      role: "VIEWER",
+      status: "ACTIVE",
+    }),
+  );
+});
+
+test("regenerar conserva accessId, incrementa versión y no revive un DELETED", () => {
+  const current = { ...grant("EDITOR").profile, credentialVersion: 4, activeCodeHash: "old" };
+  const next = regenerateAccessProfile(current, "new", 99);
+  assert.equal(next.accessId, current.accessId);
+  assert.equal(next.credentialVersion, 5);
+  assert.equal(next.activeCodeHash, "new");
+  assert.equal(next.status, "ACTIVE");
+  assert.throws(() => regenerateAccessProfile({ ...current, status: "DELETED" }, "other", 100), /eliminado/);
+});
+
 test("heartbeat agrupa por día UTC sin contar navegaciones", () => {
   assert.equal(utcUsageDay(Date.UTC(2026, 8, 12, 23, 59)), "2026-09-12");
 });
@@ -168,4 +206,38 @@ test("repositorio local rechaza a EDITOR un equipo fuera de su scope", () => {
     assert.equal(repository.save(workspace), false);
     assert.equal(storage.length, 0);
   } finally { resetRuntimeAccessGrantForTests(); }
+});
+
+test("hidratación remota reconstruye ADMIN limpio sin crear outbox", () => {
+  const storage = new MemoryStorage();
+  const teamRepository = new LocalTeamRepository({ storage, now: () => 10 });
+  const matchRepository = new LocalMatchRepository({ storage, now: () => 10 });
+  const base = emptyTeamWorkspace("club-a", 1);
+  const team = { ...base.team, teamId: "team-a", clubId: "club-a", name: "Senior A" };
+  const workspace = remoteWorkspace({ club: base.club, teams: [team], players: [], staff: [], seasons: [], seasonPlayers: [], seasonStaff: [] });
+  assert.equal(teamRepository.hydrateRemote("club-a", workspace, { "clubs:team_unit:team-a": 3 }), true);
+  assert.equal(teamRepository.getSyncState("club-a").outbox.length, 0);
+  assert.equal(teamRepository.load("club-a").teams[0].name, "Senior A");
+
+  const session = remoteMatchSession({
+    schemaVersion: MATCH_REMOTE_SCHEMA_VERSION, matchId: "m-remote", players: [], staff: [],
+    activePeriod: 1, minute: 0, periodMinutes: { 1: 0, 2: 0 }, closedPeriods: [],
+    periodCloseSnapshots: {}, matchFinished: false,
+  }, []);
+  assert.equal(matchRepository.hydrateRemote(session, { "match:m-remote": 2 }), true);
+  assert.equal(matchRepository.getSyncState("m-remote").outbox.length, 0);
+  assert.equal(matchRepository.load("m-remote")?.matchId, "m-remote");
+});
+
+test("hidratación remota no pisa cambios locales ni su outbox", () => {
+  const storage = new MemoryStorage();
+  const repository = new LocalTeamRepository({ storage, now: () => 10, idFactory: () => "local-op" });
+  const local = emptyTeamWorkspace("club-a", 1);
+  local.club = { ...local.club, name: "Cambio local" };
+  assert.equal(repository.save(local), true);
+  const pendingBefore = repository.getSyncState("club-a").outbox.length;
+  const remote = { ...local, club: { ...local.club, name: "Nombre remoto" } };
+  assert.equal(repository.hydrateRemote("club-a", remote, {}), true);
+  assert.equal(repository.load("club-a").club.name, "Cambio local");
+  assert.equal(repository.getSyncState("club-a").outbox.length, pendingBefore);
 });

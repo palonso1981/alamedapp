@@ -1,5 +1,6 @@
 export type AccessRole = "ADMIN" | "EDITOR" | "VIEWER";
-export type AccessStatus = "ACTIVE" | "DISABLED";
+export type AccessStatus = "ACTIVE" | "DISABLED" | "DELETED";
+export type AccessCodeStatus = "ACTIVE" | "REVOKED" | "DISABLED";
 export type AccessScope =
   | { type: "CLUB" }
   | { type: "TEAMS"; teamIds: string[] };
@@ -15,6 +16,7 @@ export interface ClubAccessProfile {
   activeCodeHash?: string;
   createdAt: number;
   updatedAt: number;
+  deletedAt?: number;
   lastUsedAt?: number;
 }
 
@@ -23,9 +25,48 @@ export interface AccessCodeMapping {
   clubId: string;
   accessId: string;
   credentialVersion: number;
-  status: AccessStatus;
+  status: AccessCodeStatus;
   createdAt: number;
   replacedAt?: number;
+}
+
+export function activeAdminCount(
+  profiles: readonly ClubAccessProfile[],
+): number {
+  return profiles.filter(
+    (profile) => profile.role === "ADMIN" && profile.status === "ACTIVE",
+  ).length;
+}
+
+export function assertCanRetireAccess(
+  actorAccessId: string,
+  target: ClubAccessProfile,
+  profiles: readonly ClubAccessProfile[],
+  next: Pick<ClubAccessProfile, "role" | "status">,
+): void {
+  const retiresAdmin =
+    target.role === "ADMIN" &&
+    target.status === "ACTIVE" &&
+    (next.role !== "ADMIN" || next.status !== "ACTIVE");
+  if (!retiresAdmin) return;
+  if (target.accessId === actorAccessId || activeAdminCount(profiles) <= 1) {
+    throw new Error("No puedes retirar el último ADMIN activo del club.");
+  }
+}
+
+export function regenerateAccessProfile(
+  profile: ClubAccessProfile,
+  activeCodeHash: string,
+  now: number,
+): ClubAccessProfile {
+  if (profile.status === "DELETED") throw new Error("Un acceso eliminado no puede regenerarse.");
+  return {
+    ...profile,
+    status: "ACTIVE",
+    credentialVersion: profile.credentialVersion + 1,
+    activeCodeHash,
+    updatedAt: now,
+  };
 }
 
 export interface AccessTechnicalSession {

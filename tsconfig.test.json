@@ -43,6 +43,7 @@
     "src/lib/access/accessDomain.ts",
     "src/lib/access/accessPersistence.ts",
     "src/lib/access/accessRuntime.ts",
+    "src/lib/access/accessRemoteHydration.ts",
     "src/lib/access/accessDomain.test.ts",
     "src/lib/access/firestoreRules.test.ts",
     "src/lib/positionFormat.ts",
