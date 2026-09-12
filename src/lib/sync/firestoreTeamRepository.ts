@@ -122,6 +122,8 @@ export class FirestoreDevTeamRepository
         clientUpdatedAt: operation.clientUpdatedAt,
         serverUpdatedAt: serverTimestamp(),
         active: payload.active,
+        authorizationTeamId: operation.authorizationTeamId ?? null,
+        authorizationSeasonId: operation.authorizationSeasonId ?? null,
         payload: firestoreValue(payload),
       });
       return { status: "APPLIED", revision };

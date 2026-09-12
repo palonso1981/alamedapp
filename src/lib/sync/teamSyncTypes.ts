@@ -40,6 +40,9 @@ export interface TeamSyncOperation {
   entityId: string;
   /** Operaciones antiguas se migran a LEGACY_TEAMS; las nuevas usan CLUBS. */
   namespace: TeamSyncNamespace;
+  /** Contexto verificable por Rules para maestros editados por un scope TEAMS. */
+  authorizationTeamId?: string;
+  authorizationSeasonId?: string;
   kind: "UPSERT";
   payload: TeamSyncPayload;
   baseRevision: number;

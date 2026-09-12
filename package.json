@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "tsc -p tsconfig.test.json && node --test .test-build/lib/matchEngine.test.js .test-build/lib/captureOrientation.test.js .test-build/lib/dashboardAnalytics.test.js .test-build/lib/dashboardAnalysis.test.js .test-build/lib/dashboardV2.test.js .test-build/lib/videoIndex.test.js .test-build/lib/videoReview.test.js .test-build/lib/sync/sync.test.js .test-build/lib/roster.test.js"
+    "access:bootstrap": "node scripts/generate-access-bootstrap.mjs",
+    "test": "tsc -p tsconfig.test.json && node --test .test-build/lib/matchEngine.test.js .test-build/lib/captureOrientation.test.js .test-build/lib/dashboardAnalytics.test.js .test-build/lib/dashboardAnalysis.test.js .test-build/lib/dashboardV2.test.js .test-build/lib/videoIndex.test.js .test-build/lib/videoReview.test.js .test-build/lib/access/accessDomain.test.js .test-build/lib/access/firestoreRules.test.js .test-build/lib/sync/sync.test.js .test-build/lib/roster.test.js"
   },
   "dependencies": {
     "firebase": "^12.17.1",

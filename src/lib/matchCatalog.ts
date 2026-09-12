@@ -1,5 +1,7 @@
 import { browserMatchStorage, LocalStorageAdapter } from "./matchPersistence";
 import { CDA_CLUB_ID, MatchLifecycleStatus, MatchSession, MatchVenue } from "../types";
+import { canAccessTeam } from "./access/accessDomain";
+import { getRuntimeAccessGrant } from "./access/accessRuntime";
 
 const CATALOG_KEY = "alamedapp:matches:index:v1";
 
@@ -37,7 +39,7 @@ function validEntry(value: unknown): value is MatchCatalogEntry {
   );
 }
 
-export function listMatchCatalog(
+function readMatchCatalog(
   storage: LocalStorageAdapter | null = browserMatchStorage(),
 ): MatchCatalogEntry[] {
   if (!storage) return [];
@@ -49,6 +51,17 @@ export function listMatchCatalog(
   } catch {
     return [];
   }
+}
+
+export function listMatchCatalog(
+  storage: LocalStorageAdapter | null = browserMatchStorage(),
+): MatchCatalogEntry[] {
+  const entries = readMatchCatalog(storage);
+  const grant = getRuntimeAccessGrant();
+  if (grant === undefined) return entries;
+  return entries.filter((entry) =>
+    canAccessTeam(grant, matchCatalogClubId(entry), entry.teamId),
+  );
 }
 
 export function visibleMatchCatalog(
@@ -85,7 +98,9 @@ export function updateMatchCatalog(
     playerIds: session.players.map((player) => player.id),
     staffIds: session.staff.map((member) => member.id),
   };
-  const entries = listMatchCatalog(storage).filter((item) => item.matchId !== session.matchId);
+  // El indice durable conserva tambien las entradas invisibles para el acceso
+  // activo; aplicar scope aqui perderia datos locales al guardar un partido.
+  const entries = readMatchCatalog(storage).filter((item) => item.matchId !== session.matchId);
   try {
     storage.setItem(CATALOG_KEY, JSON.stringify([...entries, entry]));
   } catch {

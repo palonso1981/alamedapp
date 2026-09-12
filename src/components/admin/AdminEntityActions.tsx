@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useAccess } from "../access/AccessProvider";
 
 interface Props {
   label: string;
@@ -13,7 +14,9 @@ interface Props {
 }
 
 export function AdminEntityActions({ label, archived, impact, onArchive, onReactivate, onDelete, onEdit }: Props) {
+  const { canWrite } = useAccess();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  if (!canWrite) return null;
   return <>
     <details className="relative">
       <summary aria-label={`Acciones de ${label}`} className="grid min-h-11 min-w-11 cursor-pointer list-none place-items-center rounded-xl bg-slate-950 text-xl font-black text-slate-300">···</summary>

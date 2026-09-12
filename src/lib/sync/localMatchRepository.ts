@@ -7,6 +7,8 @@ import {
 } from "../matchPersistence";
 import { MatchEvent, MatchSession } from "../../types";
 import { updateMatchCatalog } from "../matchCatalog";
+import { canAccessTeam, canMutateSports } from "../access/accessDomain";
+import { getRuntimeAccessGrant } from "../access/accessRuntime";
 import {
   emptyMatchSyncState,
   MATCH_REMOTE_SCHEMA_VERSION,
@@ -240,6 +242,14 @@ export class LocalMatchRepository {
   }
 
   save(session: MatchSession): LocalMatchSaveResult {
+    const grant = getRuntimeAccessGrant();
+    if (grant !== undefined) {
+      const clubId = session.preparation?.clubId;
+      const teamId = session.preparation?.teamId;
+      if (!canMutateSports(grant) || !clubId || !canAccessTeam(grant, clubId, teamId)) {
+        return { ok: false, unavailable: false, message: "Este acceso no puede modificar este partido." };
+      }
+    }
     const storage = this.storage();
     const previousRecord = loadMatchRecord(session.matchId, storage);
     const now = this.now();

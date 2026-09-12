@@ -2,18 +2,55 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // RC1 · SOLO DEV cdalameda-dev. Revisar antes de cualquier PROD.
+    function signedIn() { return request.auth != null; }
+    function sessionPath(clubId) { return /databases/$(database)/documents/clubs/$(clubId)/accessSessions/$(request.auth.uid); }
+    function accessPath(clubId, accessId) { return /databases/$(database)/documents/clubs/$(clubId)/accesses/$(accessId); }
+    function codePath(codeHash) { return /databases/$(database)/documents/accessCodes/$(codeHash); }
+    function session(clubId) { return get(sessionPath(clubId)).data; }
+    function access(clubId) { return get(accessPath(clubId, session(clubId).accessId)).data; }
+    function validAccess(clubId) {
+      return signedIn() && exists(sessionPath(clubId))
+        && session(clubId).status == 'ACTIVE' && session(clubId).clubId == clubId
+        && exists(accessPath(clubId, session(clubId).accessId))
+        && access(clubId).status == 'ACTIVE'
+        && access(clubId).credentialVersion == session(clubId).credentialVersion
+        && exists(codePath(session(clubId).codeHash))
+        && get(codePath(session(clubId).codeHash)).data.status == 'ACTIVE'
+        && get(codePath(session(clubId).codeHash)).data.credentialVersion == session(clubId).credentialVersion;
+    }
+    function isAdmin(clubId) { return validAccess(clubId) && access(clubId).role == 'ADMIN'; }
+    function hasClubScope(clubId) { return validAccess(clubId) && (access(clubId).role == 'ADMIN' || access(clubId).scope.type == 'CLUB'); }
+    function teamAllowed(clubId, teamId) { return validAccess(clubId) && (hasClubScope(clubId) || (access(clubId).scope.type == 'TEAMS' && teamId in access(clubId).scope.teamIds)); }
+    function canWriteClub(clubId) { return hasClubScope(clubId) && access(clubId).role != 'VIEWER'; }
+    function canWriteTeam(clubId, teamId) { return teamAllowed(clubId, teamId) && access(clubId).role != 'VIEWER'; }
+    function validProfile(data, clubId, accessId) {
+      return data.entityType == 'ACCESS_PROFILE' && data.clubId == clubId && data.accessId == accessId
+        && data.status in ['ACTIVE', 'DISABLED'] && data.role in ['ADMIN', 'EDITOR', 'VIEWER']
+        && data.credentialVersion is int && data.credentialVersion >= 1
+        && ((data.role == 'ADMIN' && data.scope.type == 'CLUB') || (data.role != 'ADMIN' && (data.scope.type == 'CLUB' || (data.scope.type == 'TEAMS' && data.scope.teamIds is list && data.scope.teamIds.size() > 0))));
+    }
     // DEV: exige identidad Firebase, incluida anónima si se habilita.
     // Producción deberá restringir además club, rol y partido autorizado.
     match /matches/{matchId} {
-      allow read: if request.auth != null;
-      allow create, update: if request.auth != null
+      function matchClub(data) { return data.payload.preparation.clubId; }
+      function matchTeam(data) { return data.payload.preparation.teamId; }
+      allow get: if teamAllowed(matchClub(resource.data), matchTeam(resource.data));
+      allow list: if false;
+      allow create: if canWriteTeam(matchClub(request.resource.data), matchTeam(request.resource.data))
+        && request.resource.data.matchId == matchId
+        && request.resource.data.entityType == "MATCH";
+      allow update: if canWriteTeam(matchClub(resource.data), matchTeam(resource.data))
+        && matchClub(request.resource.data) == matchClub(resource.data)
+        && matchTeam(request.resource.data) == matchTeam(resource.data)
         && request.resource.data.matchId == matchId
         && request.resource.data.entityType == "MATCH";
       allow delete: if false;
 
       match /events/{eventId} {
-        allow read: if request.auth != null;
-        allow create, update: if request.auth != null
+        function parentMatch() { return get(/databases/$(database)/documents/matches/$(matchId)).data; }
+        allow get, list: if teamAllowed(parentMatch().payload.preparation.clubId, parentMatch().payload.preparation.teamId);
+        allow create, update: if canWriteTeam(parentMatch().payload.preparation.clubId, parentMatch().payload.preparation.teamId)
           && request.resource.data.matchId == matchId
           && request.resource.data.entityType == "EVENT"
           && request.resource.data.entityId == eventId;
@@ -25,16 +62,16 @@ service cloud.firestore {
     // mantener la plantilla del único equipo de pruebas. Antes de producción
     // debe sustituirse por autorización por club, usuario y rol.
     match /teams/cd-alameda {
-      allow read: if request.auth != null;
-      allow create, update: if request.auth != null
+      allow read: if hasClubScope("cd-alameda");
+      allow create, update: if canWriteClub("cd-alameda")
         && request.resource.data.teamId == "cd-alameda"
         && request.resource.data.entityType == "TEAM"
         && request.resource.data.entityId == "cd-alameda";
       allow delete: if false;
 
       match /players/{playerId} {
-        allow read: if request.auth != null;
-        allow create, update: if request.auth != null
+        allow read: if hasClubScope("cd-alameda");
+        allow create, update: if canWriteClub("cd-alameda")
           && request.resource.data.teamId == "cd-alameda"
           && request.resource.data.entityType == "PLAYER"
           && request.resource.data.entityId == playerId;
@@ -42,8 +79,8 @@ service cloud.firestore {
       }
 
       match /staff/{staffId} {
-        allow read: if request.auth != null;
-        allow create, update: if request.auth != null
+        allow read: if hasClubScope("cd-alameda");
+        allow create, update: if canWriteClub("cd-alameda")
           && request.resource.data.teamId == "cd-alameda"
           && request.resource.data.entityType == "STAFF"
           && request.resource.data.entityId == staffId;
@@ -53,7 +90,8 @@ service cloud.firestore {
       // DEV exclusivo: equipos deportivos del único club permitido.
       // Producción deberá sustituir Anonymous Auth por permisos de club/usuario/rol.
       match /teams/{teamId} {
-        allow create, update: if request.auth != null
+        allow read: if teamAllowed("cd-alameda", teamId);
+        allow create, update: if canWriteTeam("cd-alameda", teamId)
           && request.resource.data.teamId == "cd-alameda"
           && request.resource.data.entityType == "TEAM_UNIT"
           && request.resource.data.entityId == teamId
@@ -62,16 +100,16 @@ service cloud.firestore {
       }
 
       match /seasons/{seasonId} {
-        allow read: if request.auth != null;
-        allow create, update: if request.auth != null
+        allow read: if hasClubScope("cd-alameda");
+        allow create, update: if canWriteClub("cd-alameda")
           && request.resource.data.teamId == "cd-alameda"
           && request.resource.data.entityType == "SEASON"
           && request.resource.data.entityId == seasonId;
         allow delete: if false;
 
         match /players/{playerId} {
-          allow read: if request.auth != null;
-          allow create, update: if request.auth != null
+          allow read: if hasClubScope("cd-alameda");
+          allow create, update: if canWriteClub("cd-alameda")
             && request.resource.data.teamId == "cd-alameda"
             && request.resource.data.entityType == "SEASON_PLAYER"
             && request.resource.data.entityId == playerId
@@ -81,8 +119,8 @@ service cloud.firestore {
         }
 
         match /staff/{staffId} {
-          allow read: if request.auth != null;
-          allow create, update: if request.auth != null
+          allow read: if hasClubScope("cd-alameda");
+          allow create, update: if canWriteClub("cd-alameda")
             && request.resource.data.teamId == "cd-alameda"
             && request.resource.data.entityType == "SEASON_STAFF"
             && request.resource.data.entityId == staffId
@@ -96,8 +134,8 @@ service cloud.firestore {
     // MULTICLUB LITE · EXCLUSIVO DE cdalameda-dev.
     // Anonymous Auth es temporal; producción exigirá autorización por club/usuario/rol.
     match /clubs/{clubId} {
-      allow get: if request.auth != null;
-      allow create, update: if request.auth != null
+      allow get: if validAccess(clubId);
+      allow create, update: if isAdmin(clubId)
         && request.resource.data.clubId == clubId
         && request.resource.data.entityType == "CLUB"
         && request.resource.data.entityId == clubId
@@ -105,51 +143,71 @@ service cloud.firestore {
       allow list, delete: if false;
 
       match /players/{playerId} {
-        allow get: if request.auth != null;
-        allow create, update: if request.auth != null
+        allow get: if hasClubScope(clubId) || teamAllowed(clubId, resource.data.authorizationTeamId);
+        allow create: if canWriteTeam(clubId, request.resource.data.authorizationTeamId)
+          && (hasClubScope(clubId) || request.resource.data.authorizationSeasonId is string)
           && request.resource.data.clubId == clubId
           && request.resource.data.entityType == "PLAYER"
           && request.resource.data.entityId == playerId
           && request.resource.data.payload.clubId == clubId
           && request.resource.data.payload.playerId == playerId;
-        allow list, delete: if false;
+        allow update: if (canWriteClub(clubId) || (canWriteTeam(clubId, request.resource.data.authorizationTeamId)
+          && request.resource.data.authorizationSeasonId is string
+          && exists(/databases/$(database)/documents/clubs/$(clubId)/teams/$(request.resource.data.authorizationTeamId)/seasons/$(request.resource.data.authorizationSeasonId)/players/$(playerId))))
+          && request.resource.data.clubId == clubId
+          && request.resource.data.entityType == "PLAYER"
+          && request.resource.data.entityId == playerId
+          && request.resource.data.payload.clubId == clubId
+          && request.resource.data.payload.playerId == playerId;
+        allow list: if hasClubScope(clubId);
+        allow delete: if false;
       }
 
       match /staff/{staffId} {
-        allow get: if request.auth != null;
-        allow create, update: if request.auth != null
+        allow get: if hasClubScope(clubId) || teamAllowed(clubId, resource.data.authorizationTeamId);
+        allow create: if canWriteTeam(clubId, request.resource.data.authorizationTeamId)
+          && (hasClubScope(clubId) || request.resource.data.authorizationSeasonId is string)
           && request.resource.data.clubId == clubId
           && request.resource.data.entityType == "STAFF"
           && request.resource.data.entityId == staffId
           && request.resource.data.payload.clubId == clubId
           && request.resource.data.payload.staffId == staffId;
-        allow list, delete: if false;
+        allow update: if (canWriteClub(clubId) || (canWriteTeam(clubId, request.resource.data.authorizationTeamId)
+          && request.resource.data.authorizationSeasonId is string
+          && exists(/databases/$(database)/documents/clubs/$(clubId)/teams/$(request.resource.data.authorizationTeamId)/seasons/$(request.resource.data.authorizationSeasonId)/staff/$(staffId))))
+          && request.resource.data.clubId == clubId
+          && request.resource.data.entityType == "STAFF"
+          && request.resource.data.entityId == staffId
+          && request.resource.data.payload.clubId == clubId
+          && request.resource.data.payload.staffId == staffId;
+        allow list: if hasClubScope(clubId);
+        allow delete: if false;
       }
 
       match /teams/{teamId} {
-        allow get: if request.auth != null;
-        allow create, update: if request.auth != null
+        allow get, list: if teamAllowed(clubId, teamId);
+        allow create, update: if canWriteTeam(clubId, teamId)
           && request.resource.data.clubId == clubId
           && request.resource.data.entityType == "TEAM_UNIT"
           && request.resource.data.entityId == teamId
           && request.resource.data.payload.clubId == clubId
           && request.resource.data.payload.teamId == teamId;
-        allow list, delete: if false;
+        allow delete: if false;
 
         match /seasons/{seasonId} {
-          allow get: if request.auth != null;
-          allow create, update: if request.auth != null
+          allow get, list: if teamAllowed(clubId, teamId);
+          allow create, update: if canWriteTeam(clubId, teamId)
             && request.resource.data.clubId == clubId
             && request.resource.data.entityType == "SEASON"
             && request.resource.data.entityId == seasonId
             && request.resource.data.payload.clubId == clubId
             && request.resource.data.payload.teamId == teamId
             && request.resource.data.payload.seasonId == seasonId;
-          allow list, delete: if false;
+          allow delete: if false;
 
           match /players/{playerId} {
-            allow get: if request.auth != null;
-            allow create, update: if request.auth != null
+            allow get, list: if teamAllowed(clubId, teamId);
+            allow create, update: if canWriteTeam(clubId, teamId)
               && request.resource.data.clubId == clubId
               && request.resource.data.entityType == "SEASON_PLAYER"
               && request.resource.data.entityId == playerId
@@ -157,12 +215,12 @@ service cloud.firestore {
               && request.resource.data.payload.teamId == teamId
               && request.resource.data.payload.seasonId == seasonId
               && request.resource.data.payload.playerId == playerId;
-            allow list, delete: if false;
+            allow delete: if false;
           }
 
           match /staff/{staffId} {
-            allow get: if request.auth != null;
-            allow create, update: if request.auth != null
+            allow get, list: if teamAllowed(clubId, teamId);
+            allow create, update: if canWriteTeam(clubId, teamId)
               && request.resource.data.clubId == clubId
               && request.resource.data.entityType == "SEASON_STAFF"
               && request.resource.data.entityId == staffId
@@ -170,10 +228,76 @@ service cloud.firestore {
               && request.resource.data.payload.teamId == teamId
               && request.resource.data.payload.seasonId == seasonId
               && request.resource.data.payload.staffId == staffId;
-            allow list, delete: if false;
+            allow delete: if false;
           }
         }
       }
+    }
+
+    // Única lectura previa a sesión: mapping exacto de alta entropía. Nunca list.
+    match /accessCodes/{codeHash} {
+      allow get: if signedIn() && codeHash.size() == 64;
+      allow list: if false;
+      allow create: if isAdmin(request.resource.data.clubId)
+        && request.resource.data.entityType == "ACCESS_CODE"
+        && request.resource.data.codeHash == codeHash
+        && request.resource.data.status == "ACTIVE";
+      allow update: if isAdmin(resource.data.clubId)
+        && request.resource.data.clubId == resource.data.clubId
+        && request.resource.data.accessId == resource.data.accessId
+        && request.resource.data.codeHash == codeHash
+        && request.resource.data.entityType == "ACCESS_CODE";
+      allow delete: if false;
+    }
+
+    match /clubs/{clubId}/accesses/{accessId} {
+      allow get: if validAccess(clubId) && session(clubId).accessId == accessId;
+      allow list: if isAdmin(clubId);
+      allow create, update: if isAdmin(clubId)
+        && validProfile(request.resource.data, clubId, accessId)
+        && request.resource.data.activeCodeHash is string
+        && getAfter(codePath(request.resource.data.activeCodeHash)).data.clubId == clubId
+        && getAfter(codePath(request.resource.data.activeCodeHash)).data.accessId == accessId
+        && getAfter(codePath(request.resource.data.activeCodeHash)).data.credentialVersion == request.resource.data.credentialVersion;
+      allow delete: if false;
+    }
+
+    match /clubs/{clubId}/accessSessions/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list: if isAdmin(clubId);
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.entityType == "ACCESS_SESSION"
+        && request.resource.data.uid == uid && request.resource.data.clubId == clubId
+        && request.resource.data.status == "ACTIVE"
+        && exists(codePath(request.resource.data.codeHash))
+        && get(codePath(request.resource.data.codeHash)).data.entityType == "ACCESS_CODE"
+        && get(codePath(request.resource.data.codeHash)).data.codeHash == request.resource.data.codeHash
+        && get(codePath(request.resource.data.codeHash)).data.status == "ACTIVE"
+        && get(codePath(request.resource.data.codeHash)).data.clubId == clubId
+        && get(codePath(request.resource.data.codeHash)).data.accessId == request.resource.data.accessId
+        && get(codePath(request.resource.data.codeHash)).data.credentialVersion == request.resource.data.credentialVersion
+        && get(accessPath(clubId, request.resource.data.accessId)).data.status == "ACTIVE"
+        && get(accessPath(clubId, request.resource.data.accessId)).data.credentialVersion == request.resource.data.credentialVersion;
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.uid == uid && request.resource.data.clubId == clubId
+        && request.resource.data.accessId == resource.data.accessId
+        && request.resource.data.credentialVersion == resource.data.credentialVersion
+        && request.resource.data.codeHash == resource.data.codeHash
+        && request.resource.data.status in ["ACTIVE", "CLOSED"];
+      allow delete: if false;
+    }
+
+    match /clubs/{clubId}/accessUsage/{accessId}/days/{usageId} {
+      allow read: if isAdmin(clubId);
+      allow create, update: if validAccess(clubId)
+        && session(clubId).accessId == accessId
+        && request.resource.data.entityType == "ACCESS_USAGE"
+        && request.resource.data.clubId == clubId
+        && request.resource.data.accessId == accessId
+        && request.resource.data.usageId == usageId
+        && request.resource.data.deviceInstallId is string
+        && request.resource.data.day is string;
+      allow delete: if false;
     }
 
     match /{document=**} {
