@@ -1,4 +1,5 @@
 import { ActiveAccessGrant } from "./accessDomain";
+import { blocksAccessChange } from "../sync/syncTypes";
 
 export interface AccessStorage {
   getItem(key: string): string | null;
@@ -46,6 +47,10 @@ export interface PendingLocalOperation {
   storageKey: string;
   operationId: string;
   status: string;
+  entityType?: string;
+  entityId?: string;
+  namespace?: string;
+  errorKind?: string;
 }
 
 export function pendingLocalOperations(storage: AccessStorage | null = browserAccessStorage()): PendingLocalOperation[] {
@@ -55,9 +60,30 @@ export function pendingLocalOperations(storage: AccessStorage | null = browserAc
     const key = storage.key(index);
     if (!key || (!key.startsWith("alamedapp:match:") && !key.startsWith("alamedapp:team:"))) continue;
     try {
-      const parsed = JSON.parse(storage.getItem(key) ?? "null") as { sync?: { outbox?: Array<{ id?: string; status?: string }> } } | null;
+      const parsed = JSON.parse(storage.getItem(key) ?? "null") as {
+        sync?: {
+          outbox?: Array<{
+            id?: string;
+            status?: string;
+            entityType?: string;
+            entityId?: string;
+            namespace?: string;
+            errorKind?: string;
+            nextAttemptAt?: number;
+          }>;
+        };
+      } | null;
       for (const operation of parsed?.sync?.outbox ?? []) {
-        if (typeof operation.id === "string") pending.push({ storageKey: key, operationId: operation.id, status: operation.status ?? "PENDING" });
+        if (typeof operation.id !== "string" || !blocksAccessChange(operation)) continue;
+        pending.push({
+          storageKey: key,
+          operationId: operation.id,
+          status: operation.status ?? "PENDING",
+          entityType: operation.entityType,
+          entityId: operation.entityId,
+          namespace: operation.namespace,
+          errorKind: operation.errorKind,
+        });
       }
     } catch { /* Una entrada corrupta no se borra ni se reasigna. */ }
   }

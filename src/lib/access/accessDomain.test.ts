@@ -84,6 +84,53 @@ test("cambiar acceso detecta outbox pendiente sin borrarlo ni reasignarlo", () =
   assert.equal(storage.getItem("alamedapp:match:v1:m1")?.includes("op-match"), true);
 });
 
+test("indicador sin pendientes y guard convergen ante veinte errores terminales legacy", () => {
+  const storage = new MemoryStorage();
+  const terminalLegacy = Array.from({ length: 20 }, (_, index) => ({
+    id: `legacy-${index + 1}`,
+    entityType: index % 2 ? "PLAYER" : "SEASON_PLAYER",
+    entityId: `entity-${index + 1}`,
+    namespace: "LEGACY_TEAMS",
+    status: "ERROR",
+    errorKind: "PERMISSION",
+    nextAttemptAt: Number.MAX_SAFE_INTEGER,
+  }));
+  storage.setItem(
+    "alamedapp:team:v1:cd-alameda",
+    JSON.stringify({ sync: { outbox: terminalLegacy, lastSyncedAt: 123 } }),
+  );
+
+  assert.equal(pendingLocalOperations(storage).length, 0);
+  assert.equal(
+    JSON.parse(storage.getItem("alamedapp:team:v1:cd-alameda")!).sync.outbox.length,
+    20,
+  );
+});
+
+test("guard conserva el bloqueo para trabajo enviable y excluye conflictos o ACK", () => {
+  const storage = new MemoryStorage();
+  storage.setItem(
+    "alamedapp:match:v1:m1",
+    JSON.stringify({
+      sync: {
+        outbox: [
+          { id: "pending", status: "PENDING" },
+          { id: "recover-after-close", status: "SYNCING" },
+          { id: "offline", status: "ERROR", errorKind: "OFFLINE", nextAttemptAt: 100 },
+          { id: "conflict", status: "CONFLICT" },
+          { id: "ack", status: "SYNCED" },
+          { id: "fatal", status: "ERROR", errorKind: "FATAL", nextAttemptAt: Number.MAX_SAFE_INTEGER },
+        ],
+      },
+    }),
+  );
+
+  assert.deepEqual(
+    pendingLocalOperations(storage).map((operation) => operation.operationId),
+    ["pending", "recover-after-close", "offline"],
+  );
+});
+
 test("heartbeat agrupa por día UTC sin contar navegaciones", () => {
   assert.equal(utcUsageDay(Date.UTC(2026, 8, 12, 23, 59)), "2026-09-12");
 });

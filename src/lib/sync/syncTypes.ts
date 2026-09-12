@@ -84,6 +84,35 @@ export interface MatchSyncSummary {
   lastErrorKind: SyncErrorKind | null;
 }
 
+export interface AccessChangeSyncOperation {
+  status?: string;
+  errorKind?: string;
+  nextAttemptAt?: number;
+}
+
+/**
+ * Única semántica para impedir un cambio de credencial: solo trabajo que el
+ * coordinador puede enviar automáticamente ahora o tras recuperar conexión.
+ * Conflictos y errores terminales permanecen íntegros para revisión, pero no
+ * pueden reaparecer bajo otra identidad por sí solos y por tanto no bloquean.
+ */
+export function blocksAccessChange(
+  operation: AccessChangeSyncOperation,
+): boolean {
+  const status = operation.status ?? "PENDING";
+  if (status === "PENDING" || status === "SYNCING") return true;
+  if (status !== "ERROR") return false;
+  if (
+    operation.errorKind === "PERMISSION" ||
+    operation.errorKind === "INVALID_DATA" ||
+    operation.errorKind === "FATAL" ||
+    operation.errorKind === "CONFLICT"
+  ) {
+    return false;
+  }
+  return operation.nextAttemptAt !== Number.MAX_SAFE_INTEGER;
+}
+
 export function emptyMatchSyncState(): PersistedMatchSyncState {
   return {
     schemaVersion: MATCH_SYNC_SCHEMA_VERSION,
