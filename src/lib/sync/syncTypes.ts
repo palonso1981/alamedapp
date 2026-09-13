@@ -53,6 +53,10 @@ export interface MatchSyncOperation {
   nextAttemptAt: number;
   lastError?: string;
   errorKind?: SyncErrorKind;
+  /** Sesión técnica de Directo. Ausente en operaciones legacy o fuera de captura. */
+  captureSessionId?: string;
+  captureAccessId?: string;
+  captureDeviceInstallId?: string;
 }
 
 export interface MatchSyncConflict {
@@ -155,6 +159,9 @@ function validOperation(value: unknown, matchId: string): value is MatchSyncOper
     Number.isInteger(value.attempts) &&
     ["PENDING", "SYNCING", "ERROR", "CONFLICT"].includes(String(value.status)) &&
     typeof value.nextAttemptAt === "number"
+    && (value.captureSessionId === undefined || typeof value.captureSessionId === "string")
+    && (value.captureAccessId === undefined || typeof value.captureAccessId === "string")
+    && (value.captureDeviceInstallId === undefined || typeof value.captureDeviceInstallId === "string")
   );
 }
 

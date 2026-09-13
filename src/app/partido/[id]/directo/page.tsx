@@ -26,6 +26,7 @@ import {
 } from "../../../../components/match/RecentEventsPanel";
 import { PlayerAvatar } from "../../../../components/player/PlayerAvatar";
 import { ClubContextLabel } from "../../../../components/app/ClubContextLabel";
+import { CaptureControlStatus } from "../../../../components/match/CaptureControlStatus";
 import { normalizeCourtPoint } from "../../../../lib/courtGeometry";
 import {
   AttackDirection,
@@ -50,6 +51,7 @@ import { assistCandidates } from "../../../../lib/matchReview";
 import {
   useMatchStore,
 } from "../../../../store/useMatchStore";
+import { useCaptureLease } from "../../../../hooks/useCaptureLease";
 import {
   INFERIORITY_SLOT_ID,
   CDA_CLUB_ID,
@@ -104,6 +106,7 @@ function RestartTargets({ onRestart }: { onRestart: (end: "LEFT" | "RIGHT", side
 export default function DirectoPage({ params }: { params: { id: string } }) {
   const matchId = params.id;
   const session = useMatchStore((state) => state.matches[matchId]);
+  const captureControl = useCaptureLease(matchId, session);
   const ensureMatch = useMatchStore((state) => state.ensureMatch);
   const incrementMinute = useMatchStore((state) => state.incrementMinute);
   const decrementMinute = useMatchStore((state) => state.decrementMinute);
@@ -312,9 +315,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const functionalGoalkeeperId = replay.lineupValidation.goalkeeper.status === "PLAYER"
     ? replay.lineupValidation.goalkeeper.playerId
     : undefined;
-  const captureBlocked = lineupBlocked || periodClosed;
+  const captureBlocked = lineupBlocked || periodClosed || !captureControl.canCapture;
   const blockedAction = () => {
-    setFeedback(periodClosed ? "■ Periodo cerrado" : "⚠ Corrige la alineación antes de registrar otra acción");
+    setFeedback(
+      !captureControl.canCapture
+        ? "⚠ No tienes el control de captura"
+        : periodClosed
+          ? "■ Periodo cerrado"
+          : "⚠ Corrige la alineación antes de registrar otra acción",
+    );
   };
 
   const applyInteraction = (action: LiveInteractionAction) => {
@@ -324,7 +333,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       action.type === "COURT_PLAYER_TAPPED" ||
       action.type === "BENCH_PLAYER_TAPPED";
     const harmlessAction = action.type === "CANCEL" || action.type === "END_SEQUENCE";
-    if ((periodClosed && !harmlessAction) || (lineupBlocked && !repairAction)) {
+    if ((!captureControl.canCapture && !harmlessAction) || (periodClosed && !harmlessAction) || (lineupBlocked && !repairAction)) {
       blockedAction();
       return;
     }
@@ -446,6 +455,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         clockSide === "left" ? "sm:pl-40" : "sm:pr-40"
       }`}
     >
+      <CaptureControlStatus control={captureControl} />
       {!orientationReady && (
         <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/90 p-4" role="dialog" aria-label="Elegir orientación de captura">
           <div className="w-full max-w-2xl rounded-3xl border border-cyan-500 bg-slate-900 p-5 shadow-2xl">
@@ -467,18 +477,21 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         onSideChange={updateClockSide}
         verticalSlot={clockVerticalSlot}
         onVerticalSlotChange={updateClockVerticalSlot}
-        onIncreaseRemaining={() => decrementMinute(matchId)}
-        onDecreaseRemaining={() => incrementMinute(matchId)}
+        onIncreaseRemaining={() => captureBlocked ? blockedAction() : decrementMinute(matchId)}
+        onDecreaseRemaining={() => captureBlocked ? blockedAction() : incrementMinute(matchId)}
         onFinishPeriod={() => {
+          if (captureBlocked) return blockedAction();
           setInteraction(IDLE_LIVE_INTERACTION);
           finishCurrentPeriod(matchId);
           setFeedback(session.period === 1 ? "✓ Primera parte finalizada" : "✓ Partido finalizado");
         }}
         onStartSecondPeriod={() => {
+          if (!captureControl.canCapture) return blockedAction();
           setInteraction(IDLE_LIVE_INTERACTION);
           setSecondPeriodSetupOpen(true);
         }}
         onResumeFirstPeriod={() => {
+          if (!captureControl.canCapture) return blockedAction();
           setInteraction(IDLE_LIVE_INTERACTION);
           resumeFirstPeriod(matchId);
           setFeedback("↶ Primera parte reanudada");
@@ -515,7 +528,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       <section className="directo-cockpit mx-auto mb-2 max-w-7xl rounded-2xl border border-slate-700 bg-slate-900/95 p-1.5 shadow-xl">
       <header className="flex flex-wrap items-center justify-between gap-1.5">
         <div className="flex min-w-0 items-center gap-2">
-          <Link href="/partidos" className="grid min-h-12 min-w-12 shrink-0 place-items-center rounded-xl border border-cyan-700/70 bg-slate-900 text-lg font-black text-cyan-200 active:scale-95" aria-label="Salir del Directo y volver a Partidos" title="Partidos">⌂</Link>
+          <Link href="/partidos" onClick={(event) => {
+            event.preventDefault();
+            void captureControl.prepareToLeave().finally(() => window.location.assign("/partidos"));
+          }} className="grid min-h-12 min-w-12 shrink-0 place-items-center rounded-xl border border-cyan-700/70 bg-slate-900 text-lg font-black text-cyan-200 active:scale-95" aria-label="Salir del Directo y volver a Partidos" title="Partidos">⌂</Link>
           <div className="min-w-0">
           <p className="hidden text-[9px] font-semibold uppercase tracking-[0.12em] text-emerald-400 xl:block">
             Partido {matchId}
@@ -622,8 +638,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         onChange={() => { setInteraction(IDLE_LIVE_INTERACTION); setBenchMode("CHANGE_OUT"); }}
         onBench={() => { setInteraction(IDLE_LIVE_INTERACTION); setBenchMode((mode) => mode === "BROWSE" ? "CLOSED" : "BROWSE"); }}
         onFlip={flipCourt}
-        onUndo={() => { setInteraction(IDLE_LIVE_INTERACTION); undo(matchId); }}
-        onRedo={() => { setInteraction(IDLE_LIVE_INTERACTION); redo(matchId); }}
+        onUndo={() => { if (captureBlocked) return blockedAction(); setInteraction(IDLE_LIVE_INTERACTION); undo(matchId); }}
+        onRedo={() => { if (captureBlocked) return blockedAction(); setInteraction(IDLE_LIVE_INTERACTION); redo(matchId); }}
       />
       </section>
 

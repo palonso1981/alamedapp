@@ -16,6 +16,7 @@ import {
   RemoteMatchRepository,
 } from "../lib/sync/remoteMatchRepository";
 import {
+  blocksAccessChange,
   MatchSyncOperation,
   MatchSyncSummary,
 } from "../lib/sync/syncTypes";
@@ -55,11 +56,18 @@ const browserSyncCoordinator = new MatchSyncCoordinator(
   { debug },
 );
 
+export function syncMatchNow(matchId: string): Promise<MatchSyncSummary> {
+  return browserSyncCoordinator.syncMatch(matchId);
+}
+
 export interface MatchSyncView {
   summary: MatchSyncSummary;
   config: FirebaseDevConfigStatus;
   eligible: boolean;
   online: boolean;
+  retryableErrors: number;
+  terminalPermissionErrors: number;
+  captureConflicts: number;
   retry: () => void;
 }
 
@@ -68,9 +76,19 @@ export function useMatchSync(matchId: string): MatchSyncView {
   const eligible = isRemoteSyncEligibleMatch(matchId);
   const [summary, setSummary] = useState<MatchSyncSummary>(EMPTY_SUMMARY);
   const [online, setOnline] = useState(true);
+  const [diagnostics, setDiagnostics] = useState({ retryableErrors: 0, terminalPermissionErrors: 0, captureConflicts: 0 });
 
   const refresh = useCallback(() => {
+    const state = browserMatchRepository.getSyncState(matchId);
     setSummary(browserMatchRepository.getSummary(matchId));
+    setDiagnostics({
+      retryableErrors: state.outbox.filter((operation) => operation.status === "ERROR" && blocksAccessChange(operation)).length,
+      terminalPermissionErrors: state.outbox.filter((operation) => operation.status === "ERROR" && operation.errorKind === "PERMISSION").length,
+      captureConflicts: state.conflicts.filter((conflict) =>
+        typeof conflict.remotePayload === "object" && conflict.remotePayload !== null &&
+        "kind" in conflict.remotePayload && conflict.remotePayload.kind === "CAPTURE_LEASE_MISMATCH",
+      ).length,
+    });
   }, [matchId]);
 
   const sync = useCallback(() => {
@@ -110,5 +128,5 @@ export function useMatchSync(matchId: string): MatchSyncView {
     };
   }, [matchId, refresh, retry, sync]);
 
-  return { summary, config, eligible, online, retry };
+  return { summary, config, eligible, online, ...diagnostics, retry };
 }

@@ -3,9 +3,10 @@
 import { useState } from "react";
 
 import { useMatchSync } from "../../hooks/useMatchSync";
+import { downloadMatchRecoveryBundle } from "../../lib/recoveryBundle";
 
 export function SyncStatusBadge({ matchId }: { matchId: string }) {
-  const { summary, config, eligible, online, retry } = useMatchSync(matchId);
+  const { summary, config, eligible, online, retry, retryableErrors, terminalPermissionErrors, captureConflicts } = useMatchSync(matchId);
   const [open, setOpen] = useState(false);
 
   const state = !eligible
@@ -17,7 +18,9 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
           tone: "bg-red-950 text-red-300",
         }
       : summary.errors > 0
-        ? { label: `! ${summary.errors} sin enviar`, description: `${summary.errors} operaciones sin enviar`, tone: "bg-red-950 text-red-300" }
+        ? terminalPermissionErrors > 0
+          ? { label: `⊘ ${summary.errors}`, description: "Acceso revocado · datos locales preservados", tone: "bg-red-950 text-red-300" }
+          : { label: `! ${summary.errors} sin enviar`, description: `${summary.errors} operaciones sin enviar`, tone: "bg-red-950 text-red-300" }
         : summary.syncing > 0
           ? { label: `↻ ${summary.syncing}`, description: "Sincronizando", tone: "bg-cyan-950 text-cyan-200" }
           : summary.pending > 0
@@ -49,9 +52,13 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
                 : !online
                   ? "Sin conexión. La cola se enviará al recuperar la red."
                   : summary.conflicts > 0
-                    ? `${summary.conflicts} ${summary.conflicts === 1 ? "entidad necesita" : "entidades necesitan"} revisión. La versión local se conserva y no se sobrescribe.`
+                    ? captureConflicts > 0
+                      ? "El control del partido cambió. Los datos locales se conservan y no se sobrescribirán."
+                      : `${summary.conflicts} ${summary.conflicts === 1 ? "entidad necesita" : "entidades necesitan"} revisión. La versión local se conserva y no se sobrescribe.`
                   : summary.pending > 0 || summary.errors > 0
-                    ? `${summary.pending + summary.errors} operaciones guardadas pendientes de envío.`
+                    ? terminalPermissionErrors > 0
+                      ? "El acceso ya no autoriza el envío. La copia local queda preservada para recuperación por un ADMIN."
+                      : `${summary.pending + summary.errors} operaciones guardadas pendientes de envío.`
                     : "No hay operaciones locales pendientes."}
           </p>
           {summary.lastSyncedAt && (
@@ -64,7 +71,7 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
               {summary.lastError}
             </p>
           )}
-          {eligible && config.configured && summary.errors > 0 && (
+          {eligible && config.configured && retryableErrors > 0 && (
             <button
               type="button"
               onClick={retry}
@@ -72,6 +79,15 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
               className="mt-3 min-h-10 w-full rounded-lg bg-cyan-500 font-black text-slate-950 disabled:opacity-40"
             >
               REINTENTAR
+            </button>
+          )}
+          {(terminalPermissionErrors > 0 || captureConflicts > 0) && (
+            <button
+              type="button"
+              onClick={() => downloadMatchRecoveryBundle(matchId)}
+              className="mt-3 min-h-10 w-full rounded-lg border border-amber-500 bg-amber-950 font-black text-amber-100"
+            >
+              EXPORTAR RECUPERACIÓN
             </button>
           )}
         </div>

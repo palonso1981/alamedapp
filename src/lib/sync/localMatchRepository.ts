@@ -9,6 +9,7 @@ import { MatchEvent, MatchSession } from "../../types";
 import { updateMatchCatalog } from "../matchCatalog";
 import { canAccessTeam, canMutateSports } from "../access/accessDomain";
 import { getRuntimeAccessGrant } from "../access/accessRuntime";
+import { captureOperationCanSync, getRuntimeCaptureContext } from "../captureLease";
 import {
   emptyMatchSyncState,
   MATCH_REMOTE_SCHEMA_VERSION,
@@ -85,11 +86,13 @@ function enqueueLatest(
   },
   now: number,
   idFactory: () => string,
+  capture: ReturnType<typeof getRuntimeCaptureContext>,
 ): PersistedMatchSyncState {
   const key = syncEntityKey(input.entityType, input.entityId);
   const compactableIndex = state.outbox.findIndex(
     (operation) =>
       syncEntityKey(operation.entityType, operation.entityId) === key &&
+      operation.captureSessionId === capture?.captureSessionId &&
       (operation.status === "PENDING" ||
         operation.status === "ERROR" ||
         operation.status === "CONFLICT"),
@@ -97,6 +100,8 @@ function enqueueLatest(
   const compactedOperation =
     compactableIndex >= 0 ? state.outbox[compactableIndex] : null;
   const keepsConflict = compactedOperation?.status === "CONFLICT";
+  const keepsTerminalError = compactedOperation?.status === "ERROR" &&
+    ["PERMISSION", "INVALID_DATA", "FATAL"].includes(String(compactedOperation.errorKind));
   const baseRevision = state.knownRemoteRevisions[key] ?? 0;
   const operation: MatchSyncOperation = {
     id:
@@ -110,12 +115,15 @@ function enqueueLatest(
       compactedOperation ? compactedOperation.baseRevision : baseRevision,
     clientUpdatedAt: now,
     attempts: compactedOperation?.attempts ?? 0,
-    status: keepsConflict ? "CONFLICT" : "PENDING",
-    nextAttemptAt: keepsConflict
+    status: keepsConflict ? "CONFLICT" : keepsTerminalError ? "ERROR" : "PENDING",
+    nextAttemptAt: keepsConflict || keepsTerminalError
       ? compactedOperation.nextAttemptAt
       : 0,
-    lastError: keepsConflict ? compactedOperation.lastError : undefined,
-    errorKind: keepsConflict ? compactedOperation.errorKind : undefined,
+    lastError: keepsConflict || keepsTerminalError ? compactedOperation.lastError : undefined,
+    errorKind: keepsConflict || keepsTerminalError ? compactedOperation.errorKind : undefined,
+    captureSessionId: capture?.captureSessionId,
+    captureAccessId: capture?.accessId,
+    captureDeviceInstallId: capture?.deviceInstallId,
   };
   const outbox = [...state.outbox];
   if (compactableIndex >= 0) outbox[compactableIndex] = operation;
@@ -131,8 +139,8 @@ function enqueueLatest(
         )
       : state.conflicts,
     lastLocalMutationAt: now,
-    lastError: keepsConflict ? state.lastError : null,
-    lastErrorKind: keepsConflict ? state.lastErrorKind : null,
+    lastError: keepsConflict || keepsTerminalError ? state.lastError : null,
+    lastErrorKind: keepsConflict || keepsTerminalError ? state.lastErrorKind : null,
   };
 }
 
@@ -144,6 +152,7 @@ function buildNextSyncState(
   idFactory: () => string,
 ): PersistedMatchSyncState {
   let state = initialState;
+  const capture = getRuntimeCaptureContext(current.matchId);
   const previousMetadata = previous ? matchRemoteMetadata(previous) : null;
   const currentMetadata = matchRemoteMetadata(current);
   if (!previousMetadata || !sameValue(previousMetadata, currentMetadata)) {
@@ -158,6 +167,7 @@ function buildNextSyncState(
       },
       now,
       idFactory,
+      capture,
     );
   }
 
@@ -179,6 +189,7 @@ function buildNextSyncState(
       },
       now,
       idFactory,
+      capture,
     );
   }
   previousEvents.forEach((event, eventId) => {
@@ -194,6 +205,7 @@ function buildNextSyncState(
       },
       now,
       idFactory,
+      capture,
     );
   });
   return state;
@@ -296,6 +308,7 @@ export class LocalMatchRepository {
     const index = sync.outbox.findIndex(
       (operation) =>
         (operation.status === "PENDING" || operation.status === "ERROR") &&
+        captureOperationCanSync(matchId, operation.captureSessionId) &&
         operation.nextAttemptAt <= now,
     );
     if (index < 0) return null;
@@ -403,6 +416,11 @@ export class LocalMatchRepository {
     if (!operation) return;
     this.inFlightOperationIds.delete(operationId);
     const now = this.now();
+    const captureControlLost = typeof remotePayload === "object" && remotePayload !== null &&
+      "kind" in remotePayload && (remotePayload as { kind?: unknown }).kind === "CAPTURE_LEASE_MISMATCH";
+    const conflictMessage = captureControlLost
+      ? "Control del partido perdido. Los cambios locales se conservan sin sobrescribir la otra captura."
+      : "El remoto cambió desde la revisión local conocida.";
     const conflict: MatchSyncConflict = {
       operationId,
       entityKey: syncEntityKey(operation.entityType, operation.entityId),
@@ -417,7 +435,7 @@ export class LocalMatchRepository {
             ...item,
             status: "CONFLICT" as const,
             errorKind: "CONFLICT" as const,
-            lastError: "El remoto cambió desde la revisión local conocida.",
+            lastError: conflictMessage,
           }
         : item,
     );
@@ -430,7 +448,7 @@ export class LocalMatchRepository {
           ...record.sync.conflicts.filter((item) => item.operationId !== operationId),
           conflict,
         ],
-        lastError: "Conflicto detectado. No se ha sobrescrito el remoto.",
+        lastError: captureControlLost ? conflictMessage : "Conflicto detectado. No se ha sobrescrito el remoto.",
         lastErrorKind: "CONFLICT",
       },
       storage,
@@ -439,12 +457,52 @@ export class LocalMatchRepository {
     this.notify(matchId);
   }
 
+  markCaptureSessionLost(matchId: string, captureSessionId: string, remoteLease: unknown): void {
+    const storage = this.storage();
+    const record = loadMatchRecord(matchId, storage);
+    if (!record) return;
+    const affected = record.sync.outbox.filter((operation) =>
+      operation.captureSessionId === captureSessionId &&
+      (operation.status === "PENDING" || operation.status === "SYNCING" || operation.status === "ERROR"),
+    );
+    if (affected.length === 0) return;
+    const now = this.now();
+    const operationIds = new Set(affected.map((operation) => operation.id));
+    operationIds.forEach((operationId) => this.inFlightOperationIds.delete(operationId));
+    const conflictMessage = "Control del partido perdido. Los cambios locales se conservan sin sobrescribir la otra captura.";
+    const remotePayload = { kind: "CAPTURE_LEASE_MISMATCH", lease: remoteLease ?? null };
+    const outbox = record.sync.outbox.map((operation) =>
+      operationIds.has(operation.id)
+        ? { ...operation, status: "CONFLICT" as const, errorKind: "CONFLICT" as const, lastError: conflictMessage }
+        : operation,
+    );
+    const conflicts = [
+      ...record.sync.conflicts.filter((conflict) => !operationIds.has(conflict.operationId)),
+      ...affected.map((operation) => ({
+        operationId: operation.id,
+        entityKey: syncEntityKey(operation.entityType, operation.entityId),
+        detectedAt: now,
+        localPayload: operation.payload,
+        remoteRevision: record.sync.knownRemoteRevisions[syncEntityKey(operation.entityType, operation.entityId)] ?? 0,
+        remotePayload,
+      })),
+    ];
+    saveMatchRecord(record.session, {
+      ...record.sync,
+      outbox,
+      conflicts,
+      lastError: conflictMessage,
+      lastErrorKind: "CONFLICT",
+    }, storage, now);
+    this.notify(matchId);
+  }
+
   retryErrors(matchId: string): void {
     const storage = this.storage();
     const record = loadMatchRecord(matchId, storage);
     if (!record) return;
     const outbox = record.sync.outbox.map((operation) =>
-      operation.status === "ERROR"
+      operation.status === "ERROR" && operation.nextAttemptAt !== Number.MAX_SAFE_INTEGER
         ? {
             ...operation,
             status: "PENDING" as const,

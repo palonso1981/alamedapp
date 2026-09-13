@@ -19,10 +19,30 @@ export class FirestoreDevMatchRepository implements RemoteMatchRepository {
         ? doc(db, "matches", operation.matchId)
         : doc(db, "matches", operation.matchId, "events", operation.entityId);
     return runTransaction(db, async (transaction) => {
+      const leaseSnapshot = operation.captureSessionId
+        ? await transaction.get(doc(db, "matchCaptureLeases", operation.matchId))
+        : null;
       const snapshot = await transaction.get(reference);
       const current = snapshot.exists() ? snapshot.data() : undefined;
       const remoteRevision =
         typeof current?.revision === "number" ? current.revision : 0;
+      if (operation.captureSessionId) {
+        const lease = leaseSnapshot?.exists() ? leaseSnapshot.data() : null;
+        if (lease?.status !== "ACTIVE" || lease.captureSessionId !== operation.captureSessionId) {
+          return {
+            status: "CONFLICT",
+            remoteRevision,
+            remotePayload: {
+              kind: "CAPTURE_LEASE_MISMATCH",
+              captureSessionId: lease?.captureSessionId ?? null,
+              accessId: lease?.accessId ?? null,
+              deviceInstallId: lease?.deviceInstallId ?? null,
+              leaseStatus: lease?.status ?? "MISSING",
+              remotePayload: current?.payload ?? null,
+            },
+          };
+        }
+      }
       if (current?.lastOperationId === operation.id) {
         return { status: "ALREADY_APPLIED", revision: remoteRevision };
       }
@@ -44,6 +64,9 @@ export class FirestoreDevMatchRepository implements RemoteMatchRepository {
         clientUpdatedAt: operation.clientUpdatedAt,
         serverUpdatedAt: serverTimestamp(),
         removed: operation.kind === "TOMBSTONE",
+        captureSessionId: operation.captureSessionId ?? null,
+        captureAccessId: operation.captureAccessId ?? null,
+        captureDeviceInstallId: operation.captureDeviceInstallId ?? null,
         payload: firestoreValue(operation.payload),
       });
       return { status: "APPLIED", revision };

@@ -78,6 +78,47 @@ service cloud.firestore {
       }
     }
 
+    // RC2 · lease técnico por partido. No es un estado deportivo ni sustituye
+    // a la cronología. Nunca se permite listar ni borrar físicamente.
+    match /matchCaptureLeases/{matchId} {
+      function parentMatch() { return get(/databases/$(database)/documents/matches/$(matchId)).data; }
+      function parentClub() { return parentMatch().payload.preparation.clubId; }
+      function parentTeam() { return parentMatch().payload.preparation.teamId; }
+      function validLease(data) {
+        return data.entityType == "CAPTURE_LEASE"
+          && data.matchId == matchId
+          && data.clubId == parentClub()
+          && data.teamId == parentTeam()
+          && data.accessId == session(data.clubId).accessId
+          && data.captureSessionId is string
+          && data.deviceInstallId is string
+          && data.status in ["ACTIVE", "RELEASED"]
+          && data.acquiredAt is timestamp
+          && data.lastSeenAt is timestamp
+          && data.expiresAt is timestamp
+          && data.revision is int;
+      }
+      function sameOwner() {
+        return request.resource.data.captureSessionId == resource.data.captureSessionId
+          && request.resource.data.deviceInstallId == resource.data.deviceInstallId
+          && request.resource.data.accessId == resource.data.accessId;
+      }
+      allow get: if teamAllowed(parentClub(), parentTeam());
+      allow list: if false;
+      allow create: if canWriteTeam(parentClub(), parentTeam())
+        && validLease(request.resource.data)
+        && request.resource.data.status == "ACTIVE"
+        && request.resource.data.revision == 1;
+      allow update: if canWriteTeam(parentClub(), parentTeam())
+        && validLease(request.resource.data)
+        && request.resource.data.clubId == resource.data.clubId
+        && request.resource.data.teamId == resource.data.teamId
+        && request.resource.data.revision == resource.data.revision + 1
+        && ((sameOwner())
+          || (request.resource.data.status == "ACTIVE"));
+      allow delete: if false;
+    }
+
     // TEMPORAL Y EXCLUSIVO DE DEV (cdalameda-dev): Anonymous Auth puede
     // mantener la plantilla del único equipo de pruebas. Antes de producción
     // debe sustituirse por autorización por club, usuario y rol.

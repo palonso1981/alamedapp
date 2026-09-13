@@ -109,6 +109,8 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     if (!grant) return;
     const pending = pendingLocalOperations();
     if (pending.length > 0) throw new Error(`Hay ${pending.length} cambios pendientes de sincronizar. Conéctate y sincronízalos antes de cambiar de acceso.`);
+    const { releaseOwnedCaptureLeases } = await import("../../lib/captureLeaseClient");
+    await releaseOwnedCaptureLeases(grant);
     await closeTechnicalSession(grant);
     clearRememberedAccess(); setRuntimeAccessGrant(null); setGrant(null); setMessage(null);
   }
