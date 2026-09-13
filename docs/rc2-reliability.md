@@ -1,6 +1,6 @@
 # RC2 · Fiabilidad multidispositivo y offline
 
-Estado: implementación DEV en `feature/rc2-reliability`. No es un despliegue de producción. Las reglas incluidas no se han desplegado automáticamente.
+Estado: cierre técnico DEV en `feature/rc2-reliability`. No es un despliegue de producción. Las Rules RC2 fueron desplegadas manualmente en `cdalameda-dev`; este cierre no ejecuta ningún despliegue ni operación remota.
 
 ## Contrato de captura
 
@@ -13,6 +13,26 @@ Estado: implementación DEV en `feature/rc2-reliability`. No es un despliegue de
 - Coste aproximado: una captura de 40 minutos mantiene unas 40 renovaciones, más adquisición y liberación (aprox. 42 escrituras de lease por partido; algo más con pausas o reanudaciones). No se escribe cada segundo y no se requieren Functions ni Blaze.
 - Finalizar y vaciar la cola, salir mediante el control de Partidos o cambiar de acceso intentan liberar el lease. Un cierre abrupto se resuelve por caducidad.
 
+### Documento `matchCaptureLeases/{matchId}`
+
+| Campo | Tipo / contrato |
+| --- | --- |
+| `entityType` | literal `CAPTURE_LEASE` |
+| `matchId` | ID exacto del documento y del partido |
+| `clubId`, `teamId` | deben coincidir con la preparación del partido padre |
+| `captureSessionId` | UUID técnico de una sesión de captura; no identifica a una persona |
+| `accessId` | acceso activo que obtuvo el control |
+| `deviceInstallId` | ID aleatorio persistente de instalación; no fingerprint |
+| `status` | `ACTIVE` o `RELEASED` |
+| `acquiredAt` | instante de adquisición; se conserva al reanudar el mismo propietario |
+| `lastSeenAt` | último heartbeat/adquisición/liberación |
+| `expiresAt` | vencimiento operativo; `lastSeenAt + 180 s` mientras está activo |
+| `revision` | entero iniciado en 1 e incrementado exactamente en cada actualización |
+
+Firestore guarda los tres tiempos como `timestamp`; el dominio los representa en milisegundos. `stale` no se persiste: se deriva cuando `status != ACTIVE` o `expiresAt <= now`. Adquirir un lease inexistente o stale crea un nuevo propietario; reanudar exige la misma sesión y dispositivo; takeover sustituye explícitamente al propietario conservando revisión incremental. Heartbeat y release solo son válidos para el propietario vigente.
+
+Las Rules permiten `get` exacto a una sesión con scope sobre el club/equipo del partido, nunca `list`. Solo ADMIN/EDITOR con AccessSession y Access activos pueden crear/actualizar; VIEWER no puede escribir. No existe hard delete: liberar cambia el estado a `RELEASED`.
+
 ## Takeover, offline y particiones
 
 - Otro dispositivo con lease activo ve el Directo bloqueado y puede consultar sin escribir. ADMIN/EDITOR puede iniciar un relevo mediante una confirmación explícita.
@@ -21,6 +41,14 @@ Estado: implementación DEV en `feature/rc2-reliability`. No es un despliegue de
 - Si el partido empieza ya offline y no existía control verificable, la captura solo se habilita tras aceptar `INICIAR CAPTURA OFFLINE BAJO RIESGO`. La sesión queda `UNVERIFIED` y no se envía hasta verificarse.
 - Limitación inevitable: durante una partición, Firebase no puede avisar al dispositivo aislado de un takeover. No se promete exclusividad absoluta offline.
 - Si A reconecta y B tomó el control, todas las operaciones de la sesión A permanecen íntegras y pasan a conflicto `CAPTURE_LEASE_MISMATCH`. No se suben, no se deduplican por parecido y no pisan la captura B.
+
+## VIEWER
+
+- Puede consultar Dashboard, Partidos, Plantilla, Revisión y Vídeo dentro de su scope CLUB/TEAMS.
+- `/partido/{id}/directo` y las demás rutas de mutación se rechazan antes de montar la captura editable.
+- `canMutateSports` es falso, la adquisición/takeover se deniega en el dominio y las Rules deniegan create/update del lease.
+- No puede hacer heartbeat, liberar ni modificar un lease. Leer el partido o el lease exacto no cambia revisión, propietario ni vencimiento y no interfiere con el capturador activo.
+- No se añade UI específica en este cierre: se mantienen sus pantallas de consulta ya autorizadas.
 
 ## Event Sourcing, revisiones y outbox
 
@@ -39,6 +67,35 @@ Estado: implementación DEV en `feature/rc2-reliability`. No es un despliegue de
 - El bundle JSON incluye el partido completo, eventos, outbox, revisiones, conflictos y sesión de captura. La exportación es de solo lectura y conserva IDs exactos.
 - Recuperación V1: un ADMIN recoge el JSON desde el dispositivo afectado y lo conserva como evidencia para reconciliación controlada. RC2 no autoimporta ni decide qué cronología gana; esa incorporación debe hacerse con una herramienta administrativa revisable antes de producción.
 
+El JSON `ALAMEDAPP_MATCH_RECOVERY` V1 contiene `matchId`, versión y fecha de guardado, sesión deportiva completa (incluidos match, eventos e IDs originales), outbox con `operationId` y payload, revisiones remotas conocidas, estado/conflictos de sync y sesión técnica de captura. Es una lectura inmutable del almacenamiento local. No incluye el código de acceso, su plaintext ni `codeHash`; `accessId` y `deviceInstallId` son identificadores técnicos necesarios para diagnosticar la procedencia. El bundle debe custodiarse como dato sensible del partido aunque no contenga credenciales reutilizables.
+
+## Matriz de validación RC2
+
+`PASS MANUAL` refleja únicamente pruebas realizadas por el usuario. `PASS AUTOMATED` indica cobertura determinista; no se presenta como prueba física. La prueba de partición completa queda expresamente pendiente.
+
+| Escenario | Estado | Evidencia / alcance |
+| --- | --- | --- |
+| Mismo partido, segundo escritor | PASS MANUAL · PASS AUTOMATED | B queda OCCUPIED; una carrera concede un solo lease |
+| Partidos distintos simultáneos | PASS MANUAL · PASS AUTOMATED | lease aislado por `matchId` |
+| Captura offline | PASS MANUAL · PASS AUTOMATED | eventos y outbox permanecen locales |
+| Reconexión | PASS MANUAL · PASS AUTOMATED | revalidación previa y sync sin pérdida |
+| Retry / idempotencia | PASS AUTOMATED | conserva `operationId`, `eventId` y `baseRevision` |
+| Cierre / reapertura | PASS AUTOMATED | sesión, outbox, conflictos y revisiones sobreviven |
+| Takeover mientras A está offline y posterior reconexión | PASS AUTOMATED · PENDING HOSTED VALIDATION | falta prueba física con dos dispositivos accesibles |
+| Acceso revocado durante captura offline | PASS AUTOMATED | error terminal, payload preservado y export disponible |
+| VIEWER sobre partido activo | PASS AUTOMATED | sin ruta editable, adquisición ni escritura de lease |
+| Export de recuperación | PASS AUTOMATED | IDs, eventos, outbox, conflictos, revisiones y captura; sin secreto en claro |
+
+### Prueba física pendiente en entorno alojado
+
+1. A obtiene el lease.
+2. A pierde conexión y registra 2–3 eventos.
+3. B abre online el mismo partido y ejecuta takeover.
+4. B registra 1–2 eventos y sincroniza.
+5. A recupera conexión.
+
+Resultado esperado: `CAPTURE_LEASE_MISMATCH`; A no autosincroniza las operaciones afectadas, conserva íntegros payload e IDs y ofrece export de recuperación; B mantiene intacta su cronología remota. Esta validación se hará en RC3/RC4 sobre una URL alojada. Su ausencia en localhost no es un fallo ni bloquea el cierre técnico RC2.
+
 ## Rules DEV
 
 `matchCaptureLeases/{matchId}` permite `get` exacto según el club/equipo autorizado, nunca `list`, y solo permite `create/update` a ADMIN/EDITOR con AccessSession válida. Valida identidad del partido, acceso de sesión, tipos, timestamps y revisión incremental. VIEWER no escribe y el borrado físico está prohibido.
@@ -50,20 +107,11 @@ cd C:\AlamedAPP
 npx firebase-tools deploy --only firestore:rules --project cdalameda-dev
 ```
 
-## Inventario DEV y Chelva
+## Chelva
 
-No se ha escrito, borrado ni migrado ningún documento durante RC2. La consola remota exige una sesión Google que el entorno automatizado no pudo abrir de forma segura, por lo que el inventario exacto sigue pendiente de una lectura autenticada. No se infieren IDs ni cifras.
+Decisión de producto: Chelva es un partido real y los convocados creados para él son personas reales. Debe poder migrarse selectivamente a PROD conservando IDs. El diseño del bundle y del proceso está en `docs/rc3-production-plan.md`; este cierre no lee, exporta, transforma ni migra datos remotos.
 
-Evidencia local versionada:
-
-- `docs/matches-v2-6.md` confirma una prueba contra Chelva y señala estimaciones de vídeo con 1–3 segundos de diferencia mediante anchors separados.
-- No hay en el repositorio un `matchId`, fecha, equipo/temporada o recuento de eventos que identifique inequívocamente ese documento remoto.
-- Hasta completar la lectura remota, Chelva se clasifica como **dato potencialmente real/ambiguo que no debe tocarse**.
-- Sus coordenadas pueden proceder de una etapa anterior a la orientación canónica. No deben reinterpretarse, girarse ni “arreglarse” automáticamente.
-
-Inventario que debe obtenerse antes de PROD, en modo lectura: clubes, equipos, temporadas, plantilla/staff, partidos y subcolecciones `events`, segmentos/anchors/overrides, accesos/sesiones/mappings y leases. Para Chelva: `matchId`, fecha, club/equipo/temporada, rival, número de eventos, provenance, vídeo, anchors, overrides y versión geométrica.
-
-Clasificación exigida al inventariar: fixture/test inequívoco, ambiguo o potencialmente real. El nombre del rival no basta.
+Las coordenadas se capturaron antes del cierre definitivo de la orientación canónica. Se conservarán como raw data, sin giro automático, heurísticas ni “corrección”. La limitación geométrica histórica no invalida identidad de jugadores, resultado, eventos, cronología, vídeo, sustituciones ni goles.
 
 ## Recuperación ADMIN y auditoría de backup
 
@@ -74,14 +122,10 @@ cd C:\AlamedAPP
 npm run access:bootstrap -- <clubId> "<etiqueta>"
 ```
 
-Este procedimiento no recupera un código antiguo: genera un nuevo bootstrap ADMIN y requiere provisionado controlado. No debe usarse en operativa normal y nunca almacena el código en texto plano.
+Este procedimiento excepcional genera un Access ADMIN y mapping nuevos para aprovisionamiento manual. No recupera códigos antiguos: SHA-256 no permite reconstruir el plaintext. El secreto se muestra una sola vez en la salida local y no se guarda en Firestore ni debe copiarse a Git. No se ha ejecutado durante este cierre.
 
-El futuro backup deberá cubrir `clubs` y sus entidades deportivas/Access, `matches/{matchId}` y `events`, `matchCaptureLeases`, `accessCodes`, referencias de imágenes Cloudinary y, mientras exista trabajo no confirmado, almacenamiento local de partidos, outbox, conflictos, revisiones y sesiones de captura.
+El diseño de backup lógico, restore verificable, límites Spark y referencias Cloudinary se detalla en `docs/rc3-production-plan.md`.
 
-## Pendiente para RC3
+## Cierre técnico
 
-1. Separación formal DEV/PROD y creación de PROD limpio.
-2. Backup/restore probado antes de temporada.
-3. Inventario remoto autenticado y migración selectiva opcional de Chelva, conservando versión/orientación original.
-4. Herramienta administrativa auditada para importar bundles de recuperación y resolver doble captura sin pérdida.
-5. Hosting, observabilidad y política operativa de dispositivos.
+RC2 puede considerarse técnicamente cerrado: los escenarios centrales están validados manualmente y automatizados; la única validación física incompleta es el takeover con A aislado y reconectando, clasificada como `PENDING HOSTED VALIDATION`. No se crea PROD ni se despliega nada en este cierre.

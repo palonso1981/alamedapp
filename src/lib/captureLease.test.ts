@@ -177,15 +177,29 @@ test("RC2: el bundle de recuperación conserva eventos, outbox, revisiones y cap
     errorKind: "PERMISSION", lastError: "revocado", captureSessionId: capture.captureSessionId,
     captureAccessId: capture.accessId, captureDeviceInstallId: capture.deviceInstallId,
   });
+  sync.conflicts.push({
+    operationId: "operation-stable",
+    entityKey: `event:${session.events[0].id}`,
+    detectedAt: 22,
+    localPayload: session.events[0],
+    remoteRevision: 3,
+    remotePayload: { id: session.events[0].id, remote: true },
+  });
   assert.equal(saveMatchRecord(session, sync, storage, 22).ok, true);
   const before = storage.getItem(`alamedapp:match:v1:${encodeURIComponent(session.matchId)}`);
   const bundle = createMatchRecoveryBundle(session.matchId, storage, 23);
   assert.equal(bundle.matchId, session.matchId);
+  assert.equal(bundle.session.matchId, session.matchId);
   assert.equal(bundle.session.events[0].id, session.events[0].id);
   assert.equal(bundle.sync.outbox[0].id, "operation-stable");
   assert.equal(bundle.sync.outbox[0].captureSessionId, "capture-recovery");
   assert.equal(bundle.sync.knownRemoteRevisions.match, 3);
+  assert.equal(bundle.sync.conflicts[0].operationId, "operation-stable");
+  assert.equal(bundle.sync.conflicts[0].entityKey, `event:${session.events[0].id}`);
+  assert.equal(bundle.sync.conflicts[0].remoteRevision, 3);
   assert.equal(bundle.captureSession?.captureSessionId, "capture-recovery");
+  const serialized = JSON.stringify(bundle);
+  assert.doesNotMatch(serialized, /accessCode|codeHash|plaintext/i);
   assert.equal(storage.getItem(`alamedapp:match:v1:${encodeURIComponent(session.matchId)}`), before);
 });
 
