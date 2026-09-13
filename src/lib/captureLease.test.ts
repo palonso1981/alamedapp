@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { ActiveAccessGrant, ClubAccessProfile } from "./access/accessDomain";
@@ -186,4 +187,15 @@ test("RC2: el bundle de recuperación conserva eventos, outbox, revisiones y cap
   assert.equal(bundle.sync.knownRemoteRevisions.match, 3);
   assert.equal(bundle.captureSession?.captureSessionId, "capture-recovery");
   assert.equal(storage.getItem(`alamedapp:match:v1:${encodeURIComponent(session.matchId)}`), before);
+});
+
+test("RC2 UX: OCCUPIED mantiene salidas explícitas sin depender del botón Atrás", () => {
+  const component = readFileSync("src/components/match/CaptureControlStatus.tsx", "utf8");
+  assert.match(component, /Navegación disponible con Directo bloqueado/);
+  assert.match(component, /href="\/partidos"/);
+  assert.match(component, /href="\/dashboard"/);
+  assert.match(component, /href="\/plantilla"/);
+  assert.match(component, /`\/partido\/\$\{matchId\}\/revision`/);
+  assert.match(component, /`\/partidos\/\$\{matchId\}\/video`/);
+  assert.match(component, /TOMAR CONTROL DEL PARTIDO/);
 });

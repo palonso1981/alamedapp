@@ -455,7 +455,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         clockSide === "left" ? "sm:pl-40" : "sm:pr-40"
       }`}
     >
-      <CaptureControlStatus control={captureControl} />
+      <CaptureControlStatus control={captureControl} matchId={matchId} />
       {!orientationReady && (
         <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/90 p-4" role="dialog" aria-label="Elegir orientación de captura">
           <div className="w-full max-w-2xl rounded-3xl border border-cyan-500 bg-slate-900 p-5 shadow-2xl">
