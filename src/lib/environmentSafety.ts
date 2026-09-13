@@ -55,6 +55,7 @@ export interface EnvironmentPreflight {
   firebaseProjectId: string | null;
   cloudinaryCloud: string | null;
   cloudinaryPreset: string | null;
+  useEmulator: boolean;
   firebasePublicConfigComplete: boolean;
   anonymousAuthEnabled: boolean;
   buildMode: string;
@@ -104,6 +105,7 @@ export function inspectApplicationEnvironment(env: Record<string, string | undef
     firebaseProjectId,
     cloudinaryCloud,
     cloudinaryPreset,
+    useEmulator,
     firebasePublicConfigComplete,
     anonymousAuthEnabled,
     buildMode: env.NODE_ENV ?? "unknown",

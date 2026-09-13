@@ -57,6 +57,7 @@ test("RC3 environment safety rechaza destinos cruzados y exige confirmación lit
   assert.ok(bad.issues.length >= 3);
   const good = inspectApplicationEnvironment({ NEXT_PUBLIC_APP_ENV: "dev", NEXT_PUBLIC_FIREBASE_ENV: "dev", NEXT_PUBLIC_FIREBASE_PROJECT_ID: "cdalameda-dev", NEXT_PUBLIC_FIREBASE_API_KEY: "public", NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: "cdalameda-dev.firebaseapp.com", NEXT_PUBLIC_FIREBASE_APP_ID: "public", NEXT_PUBLIC_FIREBASE_ANONYMOUS_AUTH: "true", NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: "xc7h48kz", NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET: "alamedapp_players_dev" });
   assert.equal(good.ok, true);
+  assert.equal(good.useEmulator, false);
 });
 
 test("RC3 backup lógico valida referencias, separa Access y conserva Cloudinary sin plaintext", () => {
