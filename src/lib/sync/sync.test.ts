@@ -35,6 +35,7 @@ import { createSeason, emptyTeamWorkspace } from "../seasonDomain";
 import { createTeamProfile } from "../adminDomain";
 import { updateExistingMatchMetadata } from "../matchMetadata";
 import { createVideoSegment, upsertVideoEventOverride, upsertVideoSegment } from "../videoIndex";
+import { resetRuntimeCaptureContextsForTests, setRuntimeCaptureContext } from "../captureLease";
 
 class MemoryStorage implements LocalStorageAdapter {
   private readonly values = new Map<string, string>();
@@ -1039,4 +1040,78 @@ test("errores remotos se clasifican sin confundir permisos con offline", () => {
   const transient = classifyRemoteError({ code: "unavailable", message: "later" });
   assert.equal(transient.kind, "TRANSIENT");
   assert.equal(transient.retryable, true);
+});
+
+test("RC2: outbox de captura conserva IDs deportivos y no sale antes de verificar el lease", () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const matchId = "capture-gated";
+  const session = createSession(matchId);
+  setRuntimeCaptureContext(matchId, {
+    captureSessionId: "capture-1", accessId: "access-1", deviceInstallId: "device-1",
+    mode: "VERIFIED", syncAllowed: false,
+  });
+  local.save(session);
+  const state = local.getSyncState(matchId);
+  assert.ok(state.outbox.length >= 2);
+  assert.ok(state.outbox.every((operation) => operation.captureSessionId === "capture-1"));
+  const eventOperation = state.outbox.find((operation) => operation.entityType === "EVENT");
+  assert.equal(eventOperation?.entityId, session.events[0].id);
+  assert.equal((eventOperation?.payload as typeof session.events[0]).id, session.events[0].id);
+  assert.equal(local.claimNextOperation(matchId), null);
+
+  setRuntimeCaptureContext(matchId, {
+    captureSessionId: "capture-1", accessId: "access-1", deviceInstallId: "device-1",
+    mode: "VERIFIED", syncAllowed: true,
+  });
+  assert.equal(local.claimNextOperation(matchId)?.captureSessionId, "capture-1");
+  resetRuntimeCaptureContextsForTests();
+});
+
+test("RC2: revocación preserva la operación y una edición posterior no la reactiva", () => {
+  const storage = new MemoryStorage();
+  let now = 100;
+  const local = new LocalMatchRepository({ storage, now: () => now, idFactory: idFactory() });
+  const matchId = "capture-revoked";
+  const session = createSession(matchId);
+  setRuntimeCaptureContext(matchId, {
+    captureSessionId: "capture-1", accessId: "access-1", deviceInstallId: "device-1",
+    mode: "VERIFIED", syncAllowed: true,
+  });
+  local.save(session);
+  const operation = local.claimNextOperation(matchId);
+  assert.ok(operation);
+  local.markError(matchId, operation.id, "PERMISSION", "Acceso revocado", false);
+  now = 101;
+  local.save({ ...session, minute: 1, periodMinutes: { ...session.periodMinutes, 1: 1 } });
+  const retained = local.getSyncState(matchId).outbox.find((item) => item.id === operation.id);
+  assert.equal(retained?.status, "ERROR");
+  assert.equal(retained?.errorKind, "PERMISSION");
+  assert.equal(retained?.nextAttemptAt, Number.MAX_SAFE_INTEGER);
+  assert.notEqual(local.claimNextOperation(matchId)?.id, operation.id);
+  resetRuntimeCaptureContextsForTests();
+});
+
+test("RC2: takeover durante offline convierte la captura anterior en conflicto sin perder payload", () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory(), now: () => 500 });
+  const matchId = "capture-taken-over";
+  const session = createSession(matchId);
+  setRuntimeCaptureContext(matchId, {
+    captureSessionId: "capture-old", accessId: "access-old", deviceInstallId: "device-old",
+    mode: "VERIFIED", syncAllowed: false,
+  });
+  local.save(session);
+  const before = local.getSyncState(matchId).outbox;
+  assert.ok(before.length > 0);
+  local.markCaptureSessionLost(matchId, "capture-old", {
+    captureSessionId: "capture-new", accessId: "access-new", deviceInstallId: "device-new", status: "ACTIVE",
+  });
+  const after = local.getSyncState(matchId);
+  assert.equal(after.outbox.length, before.length);
+  assert.ok(after.outbox.every((operation) => operation.status === "CONFLICT"));
+  assert.deepEqual(after.outbox.map((operation) => operation.payload), before.map((operation) => operation.payload));
+  assert.equal(after.conflicts.length, before.length);
+  assert.equal(local.claimNextOperation(matchId), null);
+  resetRuntimeCaptureContextsForTests();
 });

@@ -97,3 +97,21 @@ test("Rules: no existe borrado físico autorizado", () => {
   assert.doesNotMatch(rules, /allow[^;]*delete[^;]*if\s+(?!false)/);
   assert.match(rules, /match \/\{document=\*\*\} \{\s*allow read, write: if false/);
 });
+
+test("Rules RC2: lease exacto por partido, sin list ni delete", () => {
+  const block = rules.match(/match \/matchCaptureLeases\/\{matchId\} \{([\s\S]*?)\n    \}/)?.[1] ?? "";
+  assert.match(block, /allow get: if teamAllowed\(parentClub\(\), parentTeam\(\)\)/);
+  assert.match(block, /allow list: if false/);
+  assert.match(block, /allow delete: if false/);
+  assert.match(block, /data\.entityType == "CAPTURE_LEASE"/);
+  assert.match(block, /data\.accessId == session\(data\.clubId\)\.accessId/);
+  assert.match(block, /request\.resource\.data\.revision == resource\.data\.revision \+ 1/);
+});
+
+test("Rules RC2: solo un escritor autorizado puede crear o actualizar el lease", () => {
+  const block = rules.match(/match \/matchCaptureLeases\/\{matchId\} \{([\s\S]*?)\n    \}/)?.[1] ?? "";
+  assert.match(block, /allow create: if canWriteTeam\(parentClub\(\), parentTeam\(\)\)/);
+  assert.match(block, /allow update: if canWriteTeam\(parentClub\(\), parentTeam\(\)\)/);
+  assert.match(block, /request\.resource\.data\.captureSessionId == resource\.data\.captureSessionId/);
+  assert.match(block, /request\.resource\.data\.status == "ACTIVE"/);
+});
