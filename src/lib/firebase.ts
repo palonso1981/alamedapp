@@ -58,7 +58,7 @@ async function initializeFirebaseDev(): Promise<FirebaseDevServices> {
     });
     emulatorsConnected = true;
   }
-  if (firebaseEnvFlag(process.env.NEXT_PUBLIC_FIREBASE_DEV_ANONYMOUS_AUTH)) {
+  if (firebaseEnvFlag(process.env.NEXT_PUBLIC_FIREBASE_ANONYMOUS_AUTH ?? process.env.NEXT_PUBLIC_FIREBASE_DEV_ANONYMOUS_AUTH)) {
     if (!auth.currentUser) await signInAnonymously(auth);
   }
   return { app, db, auth, useEmulator: status.useEmulator };

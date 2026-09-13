@@ -1,27 +1,44 @@
-export interface FirebaseDevConfigStatus {
+import { AppEnvironment, inspectApplicationEnvironment } from "./environmentSafety";
+
+export interface FirebaseConfigStatus {
   configured: boolean;
   reason?: string;
   useEmulator: boolean;
   projectId?: string;
+  environment?: AppEnvironment;
 }
+
+export type FirebaseDevConfigStatus = FirebaseConfigStatus;
 
 export function firebaseEnvFlag(value: string | undefined): boolean {
   return value === "1" || value === "true";
 }
 
-export function firebaseDevConfigStatus(): FirebaseDevConfigStatus {
-  const environment = process.env.NEXT_PUBLIC_FIREBASE_ENV;
+export function firebaseConfigStatus(): FirebaseConfigStatus {
+  const preflight = inspectApplicationEnvironment(process.env);
   const useEmulator = firebaseEnvFlag(
     process.env.NEXT_PUBLIC_FIREBASE_USE_EMULATOR,
   );
   const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-  if (environment !== "dev") {
+  if (!preflight.environment) {
     return {
       configured: false,
-      reason: "NEXT_PUBLIC_FIREBASE_ENV debe ser dev.",
+      reason: preflight.issues[0] ?? "NEXT_PUBLIC_APP_ENV debe ser dev o prod.",
       useEmulator,
       projectId,
     };
+  }
+  if (!preflight.ok) {
+    return {
+      configured: false,
+      reason: preflight.issues[0] ?? "La configuración lógica DEV no coincide con Firebase DEV.",
+      useEmulator,
+      projectId,
+      environment: preflight.environment,
+    };
+  }
+  if (preflight.environment === "prod" && useEmulator) {
+    return { configured: false, reason: "PROD no puede iniciar con emuladores.", useEmulator, projectId, environment: "prod" };
   }
   if (!projectId) {
     return {
@@ -43,5 +60,10 @@ export function firebaseDevConfigStatus(): FirebaseDevConfigStatus {
       projectId,
     };
   }
-  return { configured: true, useEmulator, projectId };
+  return { configured: true, useEmulator, projectId, environment: preflight.environment };
+}
+
+/** Alias compatible mientras los repositorios conservan su nombre histórico DEV. */
+export function firebaseDevConfigStatus(): FirebaseDevConfigStatus {
+  return firebaseConfigStatus();
 }
