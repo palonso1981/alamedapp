@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": ".data-build",
+    "rootDir": "src",
+    "target": "ES2022"
+  },
+  "include": [
+    "src/lib/environmentSafety.ts",
+    "src/lib/dataPortability.ts",
+    "src/scripts/dataCli.ts"
+  ]
+}

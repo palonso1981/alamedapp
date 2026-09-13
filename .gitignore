@@ -9,6 +9,7 @@
 # testing
 /coverage
 /.test-build/
+/.data-build/
 
 # next.js
 /.next/
