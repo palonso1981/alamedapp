@@ -2,6 +2,8 @@
 
 Estado: **solo diseño**. Este documento no crea Firebase PROD, no despliega Hosting/Rules, no exporta ni importa datos y no migra DEV.
 
+RC3-A añade herramientas locales de preparación. Su contrato y comandos están en data-backup-restore.md y chelva-migration.md. Todavía no existe adaptador remoto: todos los ensayos se hacen con fixture/inventario JSON e in-memory.
+
 ## Principios y orden recomendado
 
 1. Acordar ownership institucional y responsables de recuperación.
@@ -147,3 +149,36 @@ No se implementa en este cierre; antes de PWA debe auditarse cualquier mecanismo
 - Mantener inventario de responsables, MFA, dominios, facturación (aunque sea Spark), rotación y baja.
 
 El piloto previo a V1.0 debe incluir checklist de dispositivo, batería/red, operador suplente, backup previo, sync cero inicial/final, prueba de recuperación y registro de incidencias. No se promociona a V1.0 hasta completar restore probado y la validación alojada multidispositivo.
+
+## Checklist exacto RC3-B
+
+Con el usuario presente y autorizando cada paso:
+
+1. Crear Firebase PROD limpio bajo cuenta institucional.
+2. Copiar y confirmar literalmente el projectId.
+3. Activar Anonymous Auth.
+4. Crear Firestore en la región acordada.
+5. Revisar y desplegar firestore.rules exclusivamente al projectId confirmado.
+6. Revisar y desplegar firestore.indexes.json.
+7. Completar variables PROD desde .env.production.example, sin reutilizar DEV.
+8. Crear/configurar Cloudinary PROD con cloud/preset/folder separados y unsigned preset mínimo.
+9. Añadir adaptador remoto de inventario/restore con autenticación local segura.
+10. Ejecutar data:preflight y pruebas de Rules contra PROD vacío.
+11. No importar Chelva todavía.
+
+Autorizaciones necesarias: creación de ambos recursos institucionales, elección de región, deploy de Rules/índices, configuración de credenciales locales y cualquier primera escritura. Checkpoint esperado: infraestructura PROD vacía, preflight verde, reglas probadas, backup/restore remoto aún sin migración.
+
+## Checklist exacto RC3-C
+
+1. Identificar matchId Chelva.
+2. Exportar e inspeccionar bundle.
+3. Validar bundle y referencias.
+4. Crear backup previo de PROD.
+5. Ejecutar import dry-run.
+6. Resolver cualquier colisión sin remapear por nombre.
+7. Autorizar y aplicar import.
+8. Verificar players, events, replay y vídeo.
+9. Comprobar segunda ejecución idempotente.
+10. Preparar/desplegar Hosting/PWA con update safety.
+11. Repetir prueba A offline → B takeover → A reconnect en dispositivos físicos.
+12. Ejecutar piloto y decidir V1.0.
