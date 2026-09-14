@@ -48,6 +48,15 @@ const lazyFirestoreRemote: RemoteMatchRepository = {
     }
     return firestoreRemote.apply(operation);
   },
+  async read(operation: MatchSyncOperation) {
+    if (!firestoreRemote) {
+      const { FirestoreDevMatchRepository } = await import(
+        "../lib/sync/firestoreMatchRepository"
+      );
+      firestoreRemote = new FirestoreDevMatchRepository();
+    }
+    return firestoreRemote.read(operation);
+  },
 };
 
 const browserSyncCoordinator = new MatchSyncCoordinator(
@@ -69,6 +78,7 @@ export interface MatchSyncView {
   terminalPermissionErrors: number;
   captureConflicts: number;
   retry: () => void;
+  reconcileIdentical: () => Promise<{ reconciled: number; protected: number; unchanged: number }>;
 }
 
 export function useMatchSync(matchId: string): MatchSyncView {
@@ -101,6 +111,15 @@ export function useMatchSync(matchId: string): MatchSyncView {
     void browserSyncCoordinator.retryMatch(matchId).then(refresh);
   }, [config.configured, eligible, matchId, refresh]);
 
+  const reconcileIdentical = useCallback(async () => {
+    if (!eligible || !config.configured || !navigator.onLine) return { reconciled: 0, protected: 0, unchanged: 0 };
+    const operations = browserMatchRepository.getSyncState(matchId).outbox;
+    const snapshots = await Promise.all(operations.map((operation) => lazyFirestoreRemote.read(operation)));
+    const result = browserMatchRepository.reconcileRemoteSnapshots(matchId, snapshots);
+    refresh();
+    return result;
+  }, [config.configured, eligible, matchId, refresh]);
+
   useEffect(() => {
     setOnline(navigator.onLine);
     refresh();
@@ -128,5 +147,5 @@ export function useMatchSync(matchId: string): MatchSyncView {
     };
   }, [matchId, refresh, retry, sync]);
 
-  return { summary, config, eligible, online, ...diagnostics, retry };
+  return { summary, config, eligible, online, ...diagnostics, retry, reconcileIdentical };
 }

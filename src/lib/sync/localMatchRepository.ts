@@ -18,11 +18,13 @@ import {
   MatchSyncOperation,
   MatchSyncSummary,
   PersistedMatchSyncState,
+  RemoteMatchEntitySnapshot,
   summarizeSyncState,
   SyncErrorKind,
   SyncOperationKind,
   SyncOperationPayload,
   syncEntityKey,
+  syncPayloadsEqual,
   SyncEntityType,
 } from "./syncTypes";
 
@@ -65,10 +67,6 @@ export function matchRemoteMetadata(session: MatchSession): MatchRemoteMetadata 
     videoEventOverrides: session.videoEventOverrides ?? [],
     preparation: session.preparation,
   };
-}
-
-function sameValue(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function defaultIdFactory(): string {
@@ -155,7 +153,7 @@ function buildNextSyncState(
   const capture = getRuntimeCaptureContext(current.matchId);
   const previousMetadata = previous ? matchRemoteMetadata(previous) : null;
   const currentMetadata = matchRemoteMetadata(current);
-  if (!previousMetadata || !sameValue(previousMetadata, currentMetadata)) {
+  if (!previousMetadata || !syncPayloadsEqual(previousMetadata, currentMetadata)) {
     state = enqueueLatest(
       state,
       {
@@ -177,7 +175,7 @@ function buildNextSyncState(
   const currentEvents = new Map(current.events.map((event) => [event.id, event]));
   for (const event of current.events) {
     const prior = previousEvents.get(event.id);
-    if (prior && sameValue(prior, event)) continue;
+    if (prior && syncPayloadsEqual(prior, event)) continue;
     state = enqueueLatest(
       state,
       {
@@ -272,6 +270,74 @@ export class LocalMatchRepository {
 
   getSummary(matchId: string): MatchSyncSummary {
     return summarizeSyncState(this.getSyncState(matchId));
+  }
+
+  /**
+   * Recuperación conservadora: elimina solo operaciones demostrablemente
+   * idénticas al remoto. Una divergencia basada en 0 queda bloqueada como
+   * conflicto, conservando ambos payloads y sin habilitar una sobrescritura.
+   */
+  reconcileRemoteSnapshots(matchId: string, snapshots: readonly RemoteMatchEntitySnapshot[]): { reconciled: number; protected: number; unchanged: number } {
+    const storage = this.storage();
+    const record = loadMatchRecord(matchId, storage);
+    if (!record) return { reconciled: 0, protected: 0, unchanged: 0 };
+    const remote = new Map(snapshots.map((snapshot) => [syncEntityKey(snapshot.entityType, snapshot.entityId), snapshot]));
+    const reconciledIds = new Set<string>();
+    const protectedIds = new Set<string>();
+    const revisions = { ...record.sync.knownRemoteRevisions };
+    const conflicts = [...record.sync.conflicts];
+    const outbox = record.sync.outbox.map((operation) => {
+      const key = syncEntityKey(operation.entityType, operation.entityId);
+      const snapshot = remote.get(key);
+      if (!snapshot) return operation;
+      if (snapshot.exists) revisions[key] = snapshot.revision;
+      const sameRemoval = snapshot.exists && snapshot.removed === (operation.kind === "TOMBSTONE");
+      if (sameRemoval && syncPayloadsEqual(operation.payload, snapshot.payload)) {
+        reconciledIds.add(operation.id);
+        return operation;
+      }
+      if (snapshot.exists && operation.baseRevision === 0) {
+        protectedIds.add(operation.id);
+        const conflict: MatchSyncConflict = {
+          operationId: operation.id,
+          entityKey: key,
+          detectedAt: this.now(),
+          localPayload: operation.payload,
+          remoteRevision: snapshot.revision,
+          remotePayload: snapshot.payload,
+        };
+        const index = conflicts.findIndex((item) => item.operationId === operation.id);
+        if (index >= 0) conflicts[index] = conflict;
+        else conflicts.push(conflict);
+        return {
+          ...operation,
+          status: "CONFLICT" as const,
+          errorKind: "CONFLICT" as const,
+          lastError: "El remoto existe y falta una revisión base fiable. Se conservan ambas versiones.",
+          nextAttemptAt: Number.MAX_SAFE_INTEGER,
+        };
+      }
+      return operation;
+    }).filter((operation) => !reconciledIds.has(operation.id));
+    reconciledIds.forEach((id) => this.inFlightOperationIds.delete(id));
+    const retainedIds = new Set(outbox.map((operation) => operation.id));
+    const retainedConflicts = conflicts.filter((conflict) => retainedIds.has(conflict.operationId));
+    const now = this.now();
+    const result = saveMatchRecord(record.session, {
+      ...record.sync,
+      outbox,
+      knownRemoteRevisions: revisions,
+      conflicts: retainedConflicts,
+      lastSyncedAt: reconciledIds.size > 0 ? now : record.sync.lastSyncedAt,
+      lastError: retainedConflicts.length > 0
+        ? "Quedan cambios locales distintos del remoto que requieren revisión."
+        : outbox.length > 0 ? record.sync.lastError : null,
+      lastErrorKind: retainedConflicts.length > 0
+        ? "CONFLICT"
+        : outbox.length > 0 ? record.sync.lastErrorKind : null,
+    }, storage, now);
+    if (result.ok) this.notify(matchId);
+    return { reconciled: reconciledIds.size, protected: protectedIds.size, unchanged: outbox.length - protectedIds.size };
   }
 
   save(session: MatchSession): LocalMatchSaveResult {

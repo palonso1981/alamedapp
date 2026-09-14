@@ -6,8 +6,10 @@ import { useMatchSync } from "../../hooks/useMatchSync";
 import { downloadMatchRecoveryBundle } from "../../lib/recoveryBundle";
 
 export function SyncStatusBadge({ matchId }: { matchId: string }) {
-  const { summary, config, eligible, online, retry, retryableErrors, terminalPermissionErrors, captureConflicts } = useMatchSync(matchId);
+  const { summary, config, eligible, online, retry, reconcileIdentical, retryableErrors, terminalPermissionErrors, captureConflicts } = useMatchSync(matchId);
   const [open, setOpen] = useState(false);
+  const [rechecking, setRechecking] = useState(false);
+  const [recheckMessage, setRecheckMessage] = useState("");
 
   const state = !eligible
     ? { label: "○", description: "Solo local", tone: "bg-slate-900 text-slate-400" }
@@ -90,6 +92,22 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
               EXPORTAR RECUPERACIÓN
             </button>
           )}
+          {(summary.conflicts > 0 || summary.errors > 0) && (
+            <button
+              type="button"
+              disabled={!online || rechecking}
+              onClick={() => {
+                setRechecking(true); setRecheckMessage("");
+                void reconcileIdentical().then((result) => {
+                  setRecheckMessage(`${result.reconciled} redundantes resueltas · ${result.protected} distintas protegidas`);
+                }).finally(() => setRechecking(false));
+              }}
+              className="mt-3 min-h-10 w-full rounded-lg border border-cyan-700 bg-cyan-950 px-2 font-black text-cyan-100 disabled:opacity-40"
+            >
+              {rechecking ? "COMPARANDO…" : "RECOMPROBAR SIN SOBRESCRIBIR"}
+            </button>
+          )}
+          {recheckMessage && <p className="mt-2 text-[10px] text-cyan-200">{recheckMessage}</p>}
         </div>
       )}
     </div>

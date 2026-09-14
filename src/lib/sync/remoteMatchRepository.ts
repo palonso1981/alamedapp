@@ -1,7 +1,9 @@
 import {
   MatchSyncOperation,
+  RemoteMatchEntitySnapshot,
   SyncErrorKind,
   syncEntityKey,
+  syncPayloadsEqual,
 } from "./syncTypes";
 
 export type RemoteApplyResult =
@@ -14,6 +16,7 @@ export type RemoteApplyResult =
 
 export interface RemoteMatchRepository {
   apply(operation: MatchSyncOperation): Promise<RemoteApplyResult>;
+  read(operation: MatchSyncOperation): Promise<RemoteMatchEntitySnapshot>;
 }
 
 export class RemoteSyncError extends Error {
@@ -74,6 +77,9 @@ export class InMemoryRemoteMatchRepository implements RemoteMatchRepository {
       return { status: "ALREADY_APPLIED", revision: current.revision };
     }
     const remoteRevision = current?.revision ?? 0;
+    if (current && current.removed === (operation.kind === "TOMBSTONE") && syncPayloadsEqual(current.payload, operation.payload)) {
+      return { status: "ALREADY_APPLIED", revision: current.revision };
+    }
     if (remoteRevision !== operation.baseRevision) {
       return {
         status: "CONFLICT",
@@ -93,6 +99,18 @@ export class InMemoryRemoteMatchRepository implements RemoteMatchRepository {
       throw new RemoteSyncError("TRANSIENT", "ACK simulado perdido.", true);
     }
     return { status: "APPLIED", revision };
+  }
+
+  async read(operation: MatchSyncOperation): Promise<RemoteMatchEntitySnapshot> {
+    const current = this.documents.get(`${operation.matchId}:${syncEntityKey(operation.entityType, operation.entityId)}`);
+    return {
+      entityType: operation.entityType,
+      entityId: operation.entityId,
+      exists: Boolean(current),
+      revision: current?.revision ?? 0,
+      removed: current?.removed ?? false,
+      payload: current?.payload ?? null,
+    };
   }
 
   seed(

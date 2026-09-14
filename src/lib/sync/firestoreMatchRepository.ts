@@ -1,4 +1,4 @@
-import { doc, runTransaction, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, runTransaction, serverTimestamp } from "firebase/firestore";
 
 import { getFirebaseDevServices } from "../firebase";
 import {
@@ -6,12 +6,30 @@ import {
   RemoteMatchRepository,
 } from "./remoteMatchRepository";
 import { MatchSyncOperation } from "./syncTypes";
+import { RemoteMatchEntitySnapshot, syncPayloadsEqual } from "./syncTypes";
 
 function firestoreValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
 export class FirestoreDevMatchRepository implements RemoteMatchRepository {
+  async read(operation: MatchSyncOperation): Promise<RemoteMatchEntitySnapshot> {
+    const { db } = await getFirebaseDevServices();
+    const reference = operation.entityType === "MATCH"
+      ? doc(db, "matches", operation.matchId)
+      : doc(db, "matches", operation.matchId, "events", operation.entityId);
+    const snapshot = await getDoc(reference);
+    const data = snapshot.exists() ? snapshot.data() : undefined;
+    return {
+      entityType: operation.entityType,
+      entityId: operation.entityId,
+      exists: snapshot.exists(),
+      revision: typeof data?.revision === "number" ? data.revision : 0,
+      removed: data?.removed === true,
+      payload: data?.payload ?? null,
+    };
+  }
+
   async apply(operation: MatchSyncOperation): Promise<RemoteApplyResult> {
     const { db } = await getFirebaseDevServices();
     const reference =
@@ -44,6 +62,9 @@ export class FirestoreDevMatchRepository implements RemoteMatchRepository {
         }
       }
       if (current?.lastOperationId === operation.id) {
+        return { status: "ALREADY_APPLIED", revision: remoteRevision };
+      }
+      if (current && current.removed === (operation.kind === "TOMBSTONE") && syncPayloadsEqual(current.payload, firestoreValue(operation.payload))) {
         return { status: "ALREADY_APPLIED", revision: remoteRevision };
       }
       if (remoteRevision !== operation.baseRevision) {

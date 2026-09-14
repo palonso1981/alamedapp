@@ -29,7 +29,7 @@ import {
   InMemoryRemoteMatchRepository,
 } from "./remoteMatchRepository";
 import { MatchSyncCoordinator } from "./syncCoordinator";
-import { migrateMatchSyncState } from "./syncTypes";
+import { migrateMatchSyncState, syncEntityKey } from "./syncTypes";
 import { createDraftMatch } from "../preMatch";
 import { createSeason, emptyTeamWorkspace } from "../seasonDomain";
 import { createTeamProfile } from "../adminDomain";
@@ -1109,6 +1109,122 @@ test("hidratación PROD-style refresca una caché incompleta con eventos y víde
   );
   assert.equal(dashboard.analytics.matches, 1);
   assert.equal(dashboard.analytics.goalsFor, 1);
+});
+
+test("hidratar 94 eventos y editar solo vídeo encola únicamente MATCH incluso tras reload", async () => {
+  const storage = new MemoryStorage();
+  const matchId = "historical-video-only";
+  const initial = createSession(matchId);
+  const events = [...initial.events, ...Array.from({ length: 93 }, (_, index) => createLiveThreatEvent({
+    id: `historical-event-${index + 1}`,
+    matchId,
+    position: { period: index < 47 ? 1 : 2, minute: index % 20, order: Math.floor(index / 20) + 1 },
+    side: "FOR",
+    playerId: initial.players[index % initial.players.length].id,
+    origin: { x: (index % 10) / 10, y: ((index * 3) % 10) / 10 },
+    outcome: "FUERA",
+    phase: "POSITIONAL",
+    now: index + 10,
+  }))];
+  events[7] = { ...events[7], deletedAt: 1000 };
+  const existingSegment = {
+    ...createVideoSegment({ id: "existing-video", urlOrVideoId: "abcdefghijk", periods: [1, 2], now: 1001 }),
+    anchors: [{ id: "existing-anchor", eventId: events[1].id, videoSecond: 17 }],
+  };
+  const remoteSession = upsertVideoEventOverride({
+    ...initial,
+    matchFinished: true,
+    reviewStatus: "IN_REVIEW" as const,
+    reviewRevision: 2,
+    events,
+    videoSegments: [existingSegment],
+  }, { eventId: events[2].id, segmentId: existingSegment.id, videoSecond: 31, now: 1002 });
+  const known = Object.fromEntries([
+    [syncEntityKey("MATCH", matchId), 4],
+    ...events.map((event, index) => [syncEntityKey("EVENT", event.id), index % 3 + 1] as const),
+  ]);
+  const local = new LocalMatchRepository({ storage, now: () => 2000, idFactory: idFactory() });
+  assert.equal(local.hydrateRemote(remoteSession, known), true);
+  assert.equal(local.getSyncState(matchId).outbox.length, 0);
+  assert.equal(Object.keys(local.getSyncState(matchId).knownRemoteRevisions).length, 95);
+
+  const reopened = new LocalMatchRepository({ storage, now: () => 2001, idFactory: idFactory() });
+  const segment = createVideoSegment({ id: "video-only", urlOrVideoId: "abcdefghijk", periods: [1, 2], now: 2001 });
+  reopened.save({ ...reopened.load(matchId)!, videoSegments: [existingSegment, segment] });
+  const queued = reopened.getSyncState(matchId).outbox;
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].entityType, "MATCH");
+  assert.equal(queued[0].baseRevision, 4);
+  assert.equal(queued.filter((operation) => operation.entityType === "EVENT").length, 0);
+
+  const remote = new InMemoryRemoteMatchRepository();
+  remote.seed(matchId, "MATCH", matchId, 4, matchRemoteMetadata(remoteSession));
+  events.forEach((event, index) => remote.seed(matchId, "EVENT", event.id, index % 3 + 1, event));
+  await new MatchSyncCoordinator(reopened, remote, { isOnline: () => true }).syncMatch(matchId);
+  assert.equal(remote.applyCalls, 1);
+  assert.equal(reopened.getSummary(matchId).conflicts, 0);
+  assert.equal(reopened.getSummary(matchId).errors, 0);
+  assert.equal(reopened.getSummary(matchId).pending, 0);
+});
+
+test("reconciliación elimina solo operaciones idénticas y protege divergencias base 0", () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 3000, idFactory: idFactory() });
+  const initial = createSession("reconcile-recovery");
+  const session = {
+    ...initial,
+    events: [...initial.events, ...Array.from({ length: 93 }, (_, index) => createLiveThreatEvent({
+      id: `recovery-event-${index + 1}`,
+      matchId: initial.matchId,
+      position: { period: index < 47 ? 1 : 2, minute: index % 20, order: Math.floor(index / 20) + 1 },
+      side: "FOR",
+      playerId: initial.players[index % initial.players.length].id,
+      origin: { x: 0.4, y: 0.6 },
+      outcome: "FUERA",
+      phase: "POSITIONAL",
+      now: index + 1,
+    }))],
+  };
+  local.save(session);
+  const operations = local.getSyncState(session.matchId).outbox;
+  assert.equal(operations.length, 95);
+  const snapshots = operations.map((operation, index) => ({
+    entityType: operation.entityType,
+    entityId: operation.entityId,
+    exists: true,
+    revision: index + 1,
+    removed: operation.kind === "TOMBSTONE",
+    payload: operation.entityType === "MATCH"
+      ? { ...operation.payload, minute: 9 }
+      : structuredClone(operation.payload),
+  }));
+
+  const result = local.reconcileRemoteSnapshots(session.matchId, snapshots);
+  assert.equal(result.reconciled, 94);
+  assert.equal(result.protected, 1);
+  const state = local.getSyncState(session.matchId);
+  assert.equal(state.outbox.length, 1);
+  assert.equal(state.outbox[0].entityType, "MATCH");
+  assert.equal(state.outbox[0].status, "CONFLICT");
+  assert.equal(state.outbox[0].baseRevision, 0);
+  assert.equal(state.conflicts.length, 1);
+  assert.equal(state.conflicts[0].remoteRevision, 1);
+  assert.equal(Object.keys(state.knownRemoteRevisions).length, 95);
+  assert.equal(state.knownRemoteRevisions.match, 1);
+});
+
+test("payload remoto semánticamente idéntico se confirma sin conflicto aunque cambie la revisión", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const session = createSession("match-identical-retry");
+  local.save(session);
+  const operation = local.getSyncState(session.matchId).outbox.find((item) => item.entityType === "EVENT")!;
+  const remote = new InMemoryRemoteMatchRepository();
+  remote.seed(session.matchId, operation.entityType, operation.entityId, 7, structuredClone(operation.payload));
+  await new MatchSyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(session.matchId);
+  assert.equal(local.getSyncState(session.matchId).outbox.some((item) => item.id === operation.id), false);
+  assert.equal(local.getSyncState(session.matchId).knownRemoteRevisions[syncEntityKey("EVENT", operation.entityId)], 7);
+  assert.equal(local.getSummary(session.matchId).conflicts, 0);
 });
 
 test("hidratación remota de partido conserva una captura local pendiente", () => {

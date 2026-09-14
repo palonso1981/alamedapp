@@ -473,9 +473,13 @@ export const useMatchStore = create<MatchState>((set) => ({
         return state;
       }
       const loaded = browserMatchRepository.load(matchId);
-      const session = loaded
-        ? persistSession(upgradeDemoSession(loaded))
-        : persistSession(createSession(matchId));
+      let session: MatchSession;
+      if (!loaded) {
+        session = persistSession(createSession(matchId));
+      } else {
+        const upgraded = upgradeDemoSession(loaded);
+        session = upgraded === loaded ? loaded : persistSession(upgraded);
+      }
       return {
         matches: {
           ...state.matches,

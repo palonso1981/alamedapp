@@ -39,6 +39,15 @@ export interface MatchRemoteMetadata {
 
 export type SyncOperationPayload = MatchRemoteMetadata | MatchEvent;
 
+export interface RemoteMatchEntitySnapshot {
+  entityType: SyncEntityType;
+  entityId: string;
+  exists: boolean;
+  revision: number;
+  removed: boolean;
+  payload: unknown;
+}
+
 export interface MatchSyncOperation {
   id: string;
   matchId: string;
@@ -136,6 +145,22 @@ export function syncEntityKey(
   entityId: string,
 ): string {
   return entityType === "MATCH" ? "match" : `event:${entityId}`;
+}
+
+function canonicalSyncValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalSyncValue);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalSyncValue(item)]),
+  );
+}
+
+/** Igualdad de dominio estable ante orden de propiedades y undefined no persistido por Firestore. */
+export function syncPayloadsEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonicalSyncValue(left)) === JSON.stringify(canonicalSyncValue(right));
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
