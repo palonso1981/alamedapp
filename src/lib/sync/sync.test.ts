@@ -36,6 +36,8 @@ import { createTeamProfile } from "../adminDomain";
 import { updateExistingMatchMetadata } from "../matchMetadata";
 import { createVideoSegment, upsertVideoEventOverride, upsertVideoSegment } from "../videoIndex";
 import { resetRuntimeCaptureContextsForTests, setRuntimeCaptureContext } from "../captureLease";
+import { buildDashboardV2, emptyDashboardScope } from "../dashboardV2";
+import { listMatchCatalog } from "../matchCatalog";
 
 class MemoryStorage implements LocalStorageAdapter {
   private readonly values = new Map<string, string>();
@@ -1031,6 +1033,94 @@ test("segmentos y anchors viajan como metadata MATCH sin modificar eventos", asy
   assert.equal(remotePayload.videoSegments?.[0].videoId, "abcdefghijk");
   assert.equal(remotePayload.videoEventOverrides?.[0].eventId, session.events[0].id);
   assert.equal(local.getSummary(session.matchId).pending, 0);
+});
+
+test("hidratación PROD-style refresca una caché incompleta con eventos y vídeo sin crear outbox", () => {
+  const storage = new MemoryStorage();
+  const matchId = "remote-existing-cache";
+  const initial = createSession(matchId);
+  const preparation = {
+    clubId: "club-prod",
+    teamId: "team-prod",
+    seasonId: "season-prod",
+    opponent: "Rival remoto",
+    venue: "AWAY" as const,
+    date: "2026-09-05",
+    competitionType: "FRIENDLY" as const,
+    status: "FINISHED" as const,
+    calledPlayerIds: initial.players.map((player) => player.id),
+    starterPlayerIds: initial.players.slice(0, 5).map((player) => player.id),
+    selectedStaffIds: [],
+    targetMinutes: {},
+    createdAt: 1,
+    updatedAt: 2,
+  };
+  const cached = { ...initial, preparation, matchFinished: true, events: [], videoSegments: [] };
+  assert.equal(saveMatchSession(cached, storage, 3).ok, true);
+
+  const goal = createLiveThreatEvent({
+    id: "remote-goal",
+    matchId,
+    position: { period: 1, minute: 4, order: 1 },
+    side: "FOR",
+    playerId: initial.players[0].id,
+    origin: { x: 0.2, y: 0.5 },
+    outcome: "GOL",
+    phase: "POSITIONAL",
+    now: 4,
+  });
+  const historicalDuplicateOrder = createLiveThreatEvent({
+    id: "remote-duplicate-order",
+    matchId,
+    position: { period: 1, minute: 4, order: 1 },
+    side: "FOR",
+    playerId: initial.players[0].id,
+    origin: { x: 0.3, y: 0.5 },
+    outcome: "FUERA",
+    phase: "POSITIONAL",
+    now: 5,
+  });
+  const segment = {
+    ...createVideoSegment({ id: "remote-video", urlOrVideoId: "abcdefghijk", periods: [1, 2], now: 5 }),
+    anchors: [{ id: "remote-anchor", eventId: goal.id, videoSecond: 17 }],
+  };
+  const remote = {
+    ...initial,
+    preparation,
+    matchFinished: true,
+    events: [...initial.events, goal, historicalDuplicateOrder],
+    videoSegments: [segment],
+  };
+  const repository = new LocalMatchRepository({ storage, now: () => 6 });
+  assert.equal(repository.hydrateRemote(remote, { "match": 1, [`event:${goal.id}`]: 1 }), true);
+
+  const loaded = repository.load(matchId);
+  assert.ok(loaded);
+  assert.equal(loaded.events.some((event) => event.id === goal.id), true);
+  assert.equal(replayMatch(loaded.players, loaded.events).issues.some((issue) => issue.code === "DUPLICATE_ORDER"), true);
+  assert.equal(loaded.videoSegments?.[0].anchors[0].eventId, goal.id);
+  assert.equal(repository.getSyncState(matchId).outbox.length, 0);
+  const catalog = listMatchCatalog(storage).find((item) => item.matchId === matchId);
+  assert.ok(catalog);
+  assert.equal(catalog.eventCount, remote.events.length);
+  const dashboard = buildDashboardV2(
+    [{ catalog, session: loaded }],
+    emptyDashboardScope("club-prod", "team-prod", "season-prod"),
+  );
+  assert.equal(dashboard.analytics.matches, 1);
+  assert.equal(dashboard.analytics.goalsFor, 1);
+});
+
+test("hidratación remota de partido conserva una captura local pendiente", () => {
+  const storage = new MemoryStorage();
+  const repository = new LocalMatchRepository({ storage, now: () => 10, idFactory: idFactory() });
+  const local = createSession("remote-does-not-overwrite-offline");
+  assert.equal(repository.save(local).ok, true);
+  const pending = repository.getSyncState(local.matchId).outbox.map((operation) => operation.id);
+  const remote = { ...local, minute: 8, periodMinutes: { ...local.periodMinutes, 1: 8 } };
+  assert.equal(repository.hydrateRemote(remote, { match: 2 }), true);
+  assert.equal(repository.load(local.matchId)?.minute, 0);
+  assert.deepEqual(repository.getSyncState(local.matchId).outbox.map((operation) => operation.id), pending);
 });
 
 test("errores remotos se clasifican sin confundir permisos con offline", () => {

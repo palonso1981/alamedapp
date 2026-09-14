@@ -1,5 +1,4 @@
 import {
-  assertValidChronology,
   normalizeMatchClock,
   REGULATION_MATCH_CLOCK,
   synchronizeThreatSequencePhases,
@@ -589,11 +588,9 @@ function validPersistedSession(
   }
 
   try {
-    const players = value.players as Player[];
     const events = value.events as MatchEvent[];
     const past = value.past as MatchEvent[][];
     const future = value.future as MatchEvent[][];
-
     const staffIds = new Set((value.staff as StaffMember[]).map((member) => member.id));
     const validStaffReferences = [events, ...past, ...future].every(
       (chronology) =>
@@ -607,10 +604,10 @@ function validPersistedSession(
     if (!validStaffReferences) {
       return false;
     }
-
-    assertValidChronology(players, events);
-    past.forEach((chronology) => assertValidChronology(players, chronology));
-    future.forEach((chronology) => assertValidChronology(players, chronology));
+    // La persistencia valida estructura e identidades, pero no descarta una
+    // cronología histórica por incidencias deportivas detectables por replay.
+    // Así un import remoto sigue disponible para análisis/revisión y el
+    // firewall de Directo conserva la responsabilidad de bloquear captura.
     return true;
   } catch {
     return false;

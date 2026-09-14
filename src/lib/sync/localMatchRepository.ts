@@ -245,10 +245,17 @@ export class LocalMatchRepository {
     return loadMatchRecord(matchId, this.storage())?.session ?? null;
   }
 
-  /** Seed remoto sin generar outbox. Nunca pisa trabajo local existente. */
+  /**
+   * Refresca desde remoto sin generar outbox. Una copia local sin trabajo
+   * pendiente es solo caché y puede sustituirse por la versión autoritativa;
+   * cualquier outbox o conflicto conserva íntegramente el trabajo offline.
+   */
   hydrateRemote(session: MatchSession, knownRemoteRevisions: Record<string, number>): boolean {
     const storage = this.storage();
-    if (loadMatchRecord(session.matchId, storage)) return true;
+    const existing = loadMatchRecord(session.matchId, storage);
+    if (existing && (existing.sync.outbox.length > 0 || existing.sync.conflicts.length > 0)) {
+      return true;
+    }
     const result = saveMatchRecord(session, {
       ...emptyMatchSyncState(),
       knownRemoteRevisions,
