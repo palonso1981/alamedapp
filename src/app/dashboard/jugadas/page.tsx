@@ -15,7 +15,7 @@ import { listMatchCatalog } from "../../../lib/matchCatalog";
 import { revisionEventHref } from "../../../lib/dashboardNavigation";
 import { loadMatchSession } from "../../../lib/matchPersistence";
 import { buildVideoReviewRows, buildWhatsAppVideoText, VideoReviewKind, VideoReviewRow } from "../../../lib/videoReview";
-import { compatibleVideoSegments, formatVideoTimestamp, parseVideoTimestamp, removeVideoEventOverride, resolveEventVideoPosition, upsertVideoEventOverride, youtubeDeepLink } from "../../../lib/videoIndex";
+import { compatibleVideoSegments, formatVideoTimestamp, parseVideoTimestamp, removeVideoEventOverride, resolveEventVideoPosition, upsertVideoEventOverride, youtubePreciseUrl } from "../../../lib/videoIndex";
 import { useMatchStore } from "../../../store/useMatchStore";
 import { useTeamStore } from "../../../store/useTeamStore";
 
@@ -37,7 +37,7 @@ function VideoAdjustment({ row, onClose, onChanged, readOnlyFixture = false }: {
   const [message, setMessage] = useState("");
   const second = parseVideoTimestamp(timestamp);
   const segment = segments.find((item) => item.id === segmentId);
-  const testUrl = second !== null && segment ? youtubeDeepLink(segment.videoId, Math.max(0, second - segment.leadSeconds)) : null;
+  const testUrl = second !== null && segment ? youtubePreciseUrl(segment.videoId, Math.max(0, second - segment.leadSeconds)) : null;
 
   function persist(next: ReturnType<typeof upsertVideoEventOverride>) {
     useMatchStore.getState().ensureMatch(row.record.catalog.matchId);

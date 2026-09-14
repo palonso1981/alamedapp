@@ -39,7 +39,7 @@ test("revisión respeta filtros deportivos globales sin crear un segundo motor",
 test("WhatsApp incluye deep links completos y declara jugadas sin vídeo", () => {
   const rows = buildVideoReviewRows(buildDashboardFixture(), { ...scope, matchIds: ["dashboard-fixture-1", "dashboard-fixture-4"] }, "GOALS");
   const text = buildWhatsAppVideoText("GOLES", rows);
-  assert.match(text, /https:\/\/www\.youtube\.com\/watch\?v=fixture0001&t=\d+s/);
+  assert.match(text, /https:\/\/www\.youtube\.com\/embed\/fixture0001\?start=\d+&autoplay=1/);
   assert.match(text, /SIN VÍDEO/);
   assert.match(text, /ALAMEDAPP · GOLES/);
   assert.doesNotMatch(text, /undefined/);

@@ -18,6 +18,8 @@ import {
   removeVideoSegment,
   resolveEventVideoPosition,
   upsertVideoSegment,
+  youtubeBaseUrl,
+  youtubePreciseUrl,
 } from "../../../../lib/videoIndex";
 import { useMatchStore } from "../../../../store/useMatchStore";
 import {
@@ -434,16 +436,14 @@ function SegmentCard({
           <code className="text-[10px] text-slate-500">{segment.videoId}</code>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
-          {probe?.status === "RESOLVED" && (
-            <a
-              href={probe.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-grid min-h-11 place-items-center rounded-xl bg-red-600 px-3 text-xs font-black"
-            >
-              ▶ ABRIR
-            </a>
-          )}
+          <a
+            href={youtubeBaseUrl(segment.videoId)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-grid min-h-11 place-items-center rounded-xl bg-slate-700 px-3 text-xs font-black"
+          >
+            ▶ ABRIR EN YOUTUBE
+          </a>
           {!readOnly && (
             <>
               <button
@@ -579,9 +579,6 @@ function SegmentCard({
           const event = session.events.find(
             (item) => item.id === anchor.eventId,
           );
-          const resolution = event
-            ? resolveEventVideoPosition(session, event.id)
-            : null;
           return (
             <div
               key={anchor.id}
@@ -594,9 +591,9 @@ function SegmentCard({
                   : "Evento no disponible"}
               </span>
               <span className="flex gap-2">
-                {resolution?.status === "RESOLVED" && (
+                {event && (
                   <a
-                    href={resolution.url}
+                    href={youtubePreciseUrl(segment.videoId, anchor.videoSecond)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-grid min-h-9 place-items-center rounded-lg bg-red-600 px-3 font-black"

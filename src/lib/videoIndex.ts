@@ -81,8 +81,13 @@ export function isVideoTimeResolvable(event: MatchEvent): boolean {
   return event.provenance === "LIVE" && Number.isFinite(event.createdAt) && event.createdAt > 0;
 }
 
-export function youtubeDeepLink(videoId: string, second: number): string {
-  return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&t=${Math.max(0, Math.round(second))}s`;
+export function youtubeBaseUrl(videoId: string): string {
+  return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+}
+
+/** URL oficial embed para un salto temporal aislado del progreso de youtube.com. */
+export function youtubePreciseUrl(videoId: string, second: number): string {
+  return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?start=${Math.max(0, Math.round(second))}&autoplay=1`;
 }
 
 function median(values: number[]): number {
@@ -119,7 +124,7 @@ export function resolveEventVideoPosition(
     return {
       status: "RESOLVED", segmentId: segment.id, videoId: segment.videoId,
       estimatedSecond: override.videoSecond, openSecond, leadSeconds,
-      url: youtubeDeepLink(segment.videoId, openSecond), quality: "MANUAL",
+      url: youtubePreciseUrl(segment.videoId, openSecond), quality: "MANUAL",
       anchorSpreadSeconds: 0,
     };
   }
@@ -151,7 +156,7 @@ export function resolveEventVideoPosition(
     estimatedSecond,
     openSecond,
     leadSeconds,
-    url: youtubeDeepLink(segment.videoId, openSecond),
+    url: youtubePreciseUrl(segment.videoId, openSecond),
     quality,
     anchorSpreadSeconds: spread,
   };
