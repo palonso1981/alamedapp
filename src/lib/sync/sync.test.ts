@@ -29,7 +29,7 @@ import {
   InMemoryRemoteMatchRepository,
 } from "./remoteMatchRepository";
 import { MatchSyncCoordinator } from "./syncCoordinator";
-import { migrateMatchSyncState, syncEntityKey } from "./syncTypes";
+import { hasUnreconciledMatchSyncState, migrateMatchSyncState, syncEntityKey } from "./syncTypes";
 import { createDraftMatch } from "../preMatch";
 import { createSeason, emptyTeamWorkspace } from "../seasonDomain";
 import { createTeamProfile } from "../adminDomain";
@@ -1211,6 +1211,34 @@ test("reconciliación elimina solo operaciones idénticas y protege divergencias
   assert.equal(state.conflicts[0].remoteRevision, 1);
   assert.equal(Object.keys(state.knownRemoteRevisions).length, 95);
   assert.equal(state.knownRemoteRevisions.match, 1);
+  assert.equal(hasUnreconciledMatchSyncState(state), true);
+});
+
+test("una entidad divergente protegida mantiene disponible la recuperación", () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 4000, idFactory: idFactory() });
+  const session = createSession("protected-recovery");
+  local.save(session);
+  const operation = local.getSyncState(session.matchId).outbox.find((item) => item.entityType === "MATCH")!;
+
+  local.reconcileRemoteSnapshots(session.matchId, [{
+    entityType: "MATCH",
+    entityId: session.matchId,
+    exists: true,
+    revision: 3,
+    removed: false,
+    payload: { ...operation.payload, minute: 12 },
+  }]);
+
+  const protectedState = local.getSyncState(session.matchId);
+  assert.equal(protectedState.outbox.length > 0, true);
+  assert.equal(protectedState.conflicts.length, 1);
+  assert.equal(hasUnreconciledMatchSyncState(protectedState), true);
+  assert.equal(hasUnreconciledMatchSyncState({
+    ...protectedState,
+    outbox: [],
+    conflicts: [],
+  }), false);
 });
 
 test("payload remoto semánticamente idéntico se confirma sin conflicto aunque cambie la revisión", async () => {

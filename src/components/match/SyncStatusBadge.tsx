@@ -6,7 +6,7 @@ import { useMatchSync } from "../../hooks/useMatchSync";
 import { downloadMatchRecoveryBundle } from "../../lib/recoveryBundle";
 
 export function SyncStatusBadge({ matchId }: { matchId: string }) {
-  const { summary, config, eligible, online, retry, reconcileIdentical, retryableErrors, terminalPermissionErrors, captureConflicts } = useMatchSync(matchId);
+  const { summary, config, eligible, online, retry, reconcileIdentical, retryableErrors, terminalPermissionErrors, captureConflicts, recoveryAvailable } = useMatchSync(matchId);
   const [open, setOpen] = useState(false);
   const [rechecking, setRechecking] = useState(false);
   const [recheckMessage, setRecheckMessage] = useState("");
@@ -83,7 +83,7 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
               REINTENTAR
             </button>
           )}
-          {(terminalPermissionErrors > 0 || captureConflicts > 0) && (
+          {recoveryAvailable && (
             <button
               type="button"
               onClick={() => downloadMatchRecoveryBundle(matchId)}

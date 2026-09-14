@@ -17,6 +17,7 @@ import {
 } from "../lib/sync/remoteMatchRepository";
 import {
   blocksAccessChange,
+  hasUnreconciledMatchSyncState,
   MatchSyncOperation,
   MatchSyncSummary,
 } from "../lib/sync/syncTypes";
@@ -77,6 +78,7 @@ export interface MatchSyncView {
   retryableErrors: number;
   terminalPermissionErrors: number;
   captureConflicts: number;
+  recoveryAvailable: boolean;
   retry: () => void;
   reconcileIdentical: () => Promise<{ reconciled: number; protected: number; unchanged: number }>;
 }
@@ -86,7 +88,7 @@ export function useMatchSync(matchId: string): MatchSyncView {
   const eligible = isRemoteSyncEligibleMatch(matchId);
   const [summary, setSummary] = useState<MatchSyncSummary>(EMPTY_SUMMARY);
   const [online, setOnline] = useState(true);
-  const [diagnostics, setDiagnostics] = useState({ retryableErrors: 0, terminalPermissionErrors: 0, captureConflicts: 0 });
+  const [diagnostics, setDiagnostics] = useState({ retryableErrors: 0, terminalPermissionErrors: 0, captureConflicts: 0, recoveryAvailable: false });
 
   const refresh = useCallback(() => {
     const state = browserMatchRepository.getSyncState(matchId);
@@ -98,6 +100,7 @@ export function useMatchSync(matchId: string): MatchSyncView {
         typeof conflict.remotePayload === "object" && conflict.remotePayload !== null &&
         "kind" in conflict.remotePayload && conflict.remotePayload.kind === "CAPTURE_LEASE_MISMATCH",
       ).length,
+      recoveryAvailable: hasUnreconciledMatchSyncState(state),
     });
   }, [matchId]);
 

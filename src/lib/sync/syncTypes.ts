@@ -277,3 +277,13 @@ export function summarizeSyncState(
     lastErrorKind: state.lastErrorKind,
   };
 }
+
+/**
+ * Una copia de recuperación sigue siendo necesaria mientras exista cualquier
+ * operación o conflicto local sin reconciliar, aunque no sea de permisos o lease.
+ */
+export function hasUnreconciledMatchSyncState(
+  state: PersistedMatchSyncState,
+): boolean {
+  return state.outbox.length > 0 || state.conflicts.length > 0;
+}
