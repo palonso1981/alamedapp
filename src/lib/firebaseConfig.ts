@@ -14,12 +14,36 @@ export function firebaseEnvFlag(value: string | undefined): boolean {
   return value === "1" || value === "true";
 }
 
-export function firebaseConfigStatus(): FirebaseConfigStatus {
-  const preflight = inspectApplicationEnvironment(process.env);
+/**
+ * Next.js solo sustituye variables NEXT_PUBLIC cuando el acceso es estático.
+ * No pasar `process.env` completo desde código cliente: en el navegador queda
+ * vacío y produciría un falso error de configuración antes de inicializar Auth.
+ */
+export function compiledPublicEnvironment(): Record<string, string | undefined> {
+  return {
+    NEXT_PUBLIC_APP_ENV: process.env.NEXT_PUBLIC_APP_ENV,
+    NEXT_PUBLIC_FIREBASE_ENV: process.env.NEXT_PUBLIC_FIREBASE_ENV,
+    NEXT_PUBLIC_FIREBASE_PROJECT_ID: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+    NEXT_PUBLIC_FIREBASE_API_KEY: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    NEXT_PUBLIC_FIREBASE_APP_ID: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+    NEXT_PUBLIC_FIREBASE_ANONYMOUS_AUTH: process.env.NEXT_PUBLIC_FIREBASE_ANONYMOUS_AUTH,
+    NEXT_PUBLIC_FIREBASE_DEV_ANONYMOUS_AUTH: process.env.NEXT_PUBLIC_FIREBASE_DEV_ANONYMOUS_AUTH,
+    NEXT_PUBLIC_FIREBASE_USE_EMULATOR: process.env.NEXT_PUBLIC_FIREBASE_USE_EMULATOR,
+    NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
+    NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET: process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET,
+    NODE_ENV: process.env.NODE_ENV,
+  };
+}
+
+export function firebaseConfigStatus(
+  environment: Record<string, string | undefined> = compiledPublicEnvironment(),
+): FirebaseConfigStatus {
+  const preflight = inspectApplicationEnvironment(environment);
   const useEmulator = firebaseEnvFlag(
-    process.env.NEXT_PUBLIC_FIREBASE_USE_EMULATOR,
+    environment.NEXT_PUBLIC_FIREBASE_USE_EMULATOR,
   );
-  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+  const projectId = environment.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
   if (!preflight.environment) {
     return {
       configured: false,
@@ -49,9 +73,9 @@ export function firebaseConfigStatus(): FirebaseConfigStatus {
   }
   if (
     !useEmulator &&
-    (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
-      !process.env.NEXT_PUBLIC_FIREBASE_APP_ID ||
-      !process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN)
+    (!environment.NEXT_PUBLIC_FIREBASE_API_KEY ||
+      !environment.NEXT_PUBLIC_FIREBASE_APP_ID ||
+      !environment.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN)
   ) {
     return {
       configured: false,

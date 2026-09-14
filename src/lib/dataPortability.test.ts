@@ -14,6 +14,7 @@ import {
   validateLogicalDataset,
 } from "./dataPortability";
 import { assertExpectedEnvironment, inspectApplicationEnvironment } from "./environmentSafety";
+import { firebaseConfigStatus } from "./firebaseConfig";
 
 function dataset(): LogicalDataset {
   const clubId = "cd-alameda";
@@ -58,6 +59,27 @@ test("RC3 environment safety rechaza destinos cruzados y exige confirmación lit
   const good = inspectApplicationEnvironment({ NEXT_PUBLIC_APP_ENV: "dev", NEXT_PUBLIC_FIREBASE_ENV: "dev", NEXT_PUBLIC_FIREBASE_PROJECT_ID: "cdalameda-dev", NEXT_PUBLIC_FIREBASE_API_KEY: "public", NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: "cdalameda-dev.firebaseapp.com", NEXT_PUBLIC_FIREBASE_APP_ID: "public", NEXT_PUBLIC_FIREBASE_ANONYMOUS_AUTH: "true", NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: "xc7h48kz", NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET: "alamedapp_players_dev" });
   assert.equal(good.ok, true);
   assert.equal(good.useEmulator, false);
+});
+
+test("Firebase cliente valida un entorno público explícito sin depender de process.env dinámico", () => {
+  const status = firebaseConfigStatus({
+    NEXT_PUBLIC_APP_ENV: "prod",
+    NEXT_PUBLIC_FIREBASE_ENV: "prod",
+    NEXT_PUBLIC_FIREBASE_PROJECT_ID: "cd-alameda-prod",
+    NEXT_PUBLIC_FIREBASE_API_KEY: "public-prod-key",
+    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: "cd-alameda-prod.firebaseapp.com",
+    NEXT_PUBLIC_FIREBASE_APP_ID: "public-prod-app",
+    NEXT_PUBLIC_FIREBASE_ANONYMOUS_AUTH: "true",
+    NEXT_PUBLIC_FIREBASE_USE_EMULATOR: "false",
+    NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: "nf7ziztn",
+    NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET: "alamedapp_players_prod",
+  });
+  assert.deepEqual(status, {
+    configured: true,
+    useEmulator: false,
+    projectId: "cd-alameda-prod",
+    environment: "prod",
+  });
 });
 
 test("RC3 backup lógico valida referencias, separa Access y conserva Cloudinary sin plaintext", () => {

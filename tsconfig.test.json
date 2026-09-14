@@ -18,6 +18,7 @@
     "src/lib/captureLease.test.ts",
     "src/lib/recoveryBundle.ts",
     "src/lib/environmentSafety.ts",
+    "src/lib/firebaseConfig.ts",
     "src/lib/dataPortability.ts",
     "src/lib/dataPortability.test.ts",
     "src/lib/matchPersistence.ts",

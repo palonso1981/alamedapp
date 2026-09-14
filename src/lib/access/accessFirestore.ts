@@ -16,6 +16,12 @@ function firebaseAccessError(error: unknown, fallback: string): AccessError {
   if (error instanceof FirebaseError && ["unavailable", "auth/network-request-failed", "firestore/unavailable"].some((code) => error.code.endsWith(code))) {
     return new AccessError("OFFLINE", "No hay conexión para validar este código.");
   }
+  if (error instanceof FirebaseError) {
+    return new AccessError("UNAUTHORIZED", `${fallback} [${error.code}]`);
+  }
+  if (error instanceof Error && /^(Falta |PROD |DEV |Anonymous Auth)/.test(error.message)) {
+    return new AccessError("UNAUTHORIZED", `Configuración Firebase inválida. ${error.message}`);
+  }
   return new AccessError("UNAUTHORIZED", fallback);
 }
 
