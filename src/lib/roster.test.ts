@@ -56,7 +56,7 @@ import { LocalMatchRepository } from "./sync/localMatchRepository";
 import { InMemoryRemoteMatchRepository } from "./sync/remoteMatchRepository";
 import { RemoteApplyResult } from "./sync/remoteMatchRepository";
 import { RevisionedRemoteRepository, SyncCoordinator } from "./sync/syncCoordinator";
-import { teamEntityKey, TeamSyncOperation } from "./sync/teamSyncTypes";
+import { seasonPlayerEntityId, seasonStaffEntityId, teamEntityKey, TeamSyncOperation } from "./sync/teamSyncTypes";
 import { createLiveThreatEvent, replayMatch } from "./matchEngine";
 import { ManagedPlayerPhoto, MasterPlayer, TeamRoster, TeamWorkspace } from "../types";
 import {
@@ -578,6 +578,38 @@ test("payload remoto idéntico adopta la revisión y no crea un falso conflicto"
   assert.equal(sync.conflicts.length, 0);
   assert.equal(sync.knownRemoteRevisions[key], 7);
   assert.equal(remote.documents.get(key)?.operationId, "ack-perdido-en-otra-sesion");
+});
+
+test("membership hidratada en revisión 1 edita con base 1 y sincroniza a revisión 2", async () => {
+  const storage = new MemoryStorage(); let operation = 0;
+  const local = new LocalTeamRepository({ storage, idFactory: () => `membership-op-${++operation}` });
+  let remoteWorkspace = createTeamProfile(workspaceFixture(), { name: "Senior A" }, { teamId: "senior-a", now: 2 });
+  remoteWorkspace = createSeason(remoteWorkspace, { teamId: "senior-a", label: "2026-27" }, { seasonId: "season-a", now: 3 });
+  remoteWorkspace = upsertSeasonPlayer(remoteWorkspace, "season-a", "p-2", { number: 40, active: true }, 4);
+  const membership = remoteWorkspace.seasonPlayers[0];
+  const entityId = seasonPlayerEntityId(membership.seasonId, membership.playerId);
+  const key = teamEntityKey("SEASON_PLAYER", entityId);
+
+  local.hydrateRemote(remoteWorkspace.clubId, { ...remoteWorkspace, seasonPlayers: [] }, {});
+  local.hydrateRemote(remoteWorkspace.clubId, remoteWorkspace, { [key]: 1 });
+  assert.equal(local.getSyncState(remoteWorkspace.clubId).knownRemoteRevisions[key], 1);
+  assert.equal(local.load(remoteWorkspace.clubId).seasonPlayers[0].number, 40);
+
+  const edited = upsertSeasonPlayer(local.load(remoteWorkspace.clubId), "season-a", "p-2", { number: 7, primaryPosition: "WINGER", active: true }, 5);
+  local.save(edited);
+  const queued = local.getSyncState(remoteWorkspace.clubId).outbox.find((item) => item.entityType === "SEASON_PLAYER")!;
+  assert.equal(queued.entityId, "season-a:p-2");
+  assert.equal(queued.baseRevision, 1);
+
+  const remote = new TeamRemote();
+  remote.documents.set(key, { revision: 1, payload: structuredClone(membership), operationId: "remote-membership-v1" });
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(remoteWorkspace.clubId);
+  assert.equal(local.getSummary(remoteWorkspace.clubId).conflicts, 0);
+  assert.equal(local.getSummary(remoteWorkspace.clubId).pending, 0);
+  assert.equal(remote.documents.get(key)?.revision, 2);
+  assert.equal((remote.documents.get(key)?.payload as typeof membership).number, 7);
+  assert.equal((remote.documents.get(key)?.payload as typeof membership).primaryPosition, "WINGER");
+  assert.equal(seasonStaffEntityId("season-a", "staff-1"), "season-a:staff-1");
 });
 
 test("recomprobar un conflicto solo lo cierra si local y nube ya son idénticos", async () => {

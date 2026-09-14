@@ -13,6 +13,8 @@ import {
 import { defaultTeamProfile, emptyTeamWorkspace } from "../seasonDomain";
 import {
   emptyTeamSyncState,
+  seasonPlayerEntityId,
+  seasonStaffEntityId,
   summarizeTeamSync,
   teamEntityKey,
   TeamEntityType,
@@ -478,10 +480,10 @@ export class LocalTeamRepository {
     return readEnvelope(teamId, this.storage())?.roster ?? emptyTeamWorkspace(teamId);
   }
 
-  /** Seed remoto sin generar outbox. Nunca pisa trabajo local existente. */
+  /** Refresca un cache remoto limpio sin generar outbox; nunca pisa trabajo local pendiente o en conflicto. */
   hydrateRemote(teamId: string, roster: TeamWorkspace, knownRemoteRevisions: Record<string, number>): boolean {
     const existing = readEnvelope(teamId, this.storage());
-    if (existing) return true;
+    if (existing && (existing.sync.outbox.length > 0 || existing.sync.conflicts.length > 0)) return true;
     return this.write(teamId, roster, {
       ...emptyTeamSyncState(),
       knownRemoteRevisions,
@@ -557,12 +559,12 @@ export class LocalTeamRepository {
     }
     const previousSeasonPlayers = new Map(
       (previous?.roster.seasonPlayers ?? []).map((membership) => [
-        `${membership.seasonId}:${membership.playerId}`,
+        seasonPlayerEntityId(membership.seasonId, membership.playerId),
         membership,
       ]),
     );
     for (const membership of workspace.seasonPlayers) {
-      const entityId = `${membership.seasonId}:${membership.playerId}`;
+      const entityId = seasonPlayerEntityId(membership.seasonId, membership.playerId);
       if (sameValue(previousSeasonPlayers.get(entityId), membership)) continue;
       sync = enqueue(
         sync,
@@ -576,12 +578,12 @@ export class LocalTeamRepository {
     }
     const previousSeasonStaff = new Map(
       (previous?.roster.seasonStaff ?? []).map((membership) => [
-        `${membership.seasonId}:${membership.staffId}`,
+        seasonStaffEntityId(membership.seasonId, membership.staffId),
         membership,
       ]),
     );
     for (const membership of workspace.seasonStaff) {
-      const entityId = `${membership.seasonId}:${membership.staffId}`;
+      const entityId = seasonStaffEntityId(membership.seasonId, membership.staffId);
       if (sameValue(previousSeasonStaff.get(entityId), membership)) continue;
       sync = enqueue(
         sync,

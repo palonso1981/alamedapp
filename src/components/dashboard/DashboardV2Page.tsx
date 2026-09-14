@@ -13,6 +13,7 @@ import { GoalThreatMap, PitchThreatMap } from "./ThreatMaps";
 import { ComparisonHeader, comparisonRightLabel } from "./ComparisonHeader";
 import { EventTracePanel, TraceablePoint } from "./EventTracePanel";
 import { dashboardMapPointTitle } from "../../lib/dashboardTrace";
+import { withCurrentPlayerIdentity } from "../../lib/dashboardIdentity";
 import { EvolutionChart } from "./EvolutionChart";
 import { MetricHelp } from "./MetricHelp";
 import { GoalkeeperAnalysisColumn } from "./GoalkeeperAnalysisColumn";
@@ -109,6 +110,10 @@ export function DashboardV2Page() {
 
   const teams = useMemo(() => workspace?.teams.filter((team) => team.active && !team.archivedAt && !team.deletedAt) ?? [], [workspace]);
   const seasons = useMemo(() => workspace?.seasons.filter((season) => season.active && !season.archivedAt && !season.deletedAt) ?? [], [workspace]);
+  const resolvedRecords = useMemo(
+    () => fixture ? records : withCurrentPlayerIdentity(records, workspace?.players ?? []),
+    [fixture, records, workspace?.players],
+  );
   const clubs = clubIds.map((clubId) => useTeamStore.getState().teams[clubId]?.club).filter((club): club is NonNullable<typeof club> => Boolean(club && club.active && !club.archivedAt && !club.deletedAt));
   useEffect(() => {
     if (!ready || fixture || scope.clubId === currentClubId) return;
@@ -117,10 +122,10 @@ export function DashboardV2Page() {
     setScope((current) => ({ ...emptyDashboardScope(currentClubId, teamId, seasonId), period: current.period }));
     setRecords(readLocalRecords());
   }, [currentClubId, fixture, ready, scope.clubId, seasons, teams]);
-  const matches = useMemo(() => visibleMatchCatalog(records.map((record) => record.catalog), scope.includeArchived).filter((match) => matchCatalogClubId(match) === scope.clubId && match.teamId === scope.teamId && match.seasonId === scope.seasonId).map((match) => { const record = records.find((item) => item.catalog.matchId === match.matchId); const score = record ? replayMatch(record.session.players, record.session.events).score : null; const competitionType = record ? matchCompetition(record) : undefined; return { ...match, matchday: record?.session.preparation?.matchday, competitionType, competitionLabel: competitionType ? ({ LEAGUE: "Liga", CUP: "Copa", FRIENDLY: "Amistoso", OTHER: "Otra", UNSPECIFIED: "Sin clasificar" } as const)[competitionType] : undefined, scoreLabel: score ? `${score.for}-${score.against}` : undefined }; }).sort((a, b) => b.date.localeCompare(a.date)), [records, scope.clubId, scope.includeArchived, scope.seasonId, scope.teamId]);
+  const matches = useMemo(() => visibleMatchCatalog(resolvedRecords.map((record) => record.catalog), scope.includeArchived).filter((match) => matchCatalogClubId(match) === scope.clubId && match.teamId === scope.teamId && match.seasonId === scope.seasonId).map((match) => { const record = resolvedRecords.find((item) => item.catalog.matchId === match.matchId); const score = record ? replayMatch(record.session.players, record.session.events).score : null; const competitionType = record ? matchCompetition(record) : undefined; return { ...match, matchday: record?.session.preparation?.matchday, competitionType, competitionLabel: competitionType ? ({ LEAGUE: "Liga", CUP: "Copa", FRIENDLY: "Amistoso", OTHER: "Otra", UNSPECIFIED: "Sin clasificar" } as const)[competitionType] : undefined, scoreLabel: score ? `${score.for}-${score.against}` : undefined }; }).sort((a, b) => b.date.localeCompare(a.date)), [resolvedRecords, scope.clubId, scope.includeArchived, scope.seasonId, scope.teamId]);
   const rivals = useMemo(() => Array.from(new Set(matches.map((match) => match.opponent))).sort(), [matches]);
-  const analysis = useMemo(() => buildDashboardV2(records, scope), [records, scope]);
-  const reference = useMemo(() => buildDashboardV2(records, referenceScope), [records, referenceScope]);
+  const analysis = useMemo(() => buildDashboardV2(resolvedRecords, scope), [resolvedRecords, scope]);
+  const reference = useMemo(() => buildDashboardV2(resolvedRecords, referenceScope), [resolvedRecords, referenceScope]);
   const scores = useMemo(() => buildPlayerScores(analysis.players), [analysis.players]);
 
   useEffect(() => {

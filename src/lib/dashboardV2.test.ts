@@ -10,6 +10,8 @@ import { compareMetricValues, METRIC_DEFINITIONS } from "./dashboardMetricDefini
 import { dashboardMapPointTitle, resolveDashboardMapPoint } from "./dashboardTrace";
 import { revisionEventHref, safeDashboardReturnTo } from "./dashboardNavigation";
 import { adaptiveChartLayout, filterSearchableMatches, searchableMatchLabel } from "./dashboardSelectors";
+import { withCurrentPlayerIdentity } from "./dashboardIdentity";
+import { createMasterPlayer } from "./rosterDomain";
 
 test("returnTo acepta solo rutas Dashboard internas y conserva la identidad del evento", () => {
   const returnTo = "/dashboard/jugador/p1?aCompetition=LEAGUE&shot=GOL#shot-map";
@@ -22,6 +24,30 @@ test("returnTo acepta solo rutas Dashboard internas y conserva la identidad del 
   assert.equal(url.searchParams.get("eventId"), "e1");
   assert.equal(url.searchParams.get("returnTo"), returnTo);
   assert.equal(url.searchParams.get("fixture"), "1");
+});
+
+test("Dashboard resuelve el nombre maestro actual por playerId sin cambiar dorsal ni estadísticas históricas", () => {
+  const source = buildDashboardFixture()[0];
+  const historical = source.session.players.find((player) => player.id === "fx-p-4")!;
+  const master = createMasterPlayer([], {
+    fullName: "Ángel Díaz",
+    displayName: "Ángel",
+    number: 99,
+    role: "FIELD",
+  }, { id: historical.id, now: 100 });
+  const resolved = withCurrentPlayerIdentity([source], [master]);
+  const before = buildDashboardV2([source], baseScope()).players.find((player) => player.playerId === historical.id)!;
+  const after = buildDashboardV2(resolved, baseScope()).players.find((player) => player.playerId === historical.id)!;
+
+  assert.equal(resolved[0].session.players.find((player) => player.id === historical.id)?.name, "Ángel");
+  assert.equal(resolved[0].session.players.find((player) => player.id === historical.id)?.number, historical.number);
+  assert.equal(after.name, "Ángel");
+  assert.equal(after.number, historical.number);
+  assert.deepEqual(
+    { goals: after.goals, assists: after.assists, minutes: after.minutes, threats: after.ownThreats },
+    { goals: before.goals, assists: before.assists, minutes: before.minutes, threats: before.ownThreats },
+  );
+  assert.equal(buildDashboardV2(resolved, baseScope()).players.filter((player) => player.playerId === historical.id).length, 1);
 });
 import { formatFutsalPosition } from "./positionFormat";
 import { createGameStateEvent, createLineupInitializedEvent, createLiveThreatEvent, createPossessionLostEvent, createSubstitutionEvent, editEvent, replayMatch } from "./matchEngine";

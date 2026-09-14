@@ -43,12 +43,12 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
       </button>
       {open && (
         <div className="absolute right-0 top-12 z-50 w-64 rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs text-slate-200 shadow-2xl">
-          <p className="font-black">NUBE DEV</p>
+          <p className="font-black">NUBE</p>
           <p className="mt-1 text-slate-400">
             {!eligible
               ? "Los partidos demo permanecen solo en este dispositivo."
               : !config.configured
-                ? "Firebase DEV no está configurado. Todo sigue seguro localmente."
+                ? "Firebase no está configurado. Todo sigue seguro localmente."
                 : !online
                   ? "Sin conexión. La cola se enviará al recuperar la red."
                   : summary.conflicts > 0

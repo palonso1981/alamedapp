@@ -24,7 +24,7 @@ export function TeamSyncStatusBadge({ teamId }: { teamId: string }) {
       </button>
       {open && (
         <div className="absolute right-0 top-12 z-50 w-80 max-w-[calc(100vw-1rem)] rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs shadow-2xl">
-          <p className="font-black">PLANTILLA · DEV</p>
+          <p className="font-black">PLANTILLA · NUBE</p>
           <p className="mt-1 text-slate-400">
             {!config.configured ? "Firebase no está configurado; los cambios siguen locales." : !online ? "Sin conexión. La cola se enviará al volver." : summary.conflicts ? "Existe una ficha en conflicto. La versión local se conserva." : summary.pending || summary.errors ? "Hay cambios locales pendientes de envío." : "Sin cambios pendientes."}
           </p>

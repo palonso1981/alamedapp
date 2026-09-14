@@ -82,6 +82,16 @@ export function teamEntityKey(
   return `${namespace.toLowerCase()}:${type.toLowerCase()}:${id}`;
 }
 
+/** Identidad local/sync estable; el documento remoto usa playerId dentro de cada temporada. */
+export function seasonPlayerEntityId(seasonId: string, playerId: string): string {
+  return `${seasonId}:${playerId}`;
+}
+
+/** Identidad local/sync estable; evita colisiones del mismo miembro entre temporadas. */
+export function seasonStaffEntityId(seasonId: string, staffId: string): string {
+  return `${seasonId}:${staffId}`;
+}
+
 export function emptyTeamSyncState(): TeamSyncState {
   return {
     schemaVersion: TEAM_SYNC_SCHEMA_VERSION,

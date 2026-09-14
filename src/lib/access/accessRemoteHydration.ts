@@ -6,7 +6,7 @@ import { emptyTeamWorkspace } from "../seasonDomain";
 import { browserTeamRepository } from "../sync/localTeamRepository";
 import { browserMatchRepository } from "../sync/localMatchRepository";
 import { syncEntityKey, MatchRemoteMetadata } from "../sync/syncTypes";
-import { teamEntityKey } from "../sync/teamSyncTypes";
+import { seasonPlayerEntityId, seasonStaffEntityId, teamEntityKey } from "../sync/teamSyncTypes";
 import { ClubProfile, MasterPlayer, MasterStaffMember, MatchEvent, MatchSession, Season, SeasonPlayer, SeasonStaff, TeamProfile, TeamWorkspace } from "../../types";
 
 type RemoteEnvelope<T> = { revision?: number; removed?: boolean; payload?: T } & Partial<T>;
@@ -99,10 +99,16 @@ export async function hydrateAuthorizedRemoteData(grant: ActiveAccessGrant): Pro
         getDocs(collection(db, "clubs", clubId, "teams", team.teamId, "seasons", season.seasonId, "players")),
         getDocs(collection(db, "clubs", clubId, "teams", team.teamId, "seasons", season.seasonId, "staff")),
       ]);
-      seasonPlayers.push(...playerDocs.docs.map((item) => payload<SeasonPlayer>(item)).filter((item): item is SeasonPlayer => Boolean(item)));
-      seasonStaff.push(...staffDocs.docs.map((item) => payload<SeasonStaff>(item)).filter((item): item is SeasonStaff => Boolean(item)));
-      playerDocs.docs.forEach((item) => { revisions[teamEntityKey("SEASON_PLAYER", item.id)] = revision(item); });
-      staffDocs.docs.forEach((item) => { revisions[teamEntityKey("SEASON_STAFF", item.id)] = revision(item); });
+      const memberships = playerDocs.docs.map((item) => ({ item, membership: payload<SeasonPlayer>(item) })).filter((entry): entry is { item: typeof entry.item; membership: SeasonPlayer } => Boolean(entry.membership));
+      const staffMemberships = staffDocs.docs.map((item) => ({ item, membership: payload<SeasonStaff>(item) })).filter((entry): entry is { item: typeof entry.item; membership: SeasonStaff } => Boolean(entry.membership));
+      seasonPlayers.push(...memberships.map((entry) => entry.membership));
+      seasonStaff.push(...staffMemberships.map((entry) => entry.membership));
+      memberships.forEach(({ item, membership }) => {
+        revisions[teamEntityKey("SEASON_PLAYER", seasonPlayerEntityId(membership.seasonId, membership.playerId))] = revision(item);
+      });
+      staffMemberships.forEach(({ item, membership }) => {
+        revisions[teamEntityKey("SEASON_STAFF", seasonStaffEntityId(membership.seasonId, membership.staffId))] = revision(item);
+      });
     }
   }
   const playerIds = Array.from(new Set(seasonPlayers.map((item) => item.playerId)));

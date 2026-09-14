@@ -10,6 +10,7 @@ import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEA
 import { DashboardMatchRecord } from "../../../lib/dashboardAnalytics";
 import { emptyDashboardScope, scopeFromSearchParams } from "../../../lib/dashboardV2";
 import { eventDescription } from "../../../lib/eventPresentation";
+import { withCurrentPlayerIdentity } from "../../../lib/dashboardIdentity";
 import { listMatchCatalog } from "../../../lib/matchCatalog";
 import { revisionEventHref } from "../../../lib/dashboardNavigation";
 import { loadMatchSession } from "../../../lib/matchPersistence";
@@ -56,6 +57,7 @@ function VideoReviewContent() {
   const fixture = searchParams.get("fixture") === "1";
   const { canWrite } = useAccess();
   const currentClubId = useTeamStore((state) => state.currentClubId);
+  const workspace = useTeamStore((state) => state.teams[state.currentClubId]);
   const [records, setRecords] = useState<DashboardMatchRecord[]>([]);
   const [kind, setKind] = useState<VideoReviewKind>("ALL");
   const [actorId, setActorId] = useState("");
@@ -64,19 +66,23 @@ function VideoReviewContent() {
   const [copied, setCopied] = useState("");
   const [fallbackText, setFallbackText] = useState("");
   useEffect(() => setRecords(fixture ? buildDashboardFixture() : localRecords()), [fixture]);
-  const first = records[0]?.catalog;
+  const resolvedRecords = useMemo(
+    () => fixture ? records : withCurrentPlayerIdentity(records, workspace?.players ?? []),
+    [fixture, records, workspace?.players],
+  );
+  const first = resolvedRecords[0]?.catalog;
   const fallback = useMemo(() => emptyDashboardScope(
     fixture ? DASHBOARD_FIXTURE_CLUB_ID : first?.clubId ?? currentClubId,
     fixture ? DASHBOARD_FIXTURE_TEAM_ID : first?.teamId ?? "",
     fixture ? DASHBOARD_FIXTURE_SEASON_ID : first?.seasonId ?? "",
   ), [currentClubId, first?.clubId, first?.seasonId, first?.teamId, fixture]);
   const scope = useMemo(() => scopeFromSearchParams(new URLSearchParams(searchParams.toString()), "a", fallback), [fallback, searchParams]);
-  const rows = useMemo(() => buildVideoReviewRows(records, scope, kind, actorId || undefined), [actorId, kind, records, scope]);
+  const rows = useMemo(() => buildVideoReviewRows(resolvedRecords, scope, kind, actorId || undefined), [actorId, kind, resolvedRecords, scope]);
   const actors = useMemo(() => {
     const map = new Map<string, string>();
-    for (const record of records) for (const player of record.session.players) map.set(player.id, `#${player.number} ${player.name}`);
+    for (const record of resolvedRecords) for (const player of record.session.players) map.set(player.id, `#${player.number} ${player.name}`);
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "es"));
-  }, [records]);
+  }, [resolvedRecords]);
   const query = searchParams.toString();
   const title = `${KIND_LABEL[kind]}${actorId ? ` · ${actors.find(([id]) => id === actorId)?.[1] ?? actorId}` : ""}`;
   const selectedRows = rows.filter((row) => selected.has(rowKey(row)));

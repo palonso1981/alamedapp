@@ -8,6 +8,7 @@ import { listMatchCatalog, matchCatalogClubId, visibleMatchCatalog } from "../..
 import { loadMatchSession } from "../../lib/matchPersistence";
 import { buildDashboardV2, DashboardArea, DashboardReferencePreset, DashboardScopeV2, DashboardValueMode, defaultDashboardCompetition, emptyDashboardScope, hasDashboardScopeSearchParams, matchCompetition, mergeDashboardSearchParams, referenceScopeForPreset, scopeFromSearchParams } from "../../lib/dashboardV2";
 import { replayMatch } from "../../lib/matchEngine";
+import { withCurrentPlayerIdentity } from "../../lib/dashboardIdentity";
 import { useTeamStore } from "../../store/useTeamStore";
 
 function localRecords(): DashboardMatchRecord[] {
@@ -56,8 +57,12 @@ export function useDashboardProfileData(pathname: string, area: DashboardArea = 
     setReady(true);
   }, [currentClubId, ensureTeam, fixture, ready, registryReady, searchParams]);
 
-  const analysis = useMemo(() => buildDashboardV2(records, scope), [records, scope]);
-  const reference = useMemo(() => buildDashboardV2(records, referenceScope), [records, referenceScope]);
+  const resolvedRecords = useMemo(
+    () => fixture ? records : withCurrentPlayerIdentity(records, workspace?.players ?? []),
+    [fixture, records, workspace?.players],
+  );
+  const analysis = useMemo(() => buildDashboardV2(resolvedRecords, scope), [resolvedRecords, scope]);
+  const reference = useMemo(() => buildDashboardV2(resolvedRecords, referenceScope), [referenceScope, resolvedRecords]);
   useEffect(() => {
     if (!ready || referencePreset === "CUSTOM" || referencePreset === "MATCH") return;
     setReferenceScope(referenceScopeForPreset(scope, referencePreset));
@@ -72,7 +77,7 @@ export function useDashboardProfileData(pathname: string, area: DashboardArea = 
     setScope((current) => ({ ...emptyDashboardScope(currentClubId, teamId, seasonId), period: current.period }));
     setRecords(localRecords());
   }, [currentClubId, fixture, ready, scope.clubId, seasons, teams]);
-  const matches = useMemo(() => visibleMatchCatalog(records.map((record) => record.catalog), scope.includeArchived).filter((match) => matchCatalogClubId(match) === scope.clubId && match.teamId === scope.teamId && match.seasonId === scope.seasonId).map((match) => { const record = records.find((item) => item.catalog.matchId === match.matchId); const score = record ? replayMatch(record.session.players, record.session.events).score : null; const competitionType = record ? matchCompetition(record) : undefined; return { ...match, matchday: record?.session.preparation?.matchday, competitionType, competitionLabel: competitionType ? ({ LEAGUE: "Liga", CUP: "Copa", FRIENDLY: "Amistoso", OTHER: "Otra", UNSPECIFIED: "Sin clasificar" } as const)[competitionType] : undefined, scoreLabel: score ? `${score.for}-${score.against}` : undefined }; }).sort((a, b) => b.date.localeCompare(a.date)), [records, scope.clubId, scope.includeArchived, scope.seasonId, scope.teamId]);
+  const matches = useMemo(() => visibleMatchCatalog(resolvedRecords.map((record) => record.catalog), scope.includeArchived).filter((match) => matchCatalogClubId(match) === scope.clubId && match.teamId === scope.teamId && match.seasonId === scope.seasonId).map((match) => { const record = resolvedRecords.find((item) => item.catalog.matchId === match.matchId); const score = record ? replayMatch(record.session.players, record.session.events).score : null; const competitionType = record ? matchCompetition(record) : undefined; return { ...match, matchday: record?.session.preparation?.matchday, competitionType, competitionLabel: competitionType ? ({ LEAGUE: "Liga", CUP: "Copa", FRIENDLY: "Amistoso", OTHER: "Otra", UNSPECIFIED: "Sin clasificar" } as const)[competitionType] : undefined, scoreLabel: score ? `${score.for}-${score.against}` : undefined }; }).sort((a, b) => b.date.localeCompare(a.date)), [resolvedRecords, scope.clubId, scope.includeArchived, scope.seasonId, scope.teamId]);
   const rivals = useMemo(() => Array.from(new Set(matches.map((match) => match.opponent))).sort(), [matches]);
 
   function changeReferencePreset(preset: DashboardReferencePreset) {
@@ -88,5 +93,5 @@ export function useDashboardProfileData(pathname: string, area: DashboardArea = 
   }, [area, mode, pathname, ready, referencePreset, referenceScope, router, scope, searchParams]);
 
   const query = mergeDashboardSearchParams({ analysis: scope, reference: referenceScope, referencePreset, mode, area }, new URLSearchParams(fixture ? "fixture=1" : ""));
-  return { analysis, clubs, currentClubId, fixture, matches, mode, query, ready, records, reference, referenceScope, referencePreset, rivals, scope, seasons, setCurrentClub, setMode, setReferencePreset: changeReferencePreset, setReferenceScope, setScope, teams, workspace, refresh: () => setRecords(fixture ? buildDashboardFixture() : localRecords()) };
+  return { analysis, clubs, currentClubId, fixture, matches, mode, query, ready, records: resolvedRecords, reference, referenceScope, referencePreset, rivals, scope, seasons, setCurrentClub, setMode, setReferencePreset: changeReferencePreset, setReferenceScope, setScope, teams, workspace, refresh: () => setRecords(fixture ? buildDashboardFixture() : localRecords()) };
 }
