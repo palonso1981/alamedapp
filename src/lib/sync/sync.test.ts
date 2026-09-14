@@ -27,9 +27,16 @@ import {
 import {
   classifyRemoteError,
   InMemoryRemoteMatchRepository,
+  RemoteApplyResult,
+  RemoteMatchRepository,
 } from "./remoteMatchRepository";
 import { MatchSyncCoordinator } from "./syncCoordinator";
 import { hasUnreconciledMatchSyncState, migrateMatchSyncState, syncEntityKey } from "./syncTypes";
+import {
+  buildLocalVideoResolutionPayload,
+  hasVideoOnlyMatchConflict,
+  resolveLocalMatchVideoConflict,
+} from "./matchVideoConflict";
 import { createDraftMatch } from "../preMatch";
 import { createSeason, emptyTeamWorkspace } from "../seasonDomain";
 import { createTeamProfile } from "../adminDomain";
@@ -54,6 +61,23 @@ class MemoryStorage implements LocalStorageAdapter {
 function idFactory() {
   let next = 1;
   return () => `sync-op-${next++}`;
+}
+
+function protectMatchConflict(
+  local: LocalMatchRepository,
+  matchId: string,
+  remoteRevision: number,
+  remoteMatchPayload: unknown,
+): void {
+  const snapshots = local.getSyncState(matchId).outbox.map((operation) => ({
+    entityType: operation.entityType,
+    entityId: operation.entityId,
+    exists: true,
+    revision: operation.entityType === "MATCH" ? remoteRevision : 1,
+    removed: operation.kind === "TOMBSTONE",
+    payload: operation.entityType === "MATCH" ? remoteMatchPayload : operation.payload,
+  }));
+  local.reconcileRemoteSnapshots(matchId, snapshots);
 }
 
 test("repositorio local guarda sesión y outbox de forma atómica", () => {
@@ -1239,6 +1263,118 @@ test("una entidad divergente protegida mantiene disponible la recuperación", ()
     outbox: [],
     conflicts: [],
   }), false);
+});
+
+test("resolver conflicto MATCH solo aplica vídeo local y conserva intacto el resto remoto", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 5000, idFactory: idFactory() });
+  const session = createSession("video-only-resolution");
+  local.save(session);
+  const operation = local.getSyncState(session.matchId).outbox.find((item) => item.entityType === "MATCH")!;
+  const segment = createVideoSegment({ id: "remote-segment", urlOrVideoId: "ydQf4OF4bmE", periods: [1], now: 20 });
+  const remotePayload = {
+    ...operation.payload,
+    videoSegments: [segment],
+    videoEventOverrides: [],
+  };
+  protectMatchConflict(local, session.matchId, 20, remotePayload);
+  assert.equal(hasVideoOnlyMatchConflict(local.getSyncState(session.matchId)), true);
+
+  const remote = new InMemoryRemoteMatchRepository();
+  remote.seed(session.matchId, "MATCH", session.matchId, 20, remotePayload);
+  const result = await resolveLocalMatchVideoConflict(session.matchId, local, remote);
+  assert.deepEqual(result, { status: "RESOLVED", remoteRevision: 21, wroteRemote: true });
+
+  const finalDocument = remote.documents.get(`${session.matchId}:match`)!;
+  const finalPayload = finalDocument.payload as typeof remotePayload;
+  assert.deepEqual(finalPayload.videoSegments, []);
+  assert.deepEqual(finalPayload.videoEventOverrides, []);
+  const { videoSegments: beforeSegments, videoEventOverrides: beforeOverrides, ...beforeSports } = remotePayload;
+  const { videoSegments: afterSegments, videoEventOverrides: afterOverrides, ...afterSports } = finalPayload;
+  assert.equal(beforeSegments.length, 1);
+  assert.equal(beforeOverrides.length, 0);
+  assert.equal(afterSegments.length, 0);
+  assert.equal(afterOverrides.length, 0);
+  assert.deepEqual(afterSports, beforeSports);
+  const state = local.getSyncState(session.matchId);
+  assert.equal(state.outbox.length, 0);
+  assert.equal(state.conflicts.length, 0);
+  assert.equal(state.knownRemoteRevisions.match, 21);
+});
+
+test("resolución de vídeo rechaza cualquier diferencia deportiva", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 6000, idFactory: idFactory() });
+  const session = createSession("video-and-sports-conflict");
+  local.save(session);
+  const operation = local.getSyncState(session.matchId).outbox.find((item) => item.entityType === "MATCH")!;
+  const remotePayload = {
+    ...operation.payload,
+    minute: 8,
+    videoSegments: [createVideoSegment({ id: "remote-sports-segment", urlOrVideoId: "ydQf4OF4bmE", periods: [1], now: 21 })],
+  };
+  protectMatchConflict(local, session.matchId, 7, remotePayload);
+  assert.equal(hasVideoOnlyMatchConflict(local.getSyncState(session.matchId)), false);
+  const remote = new InMemoryRemoteMatchRepository();
+  remote.seed(session.matchId, "MATCH", session.matchId, 7, remotePayload);
+  const result = await resolveLocalMatchVideoConflict(session.matchId, local, remote);
+  assert.equal(result.status, "PROTECTED");
+  assert.equal(remote.applyCalls, 0);
+  assert.equal(local.getSyncState(session.matchId).conflicts.length, 1);
+});
+
+test("resolución relee y revalida si cambia la revisión remota", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 7000, idFactory: idFactory() });
+  const session = createSession("video-concurrent-resolution");
+  local.save(session);
+  const operation = local.getSyncState(session.matchId).outbox.find((item) => item.entityType === "MATCH")!;
+  const firstPayload = {
+    ...operation.payload,
+    videoSegments: [createVideoSegment({ id: "first-remote-video", urlOrVideoId: "ydQf4OF4bmE", periods: [1], now: 22 })],
+  };
+  protectMatchConflict(local, session.matchId, 20, firstPayload);
+
+  const inner = new InMemoryRemoteMatchRepository();
+  inner.seed(session.matchId, "MATCH", session.matchId, 20, firstPayload);
+  let reads = 0;
+  let raced = false;
+  const remote: RemoteMatchRepository = {
+    async read(candidate) {
+      reads += 1;
+      return inner.read(candidate);
+    },
+    async apply(candidate): Promise<RemoteApplyResult> {
+      if (!raced) {
+        raced = true;
+        const concurrentPayload = {
+          ...firstPayload,
+          videoSegments: [createVideoSegment({ id: "concurrent-video", urlOrVideoId: "abcdefghijk", periods: [1], now: 23 })],
+        };
+        inner.seed(session.matchId, "MATCH", session.matchId, 21, concurrentPayload);
+      }
+      return inner.apply(candidate);
+    },
+  };
+
+  const result = await resolveLocalMatchVideoConflict(session.matchId, local, remote);
+  assert.deepEqual(result, { status: "RESOLVED", remoteRevision: 22, wroteRemote: true });
+  assert.equal(reads, 2);
+  const finalPayload = inner.documents.get(`${session.matchId}:match`)?.payload as typeof firstPayload;
+  assert.deepEqual(finalPayload.videoSegments, []);
+  assert.equal(local.getSyncState(session.matchId).knownRemoteRevisions.match, 22);
+});
+
+test("videoEventOverrides se sustituye sin ampliar los campos resolubles", () => {
+  const session = createSession("video-overrides-only");
+  const localPayload = {
+    ...matchRemoteMetadata(session),
+    videoEventOverrides: [{ eventId: "event-1", segmentId: "segment-1", videoSecond: 11, updatedAt: 30 }],
+  };
+  const remotePayload = { ...matchRemoteMetadata(session), videoEventOverrides: [] };
+  const merged = buildLocalVideoResolutionPayload(localPayload, remotePayload);
+  assert.deepEqual(merged?.videoEventOverrides, localPayload.videoEventOverrides);
+  assert.equal(buildLocalVideoResolutionPayload(localPayload, { ...remotePayload, minute: 1 }), null);
 });
 
 test("payload remoto semánticamente idéntico se confirma sin conflicto aunque cambie la revisión", async () => {

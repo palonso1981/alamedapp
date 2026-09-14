@@ -6,9 +6,10 @@ import { useMatchSync } from "../../hooks/useMatchSync";
 import { downloadMatchRecoveryBundle } from "../../lib/recoveryBundle";
 
 export function SyncStatusBadge({ matchId }: { matchId: string }) {
-  const { summary, config, eligible, online, retry, reconcileIdentical, retryableErrors, terminalPermissionErrors, captureConflicts, recoveryAvailable } = useMatchSync(matchId);
+  const { summary, config, eligible, online, retry, reconcileIdentical, resolveLocalVideo, retryableErrors, terminalPermissionErrors, captureConflicts, recoveryAvailable, localVideoResolutionAvailable } = useMatchSync(matchId);
   const [open, setOpen] = useState(false);
   const [rechecking, setRechecking] = useState(false);
+  const [resolvingVideo, setResolvingVideo] = useState(false);
   const [recheckMessage, setRecheckMessage] = useState("");
 
   const state = !eligible
@@ -90,6 +91,25 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
               className="mt-3 min-h-10 w-full rounded-lg border border-amber-500 bg-amber-950 font-black text-amber-100"
             >
               EXPORTAR RECUPERACIÓN
+            </button>
+          )}
+          {localVideoResolutionAvailable && (
+            <button
+              type="button"
+              disabled={!online || resolvingVideo}
+              onClick={() => {
+                const confirmed = window.confirm("Se sustituirá únicamente la configuración de vídeo guardada en la nube. Los datos deportivos del partido no se modificarán.");
+                if (!confirmed) return;
+                setResolvingVideo(true); setRecheckMessage("");
+                void resolveLocalVideo().then((result) => {
+                  setRecheckMessage(result.status === "RESOLVED"
+                    ? "Configuración de vídeo local aplicada."
+                    : result.reason ?? "El conflicto sigue protegido.");
+                }).finally(() => setResolvingVideo(false));
+              }}
+              className="mt-3 min-h-10 w-full rounded-lg border border-amber-500 bg-amber-950 px-2 font-black text-amber-100 disabled:opacity-40"
+            >
+              {resolvingVideo ? "VALIDANDO…" : "USAR VÍDEO LOCAL"}
             </button>
           )}
           {(summary.conflicts > 0 || summary.errors > 0) && (

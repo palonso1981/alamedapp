@@ -21,6 +21,10 @@ import {
   MatchSyncOperation,
   MatchSyncSummary,
 } from "../lib/sync/syncTypes";
+import {
+  hasVideoOnlyMatchConflict,
+  resolveLocalMatchVideoConflict,
+} from "../lib/sync/matchVideoConflict";
 
 const EMPTY_SUMMARY: MatchSyncSummary = {
   pending: 0,
@@ -79,8 +83,10 @@ export interface MatchSyncView {
   terminalPermissionErrors: number;
   captureConflicts: number;
   recoveryAvailable: boolean;
+  localVideoResolutionAvailable: boolean;
   retry: () => void;
   reconcileIdentical: () => Promise<{ reconciled: number; protected: number; unchanged: number }>;
+  resolveLocalVideo: () => Promise<{ status: "RESOLVED" | "PROTECTED"; reason?: string }>;
 }
 
 export function useMatchSync(matchId: string): MatchSyncView {
@@ -88,7 +94,7 @@ export function useMatchSync(matchId: string): MatchSyncView {
   const eligible = isRemoteSyncEligibleMatch(matchId);
   const [summary, setSummary] = useState<MatchSyncSummary>(EMPTY_SUMMARY);
   const [online, setOnline] = useState(true);
-  const [diagnostics, setDiagnostics] = useState({ retryableErrors: 0, terminalPermissionErrors: 0, captureConflicts: 0, recoveryAvailable: false });
+  const [diagnostics, setDiagnostics] = useState({ retryableErrors: 0, terminalPermissionErrors: 0, captureConflicts: 0, recoveryAvailable: false, localVideoResolutionAvailable: false });
 
   const refresh = useCallback(() => {
     const state = browserMatchRepository.getSyncState(matchId);
@@ -101,6 +107,7 @@ export function useMatchSync(matchId: string): MatchSyncView {
         "kind" in conflict.remotePayload && conflict.remotePayload.kind === "CAPTURE_LEASE_MISMATCH",
       ).length,
       recoveryAvailable: hasUnreconciledMatchSyncState(state),
+      localVideoResolutionAvailable: hasVideoOnlyMatchConflict(state),
     });
   }, [matchId]);
 
@@ -121,6 +128,20 @@ export function useMatchSync(matchId: string): MatchSyncView {
     const result = browserMatchRepository.reconcileRemoteSnapshots(matchId, snapshots);
     refresh();
     return result;
+  }, [config.configured, eligible, matchId, refresh]);
+
+  const resolveLocalVideo = useCallback(async () => {
+    if (!eligible || !config.configured || !navigator.onLine) {
+      return { status: "PROTECTED" as const, reason: "Se necesita conexión para volver a validar el remoto." };
+    }
+    try {
+      const result = await resolveLocalMatchVideoConflict(matchId, browserMatchRepository, lazyFirestoreRemote);
+      refresh();
+      return result;
+    } catch {
+      refresh();
+      return { status: "PROTECTED" as const, reason: "No se pudo validar el remoto. El conflicto sigue protegido." };
+    }
   }, [config.configured, eligible, matchId, refresh]);
 
   useEffect(() => {
@@ -150,5 +171,5 @@ export function useMatchSync(matchId: string): MatchSyncView {
     };
   }, [matchId, refresh, retry, sync]);
 
-  return { summary, config, eligible, online, ...diagnostics, retry, reconcileIdentical };
+  return { summary, config, eligible, online, ...diagnostics, retry, reconcileIdentical, resolveLocalVideo };
 }
