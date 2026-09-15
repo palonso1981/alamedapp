@@ -90,26 +90,6 @@ export function buildYouTubeWatchAtUrl(videoId: string, second: number): string 
   return `${youtubeBaseUrl(videoId)}&t=${Math.max(0, Math.round(second))}s`;
 }
 
-/** Ruta interna que aloja el reproductor preciso dentro de AlamedAPP. */
-export function buildInternalVideoPlayerUrl(videoId: string, second: number): string {
-  return `/video/player?videoId=${encodeURIComponent(videoId)}&start=${Math.max(0, Math.round(second))}`;
-}
-
-/** URL oficial usada exclusivamente como src del iframe interno. */
-export function buildYouTubeEmbedUrl(videoId: string, second: number): string {
-  return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?start=${Math.max(0, Math.round(second))}&autoplay=1`;
-}
-
-export function parseVideoPlayerParams(
-  videoIdValue: string | null,
-  startValue: string | null,
-): { videoId: string; startSecond: number } | null {
-  if (!videoIdValue || !/^[A-Za-z0-9_-]{11}$/.test(videoIdValue)) return null;
-  if (!startValue || !/^\d+$/.test(startValue)) return null;
-  const startSecond = Number(startValue);
-  return Number.isSafeInteger(startSecond) ? { videoId: videoIdValue, startSecond } : null;
-}
-
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
@@ -144,7 +124,7 @@ export function resolveEventVideoPosition(
     return {
       status: "RESOLVED", segmentId: segment.id, videoId: segment.videoId,
       estimatedSecond: override.videoSecond, openSecond, leadSeconds,
-      url: buildInternalVideoPlayerUrl(segment.videoId, openSecond), quality: "MANUAL",
+      url: buildYouTubeWatchAtUrl(segment.videoId, openSecond), quality: "MANUAL",
       anchorSpreadSeconds: 0,
     };
   }
@@ -176,7 +156,7 @@ export function resolveEventVideoPosition(
     estimatedSecond,
     openSecond,
     leadSeconds,
-    url: buildInternalVideoPlayerUrl(segment.videoId, openSecond),
+    url: buildYouTubeWatchAtUrl(segment.videoId, openSecond),
     quality,
     anchorSpreadSeconds: spread,
   };

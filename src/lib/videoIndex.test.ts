@@ -5,13 +5,10 @@ import { createLineupInitializedEvent, createLiveThreatEvent } from "./matchEngi
 import { loadMatchSession, LocalStorageAdapter, saveMatchSession } from "./matchPersistence";
 import {
   addVideoAnchor,
-  buildInternalVideoPlayerUrl,
-  buildYouTubeEmbedUrl,
   buildYouTubeWatchAtUrl,
   createVideoSegment,
   isVideoTimeResolvable,
   parseVideoTimestamp,
-  parseVideoPlayerParams,
   parseYouTubeVideoId,
   resolveEventVideoPosition,
   removeVideoEventOverride,
@@ -79,7 +76,7 @@ test("un anchor resuelve la posición con margen y nunca guarda URL en el evento
   if (result.status === "RESOLVED") {
     assert.equal(result.estimatedSecond, 62);
     assert.equal(result.openSecond, 56);
-    assert.equal(result.url, "/video/player?videoId=abcdefghijk&start=56");
+    assert.equal(result.url, "https://www.youtube.com/watch?v=abcdefghijk&t=56s");
     assert.equal(result.quality, "SINGLE_ANCHOR");
   }
   assert.equal("videoUrl" in current.events[1], false);
@@ -98,7 +95,7 @@ test("anchor y override 432 con margen 6 abren la jugada desde 426", () => {
     assert.equal(anchorResolution.estimatedSecond, 432);
     assert.equal(anchorResolution.openSecond, 426);
     assert.equal(anchorResolution.videoId, videoId);
-    assert.equal(anchorResolution.url, `/video/player?videoId=${videoId}&start=426`);
+    assert.equal(anchorResolution.url, `https://www.youtube.com/watch?v=${videoId}&t=426s`);
   }
 
   current = upsertVideoEventOverride(current, { eventId: overridden.id, segmentId: "chelva-p1", videoSecond: 432, now: 2 });
@@ -108,20 +105,16 @@ test("anchor y override 432 con margen 6 abren la jugada desde 426", () => {
     assert.equal(overrideResolution.estimatedSecond, 432);
     assert.equal(overrideResolution.openSecond, 426);
     assert.equal(overrideResolution.videoId, videoId);
-    assert.equal(overrideResolution.url, `/video/player?videoId=${videoId}&start=426`);
+    assert.equal(overrideResolution.url, `https://www.youtube.com/watch?v=${videoId}&t=426s`);
     assert.equal(buildYouTubeWatchAtUrl(overrideResolution.videoId, overrideResolution.openSecond), `https://www.youtube.com/watch?v=${videoId}&t=426s`);
   }
 });
 
-test("separa navegación interna, iframe y apertura normal de YouTube", () => {
+test("separa apertura precisa de jugada y apertura del vídeo base", () => {
   const videoId = "ydQf4OF4bmE";
   assert.equal(youtubeBaseUrl(videoId), `https://www.youtube.com/watch?v=${videoId}`);
-  assert.equal(buildInternalVideoPlayerUrl(videoId, -9), `/video/player?videoId=${videoId}&start=0`);
-  assert.equal(buildInternalVideoPlayerUrl(videoId, 432), `/video/player?videoId=${videoId}&start=432`);
-  assert.equal(buildYouTubeEmbedUrl(videoId, 432), `https://www.youtube.com/embed/${videoId}?start=432&autoplay=1`);
   assert.equal(buildYouTubeWatchAtUrl(videoId, 426), `https://www.youtube.com/watch?v=${videoId}&t=426s`);
   assert.equal(buildYouTubeWatchAtUrl(videoId, -9), `https://www.youtube.com/watch?v=${videoId}&t=0s`);
-  assert.doesNotMatch(buildInternalVideoPlayerUrl(videoId, 432), /youtube(?:-nocookie)?\.com\/embed/);
   assert.doesNotMatch(youtubeBaseUrl(videoId), /start=|[?&]t=/);
 });
 
@@ -136,21 +129,12 @@ test("anchor 432 con margen 6 comparte openSecond 426 entre player y YouTube ext
   assert.equal(resolution.status, "RESOLVED");
   if (resolution.status === "RESOLVED") {
     assert.equal(resolution.openSecond, 426);
-    assert.equal(resolution.url, `/video/player?videoId=${videoId}&start=426`);
+    assert.equal(resolution.url, `https://www.youtube.com/watch?v=${videoId}&t=426s`);
     assert.equal(buildYouTubeWatchAtUrl(resolution.videoId, resolution.openSecond), `https://www.youtube.com/watch?v=${videoId}&t=426s`);
   }
+  assert.equal(buildYouTubeWatchAtUrl(videoId, current.videoSegments?.[0].anchors[0].videoSecond ?? -1), `https://www.youtube.com/watch?v=${videoId}&t=432s`);
   assert.equal(current.videoSegments?.[0].anchors[0].videoSecond, 432);
   assert.equal(current.videoSegments?.[0].leadSeconds, 6);
-});
-
-test("player interno valida parámetros sin fabricar tiempos", () => {
-  assert.deepEqual(parseVideoPlayerParams("ydQf4OF4bmE", "432"), { videoId: "ydQf4OF4bmE", startSecond: 432 });
-  assert.deepEqual(parseVideoPlayerParams("ydQf4OF4bmE", "0"), { videoId: "ydQf4OF4bmE", startSecond: 0 });
-  assert.equal(parseVideoPlayerParams("corto", "432"), null);
-  assert.equal(parseVideoPlayerParams("ydQf4OF4bmE", null), null);
-  assert.equal(parseVideoPlayerParams("ydQf4OF4bmE", "-1"), null);
-  assert.equal(parseVideoPlayerParams("ydQf4OF4bmE", "4.2"), null);
-  assert.equal(parseVideoPlayerParams("https://youtu.be/ydQf4OF4bmE", "432"), null);
 });
 
 test("varios anchors usan mediana robusta y avisan si discrepan", () => {
@@ -184,7 +168,7 @@ test("override 00:17 abre a 00:11 sin alterar anchors ni otro evento", () => {
     assert.equal(manual.quality, "MANUAL");
     assert.equal(manual.estimatedSecond, 17);
     assert.equal(manual.openSecond, 11);
-    assert.equal(manual.url, "/video/player?videoId=abcdefghijk&start=11");
+    assert.equal(manual.url, "https://www.youtube.com/watch?v=abcdefghijk&t=11s");
   }
   assert.deepEqual(resolveEventVideoPosition(current, "a"), automaticA);
   assert.deepEqual(current.videoSegments?.[0].anchors, anchors);
@@ -236,7 +220,7 @@ test("P1 y P2 no mezclan tiempos ni IDs entre segmentos independientes", () => {
   if (p2.status === "RESOLVED") {
     assert.equal(p2.estimatedSecond, 1300);
     assert.equal(p2.videoId, "zyxwvutsrqp");
-    assert.match(p2.url, /^\/video\/player\?videoId=zyxwvutsrqp&/);
+    assert.match(p2.url, /^https:\/\/www\.youtube\.com\/watch\?v=zyxwvutsrqp&t=/);
   }
 });
 
