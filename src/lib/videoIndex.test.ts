@@ -7,6 +7,7 @@ import {
   addVideoAnchor,
   buildInternalVideoPlayerUrl,
   buildYouTubeEmbedUrl,
+  buildYouTubeWatchAtUrl,
   createVideoSegment,
   isVideoTimeResolvable,
   parseVideoTimestamp,
@@ -108,6 +109,7 @@ test("anchor y override 432 con margen 6 abren la jugada desde 426", () => {
     assert.equal(overrideResolution.openSecond, 426);
     assert.equal(overrideResolution.videoId, videoId);
     assert.equal(overrideResolution.url, `/video/player?videoId=${videoId}&start=426`);
+    assert.equal(buildYouTubeWatchAtUrl(overrideResolution.videoId, overrideResolution.openSecond), `https://www.youtube.com/watch?v=${videoId}&t=426s`);
   }
 });
 
@@ -117,8 +119,28 @@ test("separa navegación interna, iframe y apertura normal de YouTube", () => {
   assert.equal(buildInternalVideoPlayerUrl(videoId, -9), `/video/player?videoId=${videoId}&start=0`);
   assert.equal(buildInternalVideoPlayerUrl(videoId, 432), `/video/player?videoId=${videoId}&start=432`);
   assert.equal(buildYouTubeEmbedUrl(videoId, 432), `https://www.youtube.com/embed/${videoId}?start=432&autoplay=1`);
+  assert.equal(buildYouTubeWatchAtUrl(videoId, 426), `https://www.youtube.com/watch?v=${videoId}&t=426s`);
+  assert.equal(buildYouTubeWatchAtUrl(videoId, -9), `https://www.youtube.com/watch?v=${videoId}&t=0s`);
   assert.doesNotMatch(buildInternalVideoPlayerUrl(videoId, 432), /youtube(?:-nocookie)?\.com\/embed/);
   assert.doesNotMatch(youtubeBaseUrl(videoId), /start=|[?&]t=/);
+});
+
+test("anchor 432 con margen 6 comparte openSecond 426 entre player y YouTube externo", () => {
+  const videoId = "ydQf4OF4bmE";
+  const anchored = event("anchor-open-second", 100_000);
+  let current = session([anchored]);
+  current = upsertVideoSegment(current, createVideoSegment({ id: "chelva-p1", urlOrVideoId: videoId, periods: [1], leadSeconds: 6, now: 1 }));
+  current = addVideoAnchor(current, "chelva-p1", { id: "anchor-432", eventId: anchored.id, videoSecond: 432 });
+
+  const resolution = resolveEventVideoPosition(current, anchored.id);
+  assert.equal(resolution.status, "RESOLVED");
+  if (resolution.status === "RESOLVED") {
+    assert.equal(resolution.openSecond, 426);
+    assert.equal(resolution.url, `/video/player?videoId=${videoId}&start=426`);
+    assert.equal(buildYouTubeWatchAtUrl(resolution.videoId, resolution.openSecond), `https://www.youtube.com/watch?v=${videoId}&t=426s`);
+  }
+  assert.equal(current.videoSegments?.[0].anchors[0].videoSecond, 432);
+  assert.equal(current.videoSegments?.[0].leadSeconds, 6);
 });
 
 test("player interno valida parámetros sin fabricar tiempos", () => {

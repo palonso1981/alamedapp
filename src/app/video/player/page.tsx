@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
-import { buildYouTubeEmbedUrl, parseVideoPlayerParams, youtubeBaseUrl } from "../../../lib/videoIndex";
+import { buildYouTubeEmbedUrl, buildYouTubeWatchAtUrl, formatVideoTimestamp, parseVideoPlayerParams } from "../../../lib/videoIndex";
 
 function VideoPlayerContent() {
   const searchParams = useSearchParams();
@@ -20,7 +20,7 @@ function VideoPlayerContent() {
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
     referrerPolicy="strict-origin-when-cross-origin"
     allowFullScreen
-  /></div></div><div className="flex flex-wrap items-center justify-between gap-3"><Link href="/partidos" className="inline-grid min-h-12 place-items-center rounded-xl bg-slate-800 px-5 text-sm font-black">← APP ALAM</Link><a href={youtubeBaseUrl(params.videoId)} target="_blank" rel="noopener noreferrer" className="inline-grid min-h-12 place-items-center rounded-xl bg-red-600 px-5 text-sm font-black">▶ ABRIR EN YOUTUBE</a></div></section></main>;
+  /></div></div><div className="flex flex-wrap items-center justify-between gap-3"><Link href="/partidos" className="inline-grid min-h-12 place-items-center rounded-xl bg-slate-800 px-5 text-sm font-black">← APP ALAM</Link><p className="text-xs font-bold text-slate-400">Inicio solicitado · {formatVideoTimestamp(params.startSecond)}</p><a href={buildYouTubeWatchAtUrl(params.videoId, params.startSecond)} target="_blank" rel="noopener noreferrer" className="inline-grid min-h-12 place-items-center rounded-xl bg-red-600 px-5 text-sm font-black">▶ VER EN YOUTUBE</a></div></section></main>;
 }
 
 export default function VideoPlayerPage() {

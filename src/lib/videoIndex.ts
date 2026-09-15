@@ -85,6 +85,11 @@ export function youtubeBaseUrl(videoId: string): string {
   return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
 }
 
+/** URL externa de una jugada concreta; comparte el mismo openSecond que el player interno. */
+export function buildYouTubeWatchAtUrl(videoId: string, second: number): string {
+  return `${youtubeBaseUrl(videoId)}&t=${Math.max(0, Math.round(second))}s`;
+}
+
 /** Ruta interna que aloja el reproductor preciso dentro de AlamedAPP. */
 export function buildInternalVideoPlayerUrl(videoId: string, second: number): string {
   return `/video/player?videoId=${encodeURIComponent(videoId)}&start=${Math.max(0, Math.round(second))}`;
