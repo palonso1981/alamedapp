@@ -19,7 +19,7 @@ import {
   resolveEventVideoPosition,
   upsertVideoSegment,
   youtubeBaseUrl,
-  youtubePreciseUrl,
+  buildInternalVideoPlayerUrl,
 } from "../../../../lib/videoIndex";
 import { useMatchStore } from "../../../../store/useMatchStore";
 import {
@@ -593,7 +593,7 @@ function SegmentCard({
               <span className="flex gap-2">
                 {event && (
                   <a
-                    href={youtubePreciseUrl(segment.videoId, anchor.videoSecond)}
+                    href={buildInternalVideoPlayerUrl(segment.videoId, anchor.videoSecond)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-grid min-h-9 place-items-center rounded-lg bg-red-600 px-3 font-black"

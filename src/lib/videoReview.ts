@@ -45,10 +45,15 @@ export function buildVideoReviewRows(records: readonly DashboardMatchRecord[], s
   }).sort((left, right) => right.record.catalog.date.localeCompare(left.record.catalog.date) || right.event.period - left.event.period || right.event.minute - left.event.minute || right.event.order - left.event.order);
 }
 
-export function buildWhatsAppVideoText(title: string, rows: readonly VideoReviewRow[]): string {
+function absoluteVideoUrl(url: string, appOrigin: string): string {
+  if (!url.startsWith("/") || !appOrigin) return url;
+  return new URL(url, appOrigin.endsWith("/") ? appOrigin : `${appOrigin}/`).toString();
+}
+
+export function buildWhatsAppVideoText(title: string, rows: readonly VideoReviewRow[], appOrigin = ""): string {
   const lines = rows.map(({ record, event, resolution }) => {
     const prefix = `${record.catalog.opponent} · ${record.catalog.date} · P${event.period} min ${event.minute} · ${eventDescription(event, record.session.players)}`;
-    return resolution.status === "RESOLVED" ? `${prefix}\n${resolution.url}` : `${prefix} · SIN VÍDEO`;
+    return resolution.status === "RESOLVED" ? `${prefix}\n${absoluteVideoUrl(resolution.url, appOrigin)}` : `${prefix} · SIN VÍDEO`;
   });
   const unavailable = rows.filter((row) => row.resolution.status !== "RESOLVED").length;
   return [`ALAMEDAPP · ${title}`, ...lines, unavailable > 0 ? `${unavailable} jugada${unavailable === 1 ? "" : "s"} sin enlace disponible.` : ""].filter(Boolean).join("\n\n");
