@@ -11,6 +11,7 @@ import { remoteMatchSession, remoteWorkspace } from "./accessRemoteHydration";
 import { AccessError, permissionFailureConfirmsRevocation } from "./accessFirestore";
 import { MATCH_REMOTE_SCHEMA_VERSION } from "../sync/syncTypes";
 import { createDraftMatch } from "../preMatch";
+import { changeMatchLifecycle } from "../adminDomain";
 
 class MemoryStorage implements AccessStorage {
   values = new Map<string, string>();
@@ -115,6 +116,25 @@ test("ADMIN y EDITOR encolan MATCH nuevo; VIEWER y acceso desactivado no escribe
     assert.equal(storage.length, 0);
   }
   resetRuntimeAccessGrantForTests();
+});
+
+test("VIEWER no puede encolar el tombstone de borrado de un partido", () => {
+  const storage = new MemoryStorage();
+  const repository = new LocalMatchRepository({ storage, now: () => 2, idFactory: () => "delete-op" });
+  const match = createDraftMatch("viewer-delete", {
+    clubId: "club-a", teamId: "team-a", seasonId: "season-a",
+    opponent: "Rival", venue: "HOME", date: "2026-09-18",
+  }, 1);
+  resetRuntimeAccessGrantForTests();
+  assert.equal(repository.save(match).ok, true);
+  setRuntimeAccessGrant(grant("VIEWER"));
+  try {
+    const result = repository.save(changeMatchLifecycle(match, "DELETE", 2));
+    assert.equal(result.ok, false);
+    assert.equal(repository.load(match.matchId)?.preparation?.deletedAt, undefined);
+  } finally {
+    resetRuntimeAccessGrantForTests();
+  }
 });
 
 test("acceso recordado se restaura y el deviceInstallId permanece estable", () => {

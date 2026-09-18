@@ -160,7 +160,11 @@ function buildNextSyncState(
         matchId: current.matchId,
         entityType: "MATCH",
         entityId: current.matchId,
-        kind: "UPSERT",
+        // El partido es la raíz del agregado. Su borrado funcional se publica
+        // como un único tombstone remoto; los eventos permanecen debajo para
+        // recuperación/auditoría, pero la hidratación deja de descubrirlos al
+        // ignorar la raíz eliminada.
+        kind: current.preparation?.deletedAt ? "TOMBSTONE" : "UPSERT",
         payload: currentMetadata,
       },
       now,

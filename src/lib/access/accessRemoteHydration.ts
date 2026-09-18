@@ -11,11 +11,14 @@ import { ClubProfile, MasterPlayer, MasterStaffMember, MatchEvent, MatchSession,
 
 type RemoteEnvelope<T> = { revision?: number; removed?: boolean; payload?: T } & Partial<T>;
 
-function payload<T>(snapshot: { data(): DocumentData | undefined }): T | null {
-  const raw = snapshot.data() as RemoteEnvelope<T> | undefined;
+export function remoteEnvelopePayload<T>(raw: RemoteEnvelope<T> | undefined): T | null {
   if (!raw) return null;
   if (raw.removed) return null;
   return (raw.payload ?? raw) as T;
+}
+
+function payload<T>(snapshot: { data(): DocumentData | undefined }): T | null {
+  return remoteEnvelopePayload(snapshot.data() as RemoteEnvelope<T> | undefined);
 }
 
 function revision(snapshot: { data(): DocumentData | undefined }): number {

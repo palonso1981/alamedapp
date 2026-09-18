@@ -39,12 +39,13 @@ import {
 } from "./matchVideoConflict";
 import { createDraftMatch } from "../preMatch";
 import { createSeason, emptyTeamWorkspace } from "../seasonDomain";
-import { createTeamProfile } from "../adminDomain";
+import { changeMatchLifecycle, createTeamProfile } from "../adminDomain";
 import { updateExistingMatchMetadata } from "../matchMetadata";
 import { createVideoSegment, upsertVideoEventOverride, upsertVideoSegment } from "../videoIndex";
 import { resetRuntimeCaptureContextsForTests, setRuntimeCaptureContext } from "../captureLease";
 import { buildDashboardV2, emptyDashboardScope } from "../dashboardV2";
-import { listMatchCatalog } from "../matchCatalog";
+import { listMatchCatalog, visibleMatchCatalog } from "../matchCatalog";
+import { remoteEnvelopePayload } from "../access/accessRemoteHydration";
 
 class MemoryStorage implements LocalStorageAdapter {
   private readonly values = new Map<string, string>();
@@ -138,6 +139,137 @@ test("partido limpio baseRevision 0 sincroniza y un segundo navegador puede hidr
   assert.equal(localB.hydrateRemote(session, { match: remoteDocument!.revision }), true);
   assert.equal(localB.load(session.matchId)?.preparation?.opponent, "Rival");
   assert.equal(localB.getSyncState(session.matchId).outbox.length, 0);
+});
+
+function synchronizedMatchWithEvent(matchId: string) {
+  const draft = createDraftMatch(matchId, {
+    clubId: "club-a", teamId: "team-a", seasonId: "season-a",
+    opponent: "Rival", venue: "HOME", date: "2026-09-18",
+  }, 100);
+  const demo = createSession(matchId);
+  return { ...demo, preparation: draft.preparation };
+}
+
+test("borrar un partido sincronizado encola un tombstone MATCH sin borrar sus eventos", async () => {
+  const storage = new MemoryStorage();
+  let now = 100;
+  const local = new LocalMatchRepository({ storage, now: () => now, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const session = synchronizedMatchWithEvent("delete-aggregate");
+  local.save(session);
+  await new MatchSyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(session.matchId);
+  const eventId = session.events[0].id;
+  assert.equal(remote.documents.get(`${session.matchId}:event:${eventId}`)?.removed, false);
+
+  now = 200;
+  const deleted = changeMatchLifecycle(local.load(session.matchId)!, "DELETE", now);
+  const saved = local.save(deleted);
+  assert.equal(saved.ok, true);
+  assert.equal(saved.ok && saved.pending, 1);
+  const operation = local.getSyncState(session.matchId).outbox[0];
+  assert.equal(operation.entityType, "MATCH");
+  assert.equal(operation.kind, "TOMBSTONE");
+  assert.equal((operation.payload as ReturnType<typeof matchRemoteMetadata>).preparation?.deletedAt, now);
+  assert.equal(local.load(session.matchId)?.events.length, 1);
+
+  await new MatchSyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(session.matchId);
+  assert.equal(local.getSummary(session.matchId).pending, 0);
+  assert.equal(remote.documents.get(`${session.matchId}:match`)?.removed, true);
+  assert.equal(remote.documents.get(`${session.matchId}:event:${eventId}`)?.removed, false);
+});
+
+test("tombstone remoto oculta el agregado en un segundo navegador y no hidrata eventos huérfanos", async () => {
+  const storageA = new MemoryStorage();
+  const localA = new LocalMatchRepository({ storage: storageA, now: () => 100, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const session = synchronizedMatchWithEvent("delete-second-browser");
+  localA.save(session);
+  await new MatchSyncCoordinator(localA, remote, { isOnline: () => true }).syncMatch(session.matchId);
+  localA.save(changeMatchLifecycle(localA.load(session.matchId)!, "DELETE", 200));
+  await new MatchSyncCoordinator(localA, remote, { isOnline: () => true }).syncMatch(session.matchId);
+
+  const root = remote.documents.get(`${session.matchId}:match`)!;
+  assert.equal(root.removed, true);
+  assert.equal(remoteEnvelopePayload({ removed: root.removed, payload: root.payload }), null);
+  const storageB = new MemoryStorage();
+  const localB = new LocalMatchRepository({ storage: storageB, now: () => 300 });
+  // La hidratación real descarta la raíz removed y por ello ni siquiera
+  // consulta/crea localmente su subcolección de eventos.
+  assert.equal(localB.load(session.matchId), null);
+  assert.deepEqual(visibleMatchCatalog(listMatchCatalog(storageB)), []);
+});
+
+test("borrado offline conserva tombstone y al reconectar vacía outbox sin duplicar", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 100, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const session = synchronizedMatchWithEvent("delete-offline-reconnect");
+  local.save(session);
+  await new MatchSyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(session.matchId);
+
+  let online = false;
+  local.save(changeMatchLifecycle(local.load(session.matchId)!, "DELETE", 200));
+  const coordinator = new MatchSyncCoordinator(local, remote, { isOnline: () => online });
+  assert.equal((await coordinator.syncMatch(session.matchId)).pending, 1);
+  assert.equal(remote.documents.get(`${session.matchId}:match`)?.removed, false);
+  online = true;
+  assert.equal((await coordinator.syncMatch(session.matchId)).pending, 0);
+  assert.equal(remote.documents.get(`${session.matchId}:match`)?.removed, true);
+  assert.equal(remote.documents.size, 2);
+});
+
+test("permission denegado no finge borrado remoto y conserva tombstone recuperable", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 100, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const session = synchronizedMatchWithEvent("delete-permission");
+  local.save(session);
+  await new MatchSyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(session.matchId);
+  local.save(changeMatchLifecycle(local.load(session.matchId)!, "DELETE", 200));
+  const denied: RemoteMatchRepository = {
+    async apply() {
+      throw Object.assign(new Error("Missing or insufficient permissions."), { code: "permission-denied" });
+    },
+    async read(operation) { return remote.read(operation); },
+  };
+  const summary = await new MatchSyncCoordinator(local, denied, { isOnline: () => true }).syncMatch(session.matchId);
+  assert.equal(summary.errors, 1);
+  assert.equal(summary.pending, 0);
+  assert.equal(local.getSyncState(session.matchId).outbox[0].kind, "TOMBSTONE");
+  assert.equal(local.load(session.matchId)?.preparation?.deletedAt, 200);
+  assert.equal(remote.documents.get(`${session.matchId}:match`)?.removed, false);
+});
+
+test("cola anterior con deletedAt migra UPSERT a TOMBSTONE sin cambiar identidad ni revisión", () => {
+  const migrated = migrateMatchSyncState({
+    schemaVersion: 1,
+    outbox: [{
+      id: "existing-delete-operation",
+      matchId: "legacy-delete",
+      entityType: "MATCH",
+      entityId: "legacy-delete",
+      kind: "UPSERT",
+      payload: { matchId: "legacy-delete", preparation: { deletedAt: 123 } },
+      baseRevision: 7,
+      clientUpdatedAt: 124,
+      attempts: 1,
+      status: "PENDING",
+      nextAttemptAt: 0,
+    }],
+    knownRemoteRevisions: { "match:legacy-delete": 7 },
+    lastLocalMutationAt: 124,
+    lastSyncedAt: 120,
+    lastError: null,
+    lastErrorKind: null,
+    conflicts: [],
+  }, "legacy-delete");
+  assert.equal(migrated.outbox.length, 1);
+  assert.equal(migrated.outbox[0].id, "existing-delete-operation");
+  assert.equal(migrated.outbox[0].kind, "TOMBSTONE");
+  assert.equal(migrated.outbox[0].baseRevision, 7);
+  assert.deepEqual(migrated.outbox[0].payload, {
+    matchId: "legacy-delete", preparation: { deletedAt: 123 },
+  });
 });
 
 test("PERMISSION conservado solo se reactiva tras validación explícita sin cambiar identidad ni base", () => {

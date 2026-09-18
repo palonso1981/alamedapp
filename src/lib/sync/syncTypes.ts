@@ -211,10 +211,21 @@ export function migrateMatchSyncState(
     : {};
   const validOutbox = Array.isArray(value.outbox)
     ? value.outbox.filter((operation) => validOperation(operation, matchId)).map(
-        (operation) => ({
-          ...operation,
-          status: operation.status === "SYNCING" ? "PENDING" : operation.status,
-        }),
+        (operation) => {
+          const operationPayload = operation.payload as unknown as Record<string, unknown>;
+          const preparation = operation.entityType === "MATCH" && isObject(operationPayload.preparation)
+            ? operationPayload.preparation
+            : null;
+          return {
+            ...operation,
+            // Clientes anteriores expresaban el borrado funcional como UPSERT
+            // de metadata con deletedAt. Se promueve sin recrear la operación.
+            kind: operation.kind === "UPSERT" && typeof preparation?.deletedAt === "number"
+              ? "TOMBSTONE" as const
+              : operation.kind,
+            status: operation.status === "SYNCING" ? "PENDING" as const : operation.status,
+          };
+        },
       )
     : [];
   // Older clients could append one CONFLICT operation per local edit of the

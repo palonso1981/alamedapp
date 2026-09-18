@@ -21,6 +21,9 @@ import { loadMatchSession } from "../../lib/matchPersistence";
 import { normalizeDashboardSearch } from "../../lib/dashboardSelectors";
 import { CompetitionType } from "../../types";
 import { useAccess } from "../../components/access/AccessProvider";
+import { SyncStatusBadge } from "../../components/match/SyncStatusBadge";
+import { browserMatchRepository } from "../../lib/sync/localMatchRepository";
+import { hasUnreconciledMatchSyncState } from "../../lib/sync/syncTypes";
 
 const STATUS_LABEL: Record<MatchCatalogEntry["status"], string> = {
   DRAFT: "PREPARAR",
@@ -129,12 +132,36 @@ export default function MatchesPage() {
       showArchived,
     ],
   );
+  const pendingDeletedMatches = useMemo(
+    () => matches.filter((match) =>
+      Boolean(match.deletedAt) &&
+      hasUnreconciledMatchSyncState(browserMatchRepository.getSyncState(match.matchId)),
+    ),
+    [matches],
+  );
+  const deletedMatchSubscriptionKey = useMemo(
+    () => matches.filter((match) => match.deletedAt).map((match) => match.matchId).sort().join("|"),
+    [matches],
+  );
+  useEffect(() => {
+    const refresh = () => setMatches(listMatchCatalog());
+    const subscriptions = deletedMatchSubscriptionKey
+      ? deletedMatchSubscriptionKey.split("|").map((matchId) =>
+          browserMatchRepository.subscribe(matchId, refresh),
+        )
+      : [];
+    return () => subscriptions.forEach((unsubscribe) => unsubscribe());
+  }, [deletedMatchSubscriptionKey]);
   function lifecycle(
     matchId: string,
     action: "ARCHIVE" | "REACTIVATE" | "DELETE",
   ) {
     const result = changeStoredMatchLifecycle(matchId, action);
-    setMessage(result.ok ? null : result.message);
+    setMessage(result.ok
+      ? action === "DELETE" && result.pending > 0
+        ? "El partido se ha ocultado en este dispositivo. Su eliminación de APP ALAM está pendiente de sincronizar."
+        : null
+      : result.message);
     setMatches(listMatchCatalog());
   }
   function assignSeason(matchId: string) {
@@ -330,7 +357,7 @@ export default function MatchesPage() {
                   <AdminEntityActions
                     label={`partido contra ${match.opponent}`}
                     archived={Boolean(match.archivedAt)}
-                    impact={`Este partido contiene ${match.eventCount ?? 0} eventos. Al eliminarlo dejará de aparecer en el histórico, pero sus datos se conservarán como tombstone para no romper sincronización ni referencias.`}
+                    impact={`Este partido contiene ${match.eventCount ?? 0} eventos. Al confirmar se eliminará de APP ALAM en todos los dispositivos cuando la nube lo sincronice. Sus datos deportivos se conservarán dentro del agregado como tombstone para no romper sincronización ni referencias.`}
                     onArchive={() => lifecycle(match.matchId, "ARCHIVE")}
                     onReactivate={() => lifecycle(match.matchId, "REACTIVATE")}
                     onDelete={() => lifecycle(match.matchId, "DELETE")}
@@ -370,10 +397,24 @@ export default function MatchesPage() {
             );
           })}
           {message && (
-            <p role="alert" className="rounded-xl bg-red-950 p-3 text-red-200">
+            <p role="alert" className="rounded-xl bg-slate-800 p-3 text-slate-200">
               {message}
             </p>
           )}
+          {pendingDeletedMatches.map((match) => (
+            <div
+              key={`deleted-sync-${match.matchId}`}
+              className="flex items-center justify-between gap-3 rounded-xl border border-amber-700 bg-amber-950/50 p-3"
+            >
+              <div>
+                <p className="text-xs font-black text-amber-200">ELIMINACIÓN PENDIENTE</p>
+                <p className="mt-1 text-xs text-amber-100">
+                  {match.opponent} seguirá protegido localmente hasta que la nube confirme el tombstone.
+                </p>
+              </div>
+              <SyncStatusBadge matchId={match.matchId} />
+            </div>
+          ))}
           {visible.length === 0 && (
             <div className="rounded-3xl border border-dashed border-slate-700 p-10 text-center">
               <p className="text-slate-400">
