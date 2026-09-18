@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAccess } from "../components/access/AccessProvider";
+import { permissionFailureConfirmsRevocation, validateRememberedGrant } from "../lib/access/accessFirestore";
 import { beginLocalCaptureSession, CAPTURE_HEARTBEAT_MS, CaptureAcquireResult, LocalCaptureSession, MatchCaptureLease, captureOperationCanSync, setRuntimeCaptureContext, updateLocalCaptureMode } from "../lib/captureLease";
 import { heartbeatLocalCaptureSession, releaseLocalCaptureSession, verifyLocalCaptureSession } from "../lib/captureLeaseClient";
 import { firebaseDevConfigStatus } from "../lib/firebaseConfig";
@@ -41,6 +42,30 @@ export function useCaptureLease(matchId: string, match: MatchSession | undefined
   const [occupiedBy, setOccupiedBy] = useState<MatchCaptureLease | undefined>();
   const [message, setMessage] = useState<string>();
 
+  const handleRemoteFailure = useCallback(async (error: unknown, fallback: string) => {
+    if (!mountedRef.current) return;
+    if (!permissionError(error)) {
+      setStatus("ERROR");
+      setMessage(error instanceof Error ? error.message : fallback);
+      return;
+    }
+    try {
+      await validateRememberedGrant(grant);
+      if (!mountedRef.current) return;
+      setStatus("ERROR");
+      setMessage("El acceso sigue activo, pero Firebase rechazó esta operación. Los datos locales permanecen intactos.");
+    } catch (validationError) {
+      if (!mountedRef.current) return;
+      if (permissionFailureConfirmsRevocation(validationError)) {
+        setStatus("ACCESS_REVOKED");
+        setMessage(undefined);
+      } else {
+        setStatus("ERROR");
+        setMessage(validationError instanceof Error ? validationError.message : fallback);
+      }
+    }
+  }, [grant]);
+
   const applyResult = useCallback((result: CaptureAcquireResult) => {
     if (!mountedRef.current) return;
     if (result.status === "OCCUPIED") { setOccupiedBy(result.lease); setStatus("OCCUPIED"); setMessage(undefined); return; }
@@ -66,11 +91,9 @@ export function useCaptureLease(matchId: string, match: MatchSession | undefined
         await syncMatchNow(matchId);
       }
     } catch (error) {
-      if (!mountedRef.current) return;
-      if (permissionError(error)) setStatus("ACCESS_REVOKED");
-      else { setStatus("ERROR"); setMessage(error instanceof Error ? error.message : "No se pudo comprobar el control del partido."); }
+      await handleRemoteFailure(error, "No se pudo comprobar el control del partido.");
     }
-  }, [applyResult, config.configured, grant, matchId]);
+  }, [applyResult, config.configured, grant, handleRemoteFailure, matchId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -109,16 +132,15 @@ export function useCaptureLease(matchId: string, match: MatchSession | undefined
         const next = await heartbeatLocalCaptureSession(local, grant);
         if (next === "LOST") { setStatus("LOST"); setMessage("Otro dispositivo controla ahora este partido."); }
       } catch (error) {
-        if (permissionError(error)) setStatus("ACCESS_REVOKED");
-        else if (!navigator.onLine) setStatus("OFFLINE_PREVIOUS");
-        else setMessage(error instanceof Error ? error.message : "No se pudo renovar el control.");
+        if (!navigator.onLine) setStatus("OFFLINE_PREVIOUS");
+        else await handleRemoteFailure(error, "No se pudo renovar el control.");
       }
     };
     const interval = window.setInterval(() => void heartbeat(), CAPTURE_HEARTBEAT_MS);
     const visible = () => { if (document.visibilityState === "visible") void heartbeat(); };
     document.addEventListener("visibilitychange", visible);
     return () => { window.clearInterval(interval); document.removeEventListener("visibilitychange", visible); };
-  }, [grant, status]);
+  }, [grant, handleRemoteFailure, status]);
 
   useEffect(() => {
     if (!match?.matchFinished || status !== "OWNED") return;

@@ -8,7 +8,9 @@ import { LocalTeamRepository } from "../sync/localTeamRepository";
 import { LocalMatchRepository } from "../sync/localMatchRepository";
 import { emptyTeamWorkspace } from "../seasonDomain";
 import { remoteMatchSession, remoteWorkspace } from "./accessRemoteHydration";
+import { AccessError, permissionFailureConfirmsRevocation } from "./accessFirestore";
 import { MATCH_REMOTE_SCHEMA_VERSION } from "../sync/syncTypes";
+import { createDraftMatch } from "../preMatch";
 
 class MemoryStorage implements AccessStorage {
   values = new Map<string, string>();
@@ -84,6 +86,35 @@ test("VIEWER no abre rutas de mutación ni Accesos y credencial desactivada no a
   assert.equal(canOpenRoute(disabled, "/dashboard"), false);
   const revokedVersion = { ...viewer, credentialVersion: 0 };
   assert.equal(canOpenRoute(revokedVersion, "/dashboard"), false);
+});
+
+test("un permission-denied genérico no se etiqueta como acceso revocado", () => {
+  const genericPermission = new AccessError("UNAUTHORIZED", "Missing or insufficient permissions.");
+  const confirmedDisabled = new AccessError("DISABLED", "Este acceso está desactivado.", true);
+  assert.equal(permissionFailureConfirmsRevocation(genericPermission), false);
+  assert.equal(permissionFailureConfirmsRevocation(confirmedDisabled), true);
+});
+
+test("ADMIN y EDITOR encolan MATCH nuevo; VIEWER y acceso desactivado no escriben", () => {
+  const match = createDraftMatch("access-match-create", {
+    clubId: "club-a", teamId: "team-a", seasonId: "season-a",
+    opponent: "Rival", venue: "HOME", date: "2026-09-18",
+  }, 1);
+  for (const role of ["ADMIN", "EDITOR"] as const) {
+    const storage = new MemoryStorage();
+    const repository = new LocalMatchRepository({ storage, now: () => 1, idFactory: () => `op-${role}` });
+    setRuntimeAccessGrant(grant(role));
+    assert.equal(repository.save(match).ok, true);
+    assert.equal(repository.getSyncState(match.matchId).outbox[0].baseRevision, 0);
+  }
+  for (const access of [grant("VIEWER"), { ...grant("ADMIN"), profile: { ...grant("ADMIN").profile, status: "DISABLED" as const } }]) {
+    const storage = new MemoryStorage();
+    const repository = new LocalMatchRepository({ storage, now: () => 1, idFactory: () => "forbidden" });
+    setRuntimeAccessGrant(access);
+    assert.equal(repository.save(match).ok, false);
+    assert.equal(storage.length, 0);
+  }
+  resetRuntimeAccessGrantForTests();
 });
 
 test("acceso recordado se restaura y el deviceInstallId permanece estable", () => {

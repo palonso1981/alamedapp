@@ -113,6 +113,53 @@ test("repositorio local guarda sesión y outbox de forma atómica", () => {
   assert.equal((eventOperation?.payload as typeof foul).playerId, foul.playerId);
 });
 
+test("partido limpio baseRevision 0 sincroniza y un segundo navegador puede hidratarlo", async () => {
+  const storageA = new MemoryStorage();
+  const localA = new LocalMatchRepository({ storage: storageA, now: () => 100, idFactory: idFactory() });
+  const session = createDraftMatch("new-match-visible-remotely", {
+    clubId: "club-a", teamId: "team-a", seasonId: "season-a",
+    opponent: "Rival", venue: "HOME", date: "2026-09-18",
+  }, 100);
+  assert.equal(localA.save(session).ok, true);
+  const queued = localA.getSyncState(session.matchId).outbox;
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].entityType, "MATCH");
+  assert.equal(queued[0].baseRevision, 0);
+
+  const remote = new InMemoryRemoteMatchRepository();
+  await new MatchSyncCoordinator(localA, remote, { isOnline: () => true }).syncMatch(session.matchId);
+  assert.equal(localA.getSummary(session.matchId).pending, 0);
+  assert.equal(localA.getSummary(session.matchId).errors, 0);
+  const remoteDocument = remote.documents.get(`${session.matchId}:match`);
+  assert.equal(remoteDocument?.revision, 1);
+
+  const storageB = new MemoryStorage();
+  const localB = new LocalMatchRepository({ storage: storageB, now: () => 200 });
+  assert.equal(localB.hydrateRemote(session, { match: remoteDocument!.revision }), true);
+  assert.equal(localB.load(session.matchId)?.preparation?.opponent, "Rival");
+  assert.equal(localB.getSyncState(session.matchId).outbox.length, 0);
+});
+
+test("PERMISSION conservado solo se reactiva tras validación explícita sin cambiar identidad ni base", () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 100, idFactory: idFactory() });
+  const session = createDraftMatch("permission-retry", {
+    clubId: "club-a", teamId: "team-a", seasonId: "season-a",
+    opponent: "Rival", venue: "HOME", date: "2026-09-18",
+  }, 100);
+  local.save(session);
+  const claimed = local.claimNextOperation(session.matchId)!;
+  local.markError(session.matchId, claimed.id, "PERMISSION", "Missing or insufficient permissions.", false);
+  assert.equal(local.claimNextOperation(session.matchId), null);
+
+  local.retryPermissionErrorsAfterAccessValidation(session.matchId);
+  const retried = local.getSyncState(session.matchId).outbox[0];
+  assert.equal(retried.id, claimed.id);
+  assert.equal(retried.baseRevision, 0);
+  assert.deepEqual(retried.payload, claimed.payload);
+  assert.equal(retried.status, "PENDING");
+});
+
 test("ediciones pendientes se compactan conservando operationId y eventId", () => {
   const storage = new MemoryStorage();
   let now = 200;

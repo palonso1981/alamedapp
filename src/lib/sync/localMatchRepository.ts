@@ -594,6 +594,31 @@ export class LocalMatchRepository {
     this.notify(matchId);
   }
 
+  /** Reactiva un PERMISSION solo después de revalidar explícitamente Access. */
+  retryPermissionErrorsAfterAccessValidation(matchId: string): void {
+    const storage = this.storage();
+    const record = loadMatchRecord(matchId, storage);
+    if (!record) return;
+    const outbox = record.sync.outbox.map((operation) =>
+      operation.status === "ERROR" && operation.errorKind === "PERMISSION"
+        ? {
+            ...operation,
+            status: "PENDING" as const,
+            nextAttemptAt: 0,
+            lastError: undefined,
+            errorKind: undefined,
+          }
+        : operation,
+    );
+    saveMatchRecord(
+      record.session,
+      { ...record.sync, outbox, lastError: null, lastErrorKind: null },
+      storage,
+      this.now(),
+    );
+    this.notify(matchId);
+  }
+
   subscribe(matchId: string, listener: () => void): () => void {
     const listeners = this.listeners.get(matchId) ?? new Set<() => void>();
     listeners.add(listener);

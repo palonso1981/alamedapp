@@ -59,12 +59,16 @@ service cloud.firestore {
       allow list: if teamAllowed(matchClub(resource.data), matchTeam(resource.data));
       allow create: if canWriteTeam(matchClub(request.resource.data), matchTeam(request.resource.data))
         && request.resource.data.matchId == matchId
-        && request.resource.data.entityType == "MATCH";
+        && request.resource.data.entityType == "MATCH"
+        && request.resource.data.entityId == matchId
+        && request.resource.data.revision == 1;
       allow update: if canWriteTeam(matchClub(resource.data), matchTeam(resource.data))
         && matchClub(request.resource.data) == matchClub(resource.data)
         && matchTeam(request.resource.data) == matchTeam(resource.data)
         && request.resource.data.matchId == matchId
-        && request.resource.data.entityType == "MATCH";
+        && request.resource.data.entityType == "MATCH"
+        && resource.data.revision is int
+        && request.resource.data.revision == resource.data.revision + 1;
       allow delete: if false;
 
       match /events/{eventId} {
@@ -73,7 +77,10 @@ service cloud.firestore {
         allow create, update: if canWriteTeam(parentMatch().payload.preparation.clubId, parentMatch().payload.preparation.teamId)
           && request.resource.data.matchId == matchId
           && request.resource.data.entityType == "EVENT"
-          && request.resource.data.entityId == eventId;
+          && request.resource.data.entityId == eventId
+          && (!exists(/databases/$(database)/documents/matches/$(matchId)/events/$(eventId))
+            || (resource.data.revision is int
+              && request.resource.data.revision == resource.data.revision + 1));
         allow delete: if false;
       }
     }

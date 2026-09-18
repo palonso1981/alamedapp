@@ -85,6 +85,7 @@ export interface MatchSyncView {
   recoveryAvailable: boolean;
   localVideoResolutionAvailable: boolean;
   retry: () => void;
+  retryPermissionAfterAccessValidation: () => void;
   reconcileIdentical: () => Promise<{ reconciled: number; protected: number; unchanged: number }>;
   resolveLocalVideo: () => Promise<{ status: "RESOLVED" | "PROTECTED"; reason?: string }>;
 }
@@ -119,6 +120,12 @@ export function useMatchSync(matchId: string): MatchSyncView {
   const retry = useCallback(() => {
     if (!eligible || !config.configured || !navigator.onLine) return;
     void browserSyncCoordinator.retryMatch(matchId).then(refresh);
+  }, [config.configured, eligible, matchId, refresh]);
+
+  const retryPermissionAfterAccessValidation = useCallback(() => {
+    if (!eligible || !config.configured || !navigator.onLine) return;
+    browserMatchRepository.retryPermissionErrorsAfterAccessValidation(matchId);
+    void browserSyncCoordinator.syncMatch(matchId).then(refresh);
   }, [config.configured, eligible, matchId, refresh]);
 
   const reconcileIdentical = useCallback(async () => {
@@ -171,5 +178,5 @@ export function useMatchSync(matchId: string): MatchSyncView {
     };
   }, [matchId, refresh, retry, sync]);
 
-  return { summary, config, eligible, online, ...diagnostics, retry, reconcileIdentical, resolveLocalVideo };
+  return { summary, config, eligible, online, ...diagnostics, retry, retryPermissionAfterAccessValidation, reconcileIdentical, resolveLocalVideo };
 }

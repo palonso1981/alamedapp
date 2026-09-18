@@ -71,6 +71,27 @@ test("Rules: matches permite query solo evaluando club y equipo autorizado", () 
   assert.match(block, /Firestore no filtra resultados/);
 });
 
+test("Rules: MATCH nuevo autoriza ADMIN/EDITOR por Access y nunca sobreescribe revision 1", () => {
+  const block = rules.match(/match \/matches\/\{matchId\} \{([\s\S]*?)\n      match \/events/)?.[1] ?? "";
+  assert.match(block, /allow create: if canWriteTeam\(matchClub\(request\.resource\.data\), matchTeam\(request\.resource\.data\)\)/);
+  assert.match(block, /request\.resource\.data\.entityId == matchId/);
+  assert.match(block, /request\.resource\.data\.revision == 1/);
+  assert.match(block, /resource\.data\.revision is int/);
+  assert.match(block, /allow update:[\s\S]*?request\.resource\.data\.revision == resource\.data\.revision \+ 1/);
+  assert.match(rules, /access\(clubId\)\.role in \['ADMIN', 'EDITOR'\]/);
+  assert.match(rules, /access\(clubId\)\.role != 'VIEWER'/);
+});
+
+test("transporte: MATCH base 0 crea sin leer un documento inexistente", () => {
+  const implementation = readFileSync("src/lib/sync/firestoreMatchRepository.ts", "utf8");
+  const guardedCreate = implementation.indexOf('operation.entityType === "MATCH" && operation.baseRevision === 0');
+  const directCreate = implementation.indexOf("await setDoc(reference, firestoreDocument(operation, 1))", guardedCreate);
+  const revisionedTransaction = implementation.indexOf("return runTransaction", guardedCreate);
+  assert.ok(guardedCreate >= 0);
+  assert.ok(directCreate > guardedCreate);
+  assert.ok(revisionedTransaction > directCreate);
+});
+
 test("Rules: una sesión CLOSED solo se reemplaza por candidato completo del mismo UID", () => {
   const block = rules.match(/match \/clubs\/\{clubId\}\/accessSessions\/\{uid\} \{([\s\S]*?)\n    \}/)?.[1] ?? "";
   assert.match(block, /resource\.data\.status == "CLOSED"/);

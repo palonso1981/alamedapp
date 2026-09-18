@@ -3,14 +3,17 @@
 import { useState } from "react";
 
 import { useMatchSync } from "../../hooks/useMatchSync";
+import { useAccess } from "../access/AccessProvider";
 import { downloadMatchRecoveryBundle } from "../../lib/recoveryBundle";
 
 export function SyncStatusBadge({ matchId }: { matchId: string }) {
-  const { summary, config, eligible, online, retry, reconcileIdentical, resolveLocalVideo, retryableErrors, terminalPermissionErrors, captureConflicts, recoveryAvailable, localVideoResolutionAvailable } = useMatchSync(matchId);
+  const { refresh: refreshAccess } = useAccess();
+  const { summary, config, eligible, online, retry, retryPermissionAfterAccessValidation, reconcileIdentical, resolveLocalVideo, retryableErrors, terminalPermissionErrors, captureConflicts, recoveryAvailable, localVideoResolutionAvailable } = useMatchSync(matchId);
   const [open, setOpen] = useState(false);
   const [rechecking, setRechecking] = useState(false);
   const [resolvingVideo, setResolvingVideo] = useState(false);
   const [recheckMessage, setRecheckMessage] = useState("");
+  const [validatingAccess, setValidatingAccess] = useState(false);
 
   const state = !eligible
     ? { label: "○", description: "Solo local", tone: "bg-slate-900 text-slate-400" }
@@ -22,7 +25,7 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
         }
       : summary.errors > 0
         ? terminalPermissionErrors > 0
-          ? { label: `⊘ ${summary.errors}`, description: "Acceso revocado · datos locales preservados", tone: "bg-red-950 text-red-300" }
+          ? { label: `⊘ ${summary.errors}`, description: "Permiso rechazado · datos locales preservados", tone: "bg-red-950 text-red-300" }
           : { label: `! ${summary.errors} sin enviar`, description: `${summary.errors} operaciones sin enviar`, tone: "bg-red-950 text-red-300" }
         : summary.syncing > 0
           ? { label: `↻ ${summary.syncing}`, description: "Sincronizando", tone: "bg-cyan-950 text-cyan-200" }
@@ -60,7 +63,7 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
                       : `${summary.conflicts} ${summary.conflicts === 1 ? "entidad necesita" : "entidades necesitan"} revisión. La versión local se conserva y no se sobrescribe.`
                   : summary.pending > 0 || summary.errors > 0
                     ? terminalPermissionErrors > 0
-                      ? "El acceso ya no autoriza el envío. La copia local queda preservada para recuperación por un ADMIN."
+                      ? "Firebase rechazó el envío. Esto no confirma por sí solo que el acceso esté revocado; la copia local permanece intacta."
                       : `${summary.pending + summary.errors} operaciones guardadas pendientes de envío.`
                     : "No hay operaciones locales pendientes."}
           </p>
@@ -82,6 +85,24 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
               className="mt-3 min-h-10 w-full rounded-lg bg-cyan-500 font-black text-slate-950 disabled:opacity-40"
             >
               REINTENTAR
+            </button>
+          )}
+          {eligible && config.configured && terminalPermissionErrors > 0 && (
+            <button
+              type="button"
+              disabled={!online || validatingAccess}
+              onClick={() => {
+                setValidatingAccess(true); setRecheckMessage("");
+                void refreshAccess().then(() => {
+                  retryPermissionAfterAccessValidation();
+                  setRecheckMessage("Acceso validado. Reintentando sin alterar la copia local.");
+                }).catch((error) => {
+                  setRecheckMessage(error instanceof Error ? error.message : "No se pudo validar el acceso.");
+                }).finally(() => setValidatingAccess(false));
+              }}
+              className="mt-3 min-h-10 w-full rounded-lg bg-cyan-500 px-2 font-black text-slate-950 disabled:opacity-40"
+            >
+              {validatingAccess ? "VALIDANDO…" : "VALIDAR ACCESO Y REINTENTAR"}
             </button>
           )}
           {recoveryAvailable && (

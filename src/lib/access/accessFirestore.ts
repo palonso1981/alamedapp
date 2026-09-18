@@ -8,7 +8,15 @@ import { getOrCreateDeviceInstallId } from "./accessPersistence";
 export type AccessFailure = "INVALID_CODE" | "DISABLED" | "OFFLINE" | "UNAUTHORIZED";
 
 export class AccessError extends Error {
-  constructor(public readonly kind: AccessFailure, message: string) { super(message); }
+  constructor(
+    public readonly kind: AccessFailure,
+    message: string,
+    public readonly confirmedRevocation = false,
+  ) { super(message); }
+}
+
+export function permissionFailureConfirmsRevocation(error: unknown): boolean {
+  return error instanceof AccessError && error.confirmedRevocation;
 }
 
 function firebaseAccessError(error: unknown, fallback: string): AccessError {
@@ -89,18 +97,18 @@ export async function redeemAccessCode(code: string, now = Date.now()): Promise<
 
 export async function validateRememberedGrant(grant: ActiveAccessGrant, now = Date.now()): Promise<ActiveAccessGrant> {
   const { db, user } = await servicesWithUser();
-  if (user.uid !== grant.uid) throw new AccessError("UNAUTHORIZED", "La identidad técnica de este dispositivo ha cambiado.");
+  if (user.uid !== grant.uid) throw new AccessError("UNAUTHORIZED", "La identidad técnica de este dispositivo ha cambiado.", true);
   try {
     const [sessionSnapshot, profileSnapshot] = await Promise.all([
       getDoc(doc(db, "clubs", grant.profile.clubId, "accessSessions", user.uid)),
       getDoc(doc(db, "clubs", grant.profile.clubId, "accesses", grant.profile.accessId)),
     ]);
     const session = sessionSnapshot.data() as (AccessTechnicalSession & { status?: string }) | undefined;
-    if (!sessionSnapshot.exists() || session?.status !== "ACTIVE") throw new AccessError("UNAUTHORIZED", "Este dispositivo ya no tiene un acceso válido.");
+    if (!sessionSnapshot.exists() || session?.status !== "ACTIVE") throw new AccessError("UNAUTHORIZED", "Este dispositivo ya no tiene un acceso válido.", true);
     const rawProfile = profileSnapshot.data();
-    if (!profileSnapshot.exists() || !validProfile(rawProfile)) throw new AccessError("UNAUTHORIZED", "Este acceso ya no existe.");
+    if (!profileSnapshot.exists() || !validProfile(rawProfile)) throw new AccessError("UNAUTHORIZED", "Este acceso ya no existe.", true);
     const profile = rawProfile;
-    if (profile.status !== "ACTIVE" || session.credentialVersion !== profile.credentialVersion || session.accessId !== profile.accessId) throw new AccessError("DISABLED", "Este acceso está desactivado o ya no es válido.");
+    if (profile.status !== "ACTIVE" || session.credentialVersion !== profile.credentialVersion || session.accessId !== profile.accessId) throw new AccessError("DISABLED", "Este acceso está desactivado o ya no es válido.", true);
     return { ...grant, uid: user.uid, profile, credentialVersion: profile.credentialVersion, lastValidatedAt: now, offline: false };
   } catch (error) {
     throw firebaseAccessError(error, "No se pudo volver a validar el acceso.");
