@@ -135,6 +135,7 @@ export interface MasterPlayer extends LifecycleMetadata {
   clubId?: string;
   fullName: string;
   displayName: string;
+  /** Fallback legacy para datos anteriores a memberships; el dorsal canónico vive en SeasonPlayer.number. */
   number: number;
   photoUrl?: string;
   /** Foto gestionada. Tiene prioridad sobre `photoUrl`, que se conserva como fallback legacy. */

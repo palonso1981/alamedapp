@@ -100,7 +100,6 @@ export function createMasterPlayer(
   options: { id?: string; now?: number; clubId?: string } = {},
 ): MasterPlayer {
   const number = validNumber(input.number);
-  assertUniqueActiveNumber(players, number);
   const now = options.now ?? Date.now();
   const additionalGoalkeeperCapability =
     input.canPlayGoalkeeper ??
@@ -179,7 +178,6 @@ export function updateMasterPlayer(
     active: changes.active ?? current.active,
     updatedAt: now,
   };
-  if (next.active) assertUniqueActiveNumber(players, next.number, playerId);
   return players.map((player) => (player.playerId === playerId ? next : player));
 }
 

@@ -118,6 +118,32 @@ test("transporte: toda entidad de plantilla base 0 usa creación directa protegi
   assert.match(implementation, /sameFirestorePayload\(current\.payload, payload\)/);
 });
 
+test("Rules: membership activa exige maestro y admite alta conjunta mediante estado final", () => {
+  assert.match(rules, /function canonicalPlayerExistsAfter\(clubId, playerId\)/);
+  assert.match(rules, /existsAfter\(\/databases\/\$\(database\)\/documents\/clubs\/\$\(clubId\)\/players\/\$\(playerId\)\)/);
+  assert.match(rules, /getAfter\(\/databases\/\$\(database\)\/documents\/clubs\/\$\(clubId\)\/players\/\$\(playerId\)\)\.data\.payload\.playerId == playerId/);
+  assert.match(rules, /function canonicalStaffExistsAfter\(clubId, staffId\)/);
+  assert.match(rules, /getAfter\(\/databases\/\$\(database\)\/documents\/clubs\/\$\(clubId\)\/staff\/\$\(staffId\)\)\.data\.payload\.staffId == staffId/);
+  assert.ok((rules.match(/canonicalPlayerExistsAfter\(clubId, playerId\)/g) ?? []).length >= 3);
+  assert.ok((rules.match(/canonicalStaffExistsAfter\(clubId, staffId\)/g) ?? []).length >= 3);
+  assert.match(rules, /canonicalPlayerExistsAfter\(clubId, playerId\)[\s\S]*?payload\.active == false && request\.resource\.data\.payload\.deletedAt is int/);
+  assert.match(rules, /canonicalStaffExistsAfter\(clubId, staffId\)[\s\S]*?payload\.active == false && request\.resource\.data\.payload\.deletedAt is int/);
+});
+
+test("transporte: PLAYER o STAFF con membership inicial usa un único writeBatch", () => {
+  const implementation = readFileSync("src/lib/sync/firestoreTeamRepository.ts", "utf8");
+  const companionGuard = implementation.indexOf("operation.atomicCompanions?.length");
+  const batchCreation = implementation.indexOf("const batch = writeBatch(db)", companionGuard);
+  const primaryWrite = implementation.indexOf("batch.set(reference", batchCreation);
+  const companionWrite = implementation.indexOf("companionReference(db, operation, companion)", primaryWrite);
+  const batchCommit = implementation.indexOf("await batch.commit()", companionWrite);
+  assert.ok(companionGuard >= 0);
+  assert.ok(batchCreation > companionGuard);
+  assert.ok(primaryWrite > batchCreation);
+  assert.ok(companionWrite > primaryWrite);
+  assert.ok(batchCommit > companionWrite);
+});
+
 test("Rules: una sesión CLOSED solo se reemplaza por candidato completo del mismo UID", () => {
   const block = rules.match(/match \/clubs\/\{clubId\}\/accessSessions\/\{uid\} \{([\s\S]*?)\n    \}/)?.[1] ?? "";
   assert.match(block, /resource\.data\.status == "CLOSED"/);

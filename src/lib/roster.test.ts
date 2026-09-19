@@ -79,8 +79,65 @@ class MemoryStorage implements LocalStorageAdapter {
 class TeamRemote implements RevisionedRemoteRepository<TeamSyncOperation> {
   readonly documents = new Map<string, { revision: number; payload: unknown; operationId: string }>();
   online = true;
+  rejectAtomicCompanion = false;
   async apply(operation: TeamSyncOperation): Promise<RemoteApplyResult> {
     if (!this.online) throw Object.assign(new Error("offline"), { code: "unavailable" });
+    if (operation.atomicCompanions?.length) {
+      if (this.rejectAtomicCompanion) {
+        throw Object.assign(new Error("companion denied"), { code: "permission-denied" });
+      }
+      const entries = [
+        { entityType: operation.entityType, entityId: operation.entityId, payload: operation.payload },
+        ...operation.atomicCompanions,
+      ];
+      const currentEntries = entries.map((entry) => ({
+        entry,
+        key: teamEntityKey(entry.entityType, entry.entityId, operation.namespace),
+        current: this.documents.get(teamEntityKey(entry.entityType, entry.entityId, operation.namespace)),
+      }));
+      const alreadyApplied = currentEntries.every(({ entry, current }) =>
+        Boolean(current) &&
+        (current?.operationId === operation.id || JSON.stringify(current?.payload) === JSON.stringify(entry.payload)),
+      );
+      if (alreadyApplied) {
+        return {
+          status: "ALREADY_APPLIED",
+          revision: currentEntries[0].current?.revision ?? 1,
+        };
+      }
+      const incompatible = currentEntries.find(({ entry, current }) =>
+        Boolean(current) &&
+        current?.operationId !== operation.id &&
+        JSON.stringify(current?.payload) !== JSON.stringify(entry.payload),
+      );
+      if (incompatible || currentEntries.some(({ current }) => Boolean(current)) || operation.baseRevision !== 0) {
+        return {
+          status: "CONFLICT",
+          remoteRevision: currentEntries[0].current?.revision ?? 0,
+          remotePayload: incompatible?.current?.payload ?? currentEntries[0].current?.payload ?? null,
+        };
+      }
+      for (const { entry, key } of currentEntries) {
+        this.documents.set(key, {
+          revision: 1,
+          payload: structuredClone(entry.payload),
+          operationId: operation.id,
+        });
+      }
+      return { status: "APPLIED", revision: 1 };
+    }
+    if (operation.entityType === "SEASON_PLAYER") {
+      const playerId = "playerId" in operation.payload ? operation.payload.playerId : "";
+      if (!this.documents.has(teamEntityKey("PLAYER", playerId, operation.namespace))) {
+        throw Object.assign(new Error("missing player master"), { code: "permission-denied" });
+      }
+    }
+    if (operation.entityType === "SEASON_STAFF") {
+      const staffId = "staffId" in operation.payload ? operation.payload.staffId : "";
+      if (!this.documents.has(teamEntityKey("STAFF", staffId, operation.namespace))) {
+        throw Object.assign(new Error("missing staff master"), { code: "permission-denied" });
+      }
+    }
     const key = teamEntityKey(operation.entityType, operation.entityId, operation.namespace);
     const current = this.documents.get(key);
     if (current?.operationId === operation.id) return { status: "ALREADY_APPLIED", revision: current.revision };
@@ -436,11 +493,20 @@ test("portero natural sobrevive membresía, persistencia e inicio de partido", (
   assert.equal(replay.issues.length, 0);
 });
 
-test("dorsales activos no se duplican y un inactivo no bloquea el dorsal", () => {
+test("el dorsal no impone unicidad sobre PLAYER maestro y sí sobre la membership de temporada", () => {
   const first = createMasterPlayer([], { fullName: "Uno", displayName: "Uno", number: 7, role: "FIELD" }, { id: "one" });
-  assert.throws(() => createMasterPlayer([first], { fullName: "Dos", displayName: "Dos", number: 7, role: "FIELD" }), /dorsal 7/i);
-  const inactive = updateMasterPlayer([first], first.playerId, { active: false })[0];
-  assert.doesNotThrow(() => createMasterPlayer([inactive], { fullName: "Dos", displayName: "Dos", number: 7, role: "FIELD" }));
+  const second = createMasterPlayer([first], { fullName: "Dos", displayName: "Dos", number: 7, role: "FIELD" }, { id: "two" });
+  assert.equal(second.number, 7);
+  let workspace = createSeason(
+    { ...emptyTeamWorkspace("cd-alameda", 1), players: [first, second] },
+    { label: "2026-27" },
+    { seasonId: "unique-number-season", now: 2 },
+  );
+  workspace = upsertSeasonPlayer(workspace, "unique-number-season", first.playerId, { number: 7 }, 3);
+  assert.throws(
+    () => upsertSeasonPlayer(workspace, "unique-number-season", second.playerId, { number: 7 }, 4),
+    /dorsal 7/i,
+  );
 });
 
 test("staff mantiene entidad e identidad separadas del jugador", () => {
@@ -530,6 +596,178 @@ test("alta base 0 sincroniza todo el agregado de plantilla y otro navegador lo h
   assert.equal(browserB.load(workspace.clubId).players.find((player) => player.playerId === "p-2")?.managedPhoto?.provider, "CLOUDINARY");
   assert.equal(browserB.load(workspace.clubId).seasonPlayers.some((item) => item.playerId === "p-2"), true);
   assert.equal(browserB.getSyncState(workspace.clubId).outbox.length, 0);
+});
+
+test("PLAYER maestro puede sincronizarse sin temporada ni membership", async () => {
+  const storage = new MemoryStorage(); let operation = 0;
+  const local = new LocalTeamRepository({ storage, idFactory: () => `master-only-${++operation}` });
+  const remote = new TeamRemote();
+  const player = createMasterPlayer([], {
+    fullName: "Jugador sin temporada", displayName: "Libre", number: 24, role: "FIELD",
+  }, { id: "master-only-player", now: 2 });
+  const workspace = { ...emptyTeamWorkspace("cd-alameda", 1), players: [player] };
+
+  assert.equal(local.save(workspace), true);
+  const playerOperation = local.getSyncState(workspace.clubId).outbox.find((item) => item.entityType === "PLAYER");
+  assert.equal(playerOperation?.atomicCompanions, undefined);
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(workspace.clubId);
+
+  assert.ok(remote.documents.has(teamEntityKey("PLAYER", player.playerId)));
+  assert.equal(Array.from(remote.documents.keys()).some((key) => key.includes(":season_player:")), false);
+  assert.equal(local.getSummary(workspace.clubId).pending, 0);
+});
+
+test("alta nueva desde Plantilla crea PLAYER y SEASON_PLAYER como una intención atómica", async () => {
+  const storage = new MemoryStorage(); let operation = 0;
+  const local = new LocalTeamRepository({ storage, idFactory: () => `joint-player-${++operation}` });
+  const remote = new TeamRemote();
+  let baseline = createSeason(
+    emptyTeamWorkspace("cd-alameda", 1),
+    { label: "2026-27" },
+    { seasonId: "joint-season", now: 2 },
+  );
+  local.save(baseline);
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(baseline.clubId);
+
+  const player = createMasterPlayer(baseline.players, {
+    fullName: "Alta conjunta", displayName: "Conjunta", number: 18, role: "FIELD",
+  }, { id: "joint-player", now: 3 });
+  baseline = { ...baseline, players: [...baseline.players, player] };
+  const combined = upsertSeasonPlayer(baseline, "joint-season", player.playerId, { number: 18 }, 4);
+  local.save(combined);
+  const playerOperation = local.getSyncState(combined.clubId).outbox.find((item) => item.entityType === "PLAYER");
+  assert.equal(playerOperation?.atomicCompanions?.length, 1);
+  assert.equal(playerOperation?.atomicCompanions?.[0].entityType, "SEASON_PLAYER");
+
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(combined.clubId);
+  const playerKey = teamEntityKey("PLAYER", player.playerId);
+  const membershipKey = teamEntityKey("SEASON_PLAYER", seasonPlayerEntityId("joint-season", player.playerId));
+  assert.equal(remote.documents.get(playerKey)?.revision, 1);
+  assert.equal(remote.documents.get(membershipKey)?.revision, 1);
+  assert.equal(local.getSummary(combined.clubId).pending, 0);
+  assert.equal(local.getSummary(combined.clubId).conflicts, 0);
+
+  const browserB = new LocalTeamRepository({ storage: new MemoryStorage() });
+  const revisions = Object.fromEntries(Array.from(remote.documents.entries()).map(([key, document]) => [key, document.revision]));
+  browserB.hydrateRemote(combined.clubId, combined, revisions);
+  assert.equal(browserB.load(combined.clubId).players.some((item) => item.playerId === player.playerId), true);
+  assert.equal(browserB.load(combined.clubId).seasonPlayers.some((item) => item.playerId === player.playerId), true);
+});
+
+test("si falla el commit conjunto no se crea ni PLAYER ni SEASON_PLAYER", async () => {
+  const storage = new MemoryStorage(); let operation = 0;
+  const local = new LocalTeamRepository({ storage, idFactory: () => `denied-joint-${++operation}` });
+  const remote = new TeamRemote();
+  let workspace = createSeason(
+    emptyTeamWorkspace("cd-alameda", 1),
+    { label: "2026-27" },
+    { seasonId: "denied-season", now: 2 },
+  );
+  local.save(workspace);
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(workspace.clubId);
+  const player = createMasterPlayer([], {
+    fullName: "Fallo atómico", displayName: "Fallo", number: 19, role: "FIELD",
+  }, { id: "denied-player", now: 3 });
+  workspace = upsertSeasonPlayer(
+    { ...workspace, players: [player] },
+    "denied-season",
+    player.playerId,
+    { number: 19 },
+    4,
+  );
+  local.save(workspace);
+  remote.rejectAtomicCompanion = true;
+
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(workspace.clubId);
+  assert.equal(remote.documents.has(teamEntityKey("PLAYER", player.playerId)), false);
+  assert.equal(remote.documents.has(teamEntityKey("SEASON_PLAYER", seasonPlayerEntityId("denied-season", player.playerId))), false);
+  assert.ok(local.getSummary(workspace.clubId).errors > 0);
+});
+
+test("PLAYER existente se añade a otra temporada sin duplicar maestro y conserva dorsales independientes", async () => {
+  const storage = new MemoryStorage(); let operation = 0;
+  const local = new LocalTeamRepository({ storage, idFactory: () => `existing-player-${++operation}` });
+  const remote = new TeamRemote();
+  const player = createMasterPlayer([], {
+    fullName: "Misma persona", displayName: "Persona", number: 10, role: "FIELD",
+  }, { id: "stable-across-seasons", now: 2 });
+  let workspace = { ...emptyTeamWorkspace("cd-alameda", 1), players: [player] };
+  local.save(workspace);
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(workspace.clubId);
+  const masterRevision = remote.documents.get(teamEntityKey("PLAYER", player.playerId))?.revision;
+
+  workspace = createSeason(workspace, { label: "2026-27" }, { seasonId: "season-26", now: 3 });
+  workspace = createSeason(workspace, { label: "2027-28" }, { seasonId: "season-27", now: 4 });
+  workspace = upsertSeasonPlayer(workspace, "season-26", player.playerId, { number: 10 }, 5);
+  workspace = upsertSeasonPlayer(workspace, "season-27", player.playerId, { number: 7 }, 6);
+  local.save(workspace);
+  const pending = local.getSyncState(workspace.clubId).outbox;
+  assert.equal(pending.some((item) => item.entityType === "PLAYER"), false);
+  assert.equal(pending.filter((item) => item.entityType === "SEASON_PLAYER").length, 2);
+
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(workspace.clubId);
+  assert.equal(remote.documents.get(teamEntityKey("PLAYER", player.playerId))?.revision, masterRevision);
+  assert.equal(workspace.seasonPlayers.find((item) => item.seasonId === "season-26")?.number, 10);
+  assert.equal(workspace.seasonPlayers.find((item) => item.seasonId === "season-27")?.number, 7);
+});
+
+test("alta conjunta offline sobrevive reload, reintenta sin duplicar y STAFF tiene la misma garantía", async () => {
+  const storage = new MemoryStorage(); let operation = 0;
+  const local = new LocalTeamRepository({ storage, idFactory: () => `offline-joint-${++operation}` });
+  const remote = new TeamRemote();
+  let workspace = createSeason(
+    emptyTeamWorkspace("cd-alameda", 1),
+    { label: "2026-27" },
+    { seasonId: "offline-joint-season", now: 2 },
+  );
+  local.save(workspace);
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(workspace.clubId);
+  const player = createMasterPlayer([], {
+    fullName: "Jugador offline", displayName: "Offline", number: 21, role: "FIELD",
+  }, { id: "offline-joint-player", now: 3 });
+  const staff = createMasterStaff(
+    { fullName: "Técnica offline", displayName: "Técnica", role: "ASSISTANT_COACH" },
+    { id: "offline-joint-staff", now: 3 },
+  );
+  workspace = { ...workspace, players: [player], staff: [staff] };
+  workspace = upsertSeasonPlayer(workspace, "offline-joint-season", player.playerId, { number: 21 }, 4);
+  workspace = upsertSeasonStaff(workspace, "offline-joint-season", staff.staffId, { active: true }, 4);
+  local.save(workspace);
+  remote.online = false;
+  await new SyncCoordinator(local, remote, { isOnline: () => false }).syncMatch(workspace.clubId);
+
+  const reopened = new LocalTeamRepository({ storage, idFactory: () => `offline-reopen-${++operation}` });
+  const pendingMasters = reopened.getSyncState(workspace.clubId).outbox.filter((item) => item.entityType === "PLAYER" || item.entityType === "STAFF");
+  assert.equal(pendingMasters.every((item) => item.atomicCompanions?.length === 1), true);
+  remote.online = true;
+  await new SyncCoordinator(reopened, remote, { isOnline: () => true }).syncMatch(workspace.clubId);
+  const documentCount = remote.documents.size;
+  const playerOperation = pendingMasters.find((item) => item.entityType === "PLAYER")!;
+  assert.equal((await remote.apply(playerOperation)).status, "ALREADY_APPLIED");
+  assert.equal(remote.documents.size, documentCount);
+  assert.ok(remote.documents.has(teamEntityKey("STAFF", staff.staffId)));
+  assert.ok(remote.documents.has(teamEntityKey("SEASON_STAFF", seasonStaffEntityId("offline-joint-season", staff.staffId))));
+  assert.equal(reopened.getSummary(workspace.clubId).pending, 0);
+  assert.equal(reopened.getSummary(workspace.clubId).conflicts, 0);
+});
+
+test("editar identidad y dorsal actúa sobre entidades independientes", async () => {
+  const player = createMasterPlayer([], {
+    fullName: "Identidad original", displayName: "Original", number: 8, role: "FIELD",
+  }, { id: "independent-player", now: 1 });
+  let workspace = createSeason(
+    { ...emptyTeamWorkspace("cd-alameda", 1), players: [player] },
+    { label: "2026-27" },
+    { seasonId: "independent-season", now: 2 },
+  );
+  workspace = upsertSeasonPlayer(workspace, "independent-season", player.playerId, { number: 8 }, 3);
+  const membershipBefore = structuredClone(workspace.seasonPlayers[0]);
+  workspace = { ...workspace, players: updateMasterPlayer(workspace.players, player.playerId, { displayName: "Actual" }, 4) };
+  assert.deepEqual(workspace.seasonPlayers[0], membershipBefore);
+  const masterBeforeNumberChange = structuredClone(workspace.players[0]);
+  workspace = upsertSeasonPlayer(workspace, "independent-season", player.playerId, { number: 14 }, 5);
+  assert.deepEqual(workspace.players[0], masterBeforeNumberChange);
+  assert.equal(workspace.seasonPlayers[0].number, 14);
 });
 
 test("editar una ficha mientras sincroniza conserva la versión posterior", async () => {
@@ -637,6 +875,12 @@ test("membership hidratada en revisión 1 edita con base 1 y sincroniza a revisi
   assert.equal(queued.baseRevision, 1);
 
   const remote = new TeamRemote();
+  const master = remoteWorkspace.players.find((item) => item.playerId === membership.playerId)!;
+  remote.documents.set(teamEntityKey("PLAYER", master.playerId), {
+    revision: 1,
+    payload: structuredClone(master),
+    operationId: "remote-player-v1",
+  });
   remote.documents.set(key, { revision: 1, payload: structuredClone(membership), operationId: "remote-membership-v1" });
   await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(remoteWorkspace.clubId);
   assert.equal(local.getSummary(remoteWorkspace.clubId).conflicts, 0);

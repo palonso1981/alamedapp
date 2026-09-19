@@ -33,6 +33,12 @@ export type TeamSyncPayload =
   | SeasonPlayer
   | SeasonStaff;
 
+export interface TeamSyncAtomicCompanion {
+  entityType: "SEASON_PLAYER" | "SEASON_STAFF";
+  entityId: string;
+  payload: SeasonPlayer | SeasonStaff;
+}
+
 export interface TeamSyncOperation {
   id: string;
   teamId: string;
@@ -43,6 +49,12 @@ export interface TeamSyncOperation {
   /** Contexto verificable por Rules para maestros editados por un scope TEAMS. */
   authorizationTeamId?: string;
   authorizationSeasonId?: string;
+  /**
+   * Primera pertenencia creada junto a una identidad maestra nueva. Se aplica
+   * en el mismo commit remoto; después ambas entidades siguen siendo
+   * independientes y versionadas por separado.
+   */
+  atomicCompanions?: TeamSyncAtomicCompanion[];
   kind: "UPSERT";
   payload: TeamSyncPayload;
   baseRevision: number;

@@ -19,6 +19,7 @@ import {
   teamEntityKey,
   TeamEntityType,
   TeamSyncConflict,
+  TeamSyncAtomicCompanion,
   TeamSyncOperation,
   TeamSyncPayload,
   TeamSyncState,
@@ -216,7 +217,16 @@ function validOperation(value: unknown, teamId: string): value is MigratableTeam
     typeof operation.attempts === "number" &&
     ["PENDING", "SYNCING", "ERROR", "CONFLICT"].includes(String(operation.status)) &&
     typeof operation.nextAttemptAt === "number" &&
-    validPayload(operation.entityType as TeamEntityType, operation.payload, teamId)
+    validPayload(operation.entityType as TeamEntityType, operation.payload, teamId) &&
+    (operation.atomicCompanions === undefined || (
+      Array.isArray(operation.atomicCompanions) &&
+      operation.atomicCompanions.every((companion) =>
+        typeof companion === "object" && companion !== null &&
+        ["SEASON_PLAYER", "SEASON_STAFF"].includes(String(companion.entityType)) &&
+        typeof companion.entityId === "string" &&
+        validPayload(companion.entityType as TeamEntityType, companion.payload, teamId)
+      )
+    ))
   );
 }
 
@@ -422,6 +432,7 @@ function enqueue(
   idFactory: () => string,
   namespace: TeamSyncNamespace = "CLUBS",
   authorization?: { teamId: string; seasonId: string },
+  atomicCompanions?: TeamSyncAtomicCompanion[],
 ): TeamSyncState {
   const key = teamEntityKey(entityType, entityId, namespace);
   const index = state.outbox.findIndex(
@@ -439,6 +450,7 @@ function enqueue(
     namespace,
     authorizationTeamId: authorization?.teamId ?? previous?.authorizationTeamId,
     authorizationSeasonId: authorization?.seasonId ?? previous?.authorizationSeasonId,
+    atomicCompanions: atomicCompanions ?? previous?.atomicCompanions,
     kind: "UPSERT",
     payload,
     baseRevision: previous?.baseRevision ?? state.knownRemoteRevisions[key] ?? 0,
@@ -465,6 +477,35 @@ function enqueue(
     lastLocalMutationAt: now,
     lastError: keepsConflict ? state.lastError : null,
     lastErrorKind: keepsConflict ? state.lastErrorKind : null,
+  };
+}
+
+function attachAtomicCompanion(
+  state: TeamSyncState,
+  masterType: "PLAYER" | "STAFF",
+  masterId: string,
+  companion: TeamSyncAtomicCompanion,
+): TeamSyncState {
+  return {
+    ...state,
+    outbox: state.outbox.map((operation) => {
+      if (
+        operation.namespace !== "CLUBS" ||
+        operation.entityType !== masterType ||
+        operation.entityId !== masterId ||
+        operation.baseRevision !== 0 ||
+        operation.status === "CONFLICT"
+      ) return operation;
+      return {
+        ...operation,
+        atomicCompanions: [
+          ...(operation.atomicCompanions ?? []).filter(
+            (item) => !(item.entityType === companion.entityType && item.entityId === companion.entityId),
+          ),
+          companion,
+        ],
+      };
+    }),
   };
 }
 
@@ -579,7 +620,12 @@ export class LocalTeamRepository {
     for (const player of workspace.players) {
       if (sameValue(previousPlayers.get(player.playerId), player)) continue;
       const membership = workspace.seasonPlayers.find((item) => item.playerId === player.playerId && (!grant || canAccessTeam(grant, workspace.clubId, item.teamId)));
-      sync = enqueue(sync, workspace.teamId, "PLAYER", player.playerId, player, now, this.idFactory, "CLUBS", membership ? { teamId: membership.teamId, seasonId: membership.seasonId } : undefined);
+      const initialMemberships: TeamSyncAtomicCompanion[] = previousPlayers.has(player.playerId)
+        ? []
+        : workspace.seasonPlayers
+            .filter((item) => item.playerId === player.playerId && !(previous?.roster.seasonPlayers ?? []).some((prior) => prior.seasonId === item.seasonId && prior.playerId === item.playerId))
+            .map((item) => ({ entityType: "SEASON_PLAYER", entityId: seasonPlayerEntityId(item.seasonId, item.playerId), payload: item }));
+      sync = enqueue(sync, workspace.teamId, "PLAYER", player.playerId, player, now, this.idFactory, "CLUBS", membership ? { teamId: membership.teamId, seasonId: membership.seasonId } : undefined, initialMemberships.length ? initialMemberships : undefined);
     }
     const previousStaff = new Map(
       (previous?.roster.staff ?? []).map((member) => [member.staffId, member]),
@@ -587,7 +633,12 @@ export class LocalTeamRepository {
     for (const member of workspace.staff) {
       if (sameValue(previousStaff.get(member.staffId), member)) continue;
       const membership = workspace.seasonStaff.find((item) => item.staffId === member.staffId && (!grant || canAccessTeam(grant, workspace.clubId, item.teamId)));
-      sync = enqueue(sync, workspace.teamId, "STAFF", member.staffId, member, now, this.idFactory, "CLUBS", membership ? { teamId: membership.teamId, seasonId: membership.seasonId } : undefined);
+      const initialMemberships: TeamSyncAtomicCompanion[] = previousStaff.has(member.staffId)
+        ? []
+        : workspace.seasonStaff
+            .filter((item) => item.staffId === member.staffId && !(previous?.roster.seasonStaff ?? []).some((prior) => prior.seasonId === item.seasonId && prior.staffId === item.staffId))
+            .map((item) => ({ entityType: "SEASON_STAFF", entityId: seasonStaffEntityId(item.seasonId, item.staffId), payload: item }));
+      sync = enqueue(sync, workspace.teamId, "STAFF", member.staffId, member, now, this.idFactory, "CLUBS", membership ? { teamId: membership.teamId, seasonId: membership.seasonId } : undefined, initialMemberships.length ? initialMemberships : undefined);
     }
     const previousSeasons = new Map(
       (previous?.roster.seasons ?? []).map((season) => [season.seasonId, season]),
@@ -614,6 +665,11 @@ export class LocalTeamRepository {
         now,
         this.idFactory,
       );
+      sync = attachAtomicCompanion(sync, "PLAYER", membership.playerId, {
+        entityType: "SEASON_PLAYER",
+        entityId,
+        payload: membership,
+      });
     }
     const previousSeasonStaff = new Map(
       (previous?.roster.seasonStaff ?? []).map((membership) => [
@@ -633,6 +689,11 @@ export class LocalTeamRepository {
         now,
         this.idFactory,
       );
+      sync = attachAtomicCompanion(sync, "STAFF", membership.staffId, {
+        entityType: "SEASON_STAFF",
+        entityId,
+        payload: membership,
+      });
     }
     const saved = this.write(workspace.teamId, workspace, sync);
     if (saved) this.notify(workspace.teamId);

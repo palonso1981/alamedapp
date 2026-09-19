@@ -28,6 +28,30 @@ service cloud.firestore {
     function canWriteTeam(clubId, teamId) { return teamAllowed(clubId, teamId) && access(clubId).role != 'VIEWER'; }
     function initialRevision() { return request.resource.data.revision == 1; }
     function nextRevision() { return resource.data.revision is int && request.resource.data.revision == resource.data.revision + 1; }
+    function canonicalPlayerExistsAfter(clubId, playerId) {
+      return existsAfter(/databases/$(database)/documents/clubs/$(clubId)/players/$(playerId))
+        && getAfter(/databases/$(database)/documents/clubs/$(clubId)/players/$(playerId)).data.entityType == "PLAYER"
+        && getAfter(/databases/$(database)/documents/clubs/$(clubId)/players/$(playerId)).data.entityId == playerId
+        && getAfter(/databases/$(database)/documents/clubs/$(clubId)/players/$(playerId)).data.payload.clubId == clubId
+        && getAfter(/databases/$(database)/documents/clubs/$(clubId)/players/$(playerId)).data.payload.playerId == playerId;
+    }
+    function canonicalStaffExistsAfter(clubId, staffId) {
+      return existsAfter(/databases/$(database)/documents/clubs/$(clubId)/staff/$(staffId))
+        && getAfter(/databases/$(database)/documents/clubs/$(clubId)/staff/$(staffId)).data.entityType == "STAFF"
+        && getAfter(/databases/$(database)/documents/clubs/$(clubId)/staff/$(staffId)).data.entityId == staffId
+        && getAfter(/databases/$(database)/documents/clubs/$(clubId)/staff/$(staffId)).data.payload.clubId == clubId
+        && getAfter(/databases/$(database)/documents/clubs/$(clubId)/staff/$(staffId)).data.payload.staffId == staffId;
+    }
+    function legacyPlayerExistsAfter(playerId) {
+      return existsAfter(/databases/$(database)/documents/teams/cd-alameda/players/$(playerId))
+        && getAfter(/databases/$(database)/documents/teams/cd-alameda/players/$(playerId)).data.entityType == "PLAYER"
+        && getAfter(/databases/$(database)/documents/teams/cd-alameda/players/$(playerId)).data.entityId == playerId;
+    }
+    function legacyStaffExistsAfter(staffId) {
+      return existsAfter(/databases/$(database)/documents/teams/cd-alameda/staff/$(staffId))
+        && getAfter(/databases/$(database)/documents/teams/cd-alameda/staff/$(staffId)).data.entityType == "STAFF"
+        && getAfter(/databases/$(database)/documents/teams/cd-alameda/staff/$(staffId)).data.entityId == staffId;
+    }
     function validProfile(data, clubId, accessId) {
       return data.entityType == 'ACCESS_PROFILE' && data.clubId == clubId && data.accessId == accessId
         && data.status in ['ACTIVE', 'DISABLED', 'DELETED'] && data.role in ['ADMIN', 'EDITOR', 'VIEWER']
@@ -216,6 +240,7 @@ service cloud.firestore {
             && request.resource.data.entityId == playerId
             && request.resource.data.payload.seasonId == seasonId
             && request.resource.data.payload.playerId == playerId
+            && legacyPlayerExistsAfter(playerId)
             && initialRevision();
           allow update: if canWriteClub("cd-alameda")
             && request.resource.data.teamId == "cd-alameda"
@@ -223,6 +248,8 @@ service cloud.firestore {
             && request.resource.data.entityId == playerId
             && request.resource.data.payload.seasonId == seasonId
             && request.resource.data.payload.playerId == playerId
+            && (legacyPlayerExistsAfter(playerId)
+              || (request.resource.data.payload.active == false && request.resource.data.payload.deletedAt is int))
             && nextRevision();
           allow delete: if false;
         }
@@ -235,6 +262,7 @@ service cloud.firestore {
             && request.resource.data.entityId == staffId
             && request.resource.data.payload.seasonId == seasonId
             && request.resource.data.payload.staffId == staffId
+            && legacyStaffExistsAfter(staffId)
             && initialRevision();
           allow update: if canWriteClub("cd-alameda")
             && request.resource.data.teamId == "cd-alameda"
@@ -242,6 +270,8 @@ service cloud.firestore {
             && request.resource.data.entityId == staffId
             && request.resource.data.payload.seasonId == seasonId
             && request.resource.data.payload.staffId == staffId
+            && (legacyStaffExistsAfter(staffId)
+              || (request.resource.data.payload.active == false && request.resource.data.payload.deletedAt is int))
             && nextRevision();
           allow delete: if false;
         }
@@ -360,6 +390,7 @@ service cloud.firestore {
               && request.resource.data.payload.teamId == teamId
               && request.resource.data.payload.seasonId == seasonId
               && request.resource.data.payload.playerId == playerId
+              && canonicalPlayerExistsAfter(clubId, playerId)
               && initialRevision();
             allow update: if canWriteTeam(clubId, teamId)
               && request.resource.data.clubId == clubId
@@ -369,6 +400,8 @@ service cloud.firestore {
               && request.resource.data.payload.teamId == teamId
               && request.resource.data.payload.seasonId == seasonId
               && request.resource.data.payload.playerId == playerId
+              && (canonicalPlayerExistsAfter(clubId, playerId)
+                || (request.resource.data.payload.active == false && request.resource.data.payload.deletedAt is int))
               && nextRevision();
             allow delete: if false;
           }
@@ -383,6 +416,7 @@ service cloud.firestore {
               && request.resource.data.payload.teamId == teamId
               && request.resource.data.payload.seasonId == seasonId
               && request.resource.data.payload.staffId == staffId
+              && canonicalStaffExistsAfter(clubId, staffId)
               && initialRevision();
             allow update: if canWriteTeam(clubId, teamId)
               && request.resource.data.clubId == clubId
@@ -392,6 +426,8 @@ service cloud.firestore {
               && request.resource.data.payload.teamId == teamId
               && request.resource.data.payload.seasonId == seasonId
               && request.resource.data.payload.staffId == staffId
+              && (canonicalStaffExistsAfter(clubId, staffId)
+                || (request.resource.data.payload.active == false && request.resource.data.payload.deletedAt is int))
               && nextRevision();
             allow delete: if false;
           }
