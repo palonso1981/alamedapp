@@ -226,15 +226,54 @@ function migrateSync(value: unknown, teamId: string): TeamSyncState {
   if (![1, 2, 3].includes(Number(source.schemaVersion))) {
     return emptyTeamSyncState();
   }
-  const valid = Array.isArray(source.outbox)
-    ? source.outbox.filter((operation) => validOperation(operation, teamId)).map(
+  const rawOutbox = Array.isArray(source.outbox)
+    ? source.outbox.filter((operation) => validOperation(operation, teamId))
+    : [];
+  const recoveredSyncingIds = new Set(
+    rawOutbox.filter((operation) => operation.status === "SYNCING").map((operation) => operation.id),
+  );
+  const normalized = rawOutbox.map(
         (operation): TeamSyncOperation => ({
           ...operation,
           namespace: operation.namespace ?? "LEGACY_TEAMS",
           status: operation.status === "SYNCING" ? "PENDING" as const : operation.status,
         }),
-      )
-    : [];
+      );
+  // Una edición/foto realizada mientras el alta estaba SYNCING puede dejar dos
+  // intentos base 0 si la primera escritura falla. Tras concluir ese intento,
+  // ambos representan una única intención de creación: conserva el operationId
+  // más antiguo para idempotencia y el payload más reciente para no perder
+  // cambios. Nunca se compacta un SYNCING vivo ni una divergencia protegida.
+  const creationGroups = new Map<string, TeamSyncOperation[]>();
+  normalized.forEach((operation) => {
+    if (operation.baseRevision !== 0 || operation.status === "CONFLICT" || recoveredSyncingIds.has(operation.id)) return;
+    const key = teamEntityKey(operation.entityType, operation.entityId, operation.namespace);
+    creationGroups.set(key, [...(creationGroups.get(key) ?? []), operation]);
+  });
+  const removedCreationIds = new Set<string>();
+  const replacementById = new Map<string, TeamSyncOperation>();
+  creationGroups.forEach((operations) => {
+    if (operations.length < 2) return;
+    const ordered = [...operations].sort((left, right) => left.clientUpdatedAt - right.clientUpdatedAt || left.id.localeCompare(right.id));
+    const keeper = ordered[0];
+    const latest = ordered.at(-1)!;
+    const latestError = [...ordered].reverse().find((operation) => operation.status === "ERROR");
+    ordered.slice(1).forEach((operation) => removedCreationIds.add(operation.id));
+    replacementById.set(keeper.id, {
+      ...latest,
+      id: keeper.id,
+      baseRevision: 0,
+      attempts: Math.max(...ordered.map((operation) => operation.attempts)),
+      status: latestError ? "ERROR" : "PENDING",
+      nextAttemptAt: latestError?.nextAttemptAt ?? 0,
+      lastError: latestError?.lastError,
+      errorKind: latestError?.errorKind,
+    });
+  });
+  const valid = normalized.flatMap((operation) => {
+    if (removedCreationIds.has(operation.id)) return [];
+    return [replacementById.get(operation.id) ?? operation];
+  });
   const latestConflict = new Map<string, number>();
   valid.forEach((operation, index) => {
     if (operation.status !== "CONFLICT") return;

@@ -1,4 +1,4 @@
-import { doc, runTransaction, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, runTransaction, serverTimestamp, setDoc } from "firebase/firestore";
 
 import { getFirebaseDevServices } from "../firebase";
 import { RemoteApplyResult } from "./remoteMatchRepository";
@@ -24,6 +24,31 @@ function stableFirestoreValue(value: unknown): unknown {
 function sameFirestorePayload(left: unknown, right: unknown): boolean {
   return JSON.stringify(stableFirestoreValue(firestoreValue(left))) ===
     JSON.stringify(stableFirestoreValue(firestoreValue(right)));
+}
+
+function firestoreDocument(operation: TeamSyncOperation, revision: number) {
+  const payload = operation.payload;
+  const canonical = operation.namespace === "CLUBS";
+  const documentEntityId = operation.entityType === "SEASON_PLAYER" && "playerId" in payload
+    ? payload.playerId
+    : operation.entityType === "SEASON_STAFF" && "staffId" in payload
+      ? payload.staffId
+      : operation.entityId;
+  return {
+    schemaVersion: canonical ? 3 : 2,
+    clubId: operation.teamId,
+    teamId: operation.teamId,
+    entityType: operation.entityType,
+    entityId: documentEntityId,
+    revision,
+    lastOperationId: operation.id,
+    clientUpdatedAt: operation.clientUpdatedAt,
+    serverUpdatedAt: serverTimestamp(),
+    active: payload.active,
+    authorizationTeamId: operation.authorizationTeamId ?? null,
+    authorizationSeasonId: operation.authorizationSeasonId ?? null,
+    payload: firestoreValue(payload),
+  };
 }
 
 export class FirestoreDevTeamRepository
@@ -84,6 +109,32 @@ export class FirestoreDevTeamRepository
                   ? payload.staffId
                   : "invalid",
             );
+    // Una creación no empieza leyendo un documento inexistente: Rules aún no
+    // tiene resource.data con el que autorizar ese get. Las reglas exigen
+    // revision 1 en create y revision + 1 en update, así que este setDoc no
+    // puede convertir base 0 en una sobrescritura de un documento existente.
+    if (operation.baseRevision === 0) {
+      try {
+        await setDoc(reference, firestoreDocument(operation, 1));
+        return { status: "APPLIED", revision: 1 };
+      } catch (error) {
+        try {
+          const snapshot = await getDoc(reference);
+          if (snapshot.exists()) {
+            const current = snapshot.data();
+            const remoteRevision = typeof current.revision === "number" ? current.revision : 0;
+            if (current.lastOperationId === operation.id || sameFirestorePayload(current.payload, payload)) {
+              return { status: "ALREADY_APPLIED", revision: remoteRevision };
+            }
+            return { status: "CONFLICT", remoteRevision, remotePayload: current.payload ?? null };
+          }
+        } catch {
+          // Se conserva el error de escritura original; permission-denied no
+          // equivale a ausencia ni autoriza un last-write-wins.
+        }
+        throw error;
+      }
+    }
     return runTransaction(db, async (transaction) => {
       const snapshot = await transaction.get(reference);
       const current = snapshot.exists() ? snapshot.data() : undefined;
@@ -106,26 +157,7 @@ export class FirestoreDevTeamRepository
         };
       }
       const revision = remoteRevision + 1;
-      const documentEntityId = operation.entityType === "SEASON_PLAYER" && "playerId" in payload
-        ? payload.playerId
-        : operation.entityType === "SEASON_STAFF" && "staffId" in payload
-          ? payload.staffId
-          : operation.entityId;
-      transaction.set(reference, {
-        schemaVersion: canonical ? 3 : 2,
-        clubId: operation.teamId,
-        teamId: operation.teamId,
-        entityType: operation.entityType,
-        entityId: documentEntityId,
-        revision,
-        lastOperationId: operation.id,
-        clientUpdatedAt: operation.clientUpdatedAt,
-        serverUpdatedAt: serverTimestamp(),
-        active: payload.active,
-        authorizationTeamId: operation.authorizationTeamId ?? null,
-        authorizationSeasonId: operation.authorizationSeasonId ?? null,
-        payload: firestoreValue(payload),
-      });
+      transaction.set(reference, firestoreDocument(operation, revision));
       return { status: "APPLIED", revision };
     });
   }

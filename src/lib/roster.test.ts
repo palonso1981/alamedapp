@@ -497,6 +497,41 @@ test("equipo temporadas y memberships sobreviven offline reload y sync", async (
   assert.ok(remote.documents.has(teamEntityKey("SEASON_PLAYER", "season-sync:p-2")));
 });
 
+test("alta base 0 sincroniza todo el agregado de plantilla y otro navegador lo hidrata", async () => {
+  const storageA = new MemoryStorage(); let operation = 0;
+  const browserA = new LocalTeamRepository({ storage: storageA, idFactory: () => `base-zero-${++operation}` });
+  let workspace = createTeamProfile(workspaceFixture(), { name: "Senior A" }, { teamId: "senior-base-zero", now: 10 });
+  workspace = createSeason(workspace, { teamId: "senior-base-zero", label: "2026-27" }, { seasonId: "season-base-zero", now: 11 });
+  workspace = upsertSeasonPlayer(workspace, "season-base-zero", "p-2", { number: 22, active: true }, 12);
+  workspace = upsertSeasonStaff(workspace, "season-base-zero", "staff-1", { active: true }, 13);
+  const photographed = updateMasterPlayer(workspace.players, "p-2", {
+    managedPhoto: {
+      provider: "CLOUDINARY", publicId: "alamedapp/players-prod/p-2", secureUrl: "https://res.cloudinary.com/nf7ziztn/image/upload/v1/p-2.webp",
+      version: 1, contentType: "image/webp", width: 900, height: 1200, byteSize: 1000, uploadedAt: 14,
+    },
+  }, 14);
+  workspace = { ...workspace, players: photographed };
+  assert.equal(browserA.save(workspace), true);
+  assert.ok(browserA.getSyncState(workspace.clubId).outbox.every((item) => item.baseRevision === 0));
+
+  const remote = new TeamRemote();
+  await new SyncCoordinator(browserA, remote, { isOnline: () => true }).syncMatch(workspace.clubId);
+  assert.equal(browserA.getSummary(workspace.clubId).pending, 0);
+  assert.equal(browserA.getSummary(workspace.clubId).conflicts, 0);
+  for (const type of ["CLUB", "TEAM_UNIT", "PLAYER", "STAFF", "SEASON", "SEASON_PLAYER", "SEASON_STAFF"] as const) {
+    assert.ok(Array.from(remote.documents.keys()).some((key) => key.includes(`:${type.toLowerCase()}:`)), `${type} debe llegar al remoto`);
+  }
+  assert.ok(Array.from(remote.documents.values()).every((document) => document.revision === 1));
+
+  const storageB = new MemoryStorage();
+  const browserB = new LocalTeamRepository({ storage: storageB });
+  const revisions = Object.fromEntries(Array.from(remote.documents.entries()).map(([key, document]) => [key, document.revision]));
+  assert.equal(browserB.hydrateRemote(workspace.clubId, workspace, revisions), true);
+  assert.equal(browserB.load(workspace.clubId).players.find((player) => player.playerId === "p-2")?.managedPhoto?.provider, "CLOUDINARY");
+  assert.equal(browserB.load(workspace.clubId).seasonPlayers.some((item) => item.playerId === "p-2"), true);
+  assert.equal(browserB.getSyncState(workspace.clubId).outbox.length, 0);
+});
+
 test("editar una ficha mientras sincroniza conserva la versión posterior", async () => {
   const storage = new MemoryStorage(); let id = 0;
   const local = new LocalTeamRepository({ storage, idFactory: () => `race-team-${++id}` });
@@ -1092,6 +1127,59 @@ test("outbox legacy pendiente sobrevive offline reload y reconecta sin mezclarse
   await new SyncCoordinator(new LocalTeamRepository({ storage }), remote, { isOnline: () => true }).syncMatch("cd-alameda");
   assert.equal(new LocalTeamRepository({ storage }).getSummary("cd-alameda").pending, 0);
   assert.equal(remote.documents.get(teamEntityKey("PLAYER", player.playerId, "LEGACY_TEAMS"))?.operationId, "pending-before-upgrade");
+});
+
+test("dos altas base 0 del mismo jugador recuperan una sola intención con la foto más reciente", async () => {
+  const storage = new MemoryStorage();
+  const workspace = workspaceFixture();
+  const original = workspace.players.find((item) => item.playerId === "p-2")!;
+  const latest = updateMasterPlayer([original], original.playerId, {
+    displayName: "Marcos",
+    managedPhoto: {
+      provider: "CLOUDINARY",
+      publicId: "alamedapp/players-prod/marcos",
+      secureUrl: "https://res.cloudinary.com/nf7ziztn/image/upload/v2/marcos.webp",
+      version: 2,
+      contentType: "image/webp",
+      width: 900,
+      height: 1200,
+      byteSize: 1234,
+      uploadedAt: 20,
+    },
+  }, 20)[0];
+  storage.setItem("alamedapp:team:v1:cd-alameda", JSON.stringify({
+    storageVersion: 4,
+    savedAt: 21,
+    roster: { ...workspace, players: workspace.players.map((player) => player.playerId === latest.playerId ? latest : player) },
+    sync: {
+      schemaVersion: 3,
+      outbox: [
+        { id: "marcos-create", teamId: "cd-alameda", entityType: "PLAYER", entityId: latest.playerId, namespace: "CLUBS", kind: "UPSERT", payload: original, baseRevision: 0, clientUpdatedAt: 10, attempts: 1, status: "ERROR", nextAttemptAt: Number.MAX_SAFE_INTEGER, lastError: "permission-denied", errorKind: "PERMISSION" },
+        { id: "marcos-photo", teamId: "cd-alameda", entityType: "PLAYER", entityId: latest.playerId, namespace: "CLUBS", kind: "UPSERT", payload: latest, baseRevision: 0, clientUpdatedAt: 20, attempts: 1, status: "ERROR", nextAttemptAt: Number.MAX_SAFE_INTEGER, lastError: "permission-denied", errorKind: "PERMISSION" },
+      ],
+      knownRemoteRevisions: {}, lastLocalMutationAt: 20, lastSyncedAt: null,
+      lastError: "permission-denied", lastErrorKind: "PERMISSION", conflicts: [],
+    },
+  }));
+
+  const local = new LocalTeamRepository({ storage });
+  let state = local.getSyncState("cd-alameda");
+  assert.equal(state.outbox.length, 1);
+  assert.equal(state.outbox[0].id, "marcos-create", "mantiene el operationId original para idempotencia");
+  assert.equal((state.outbox[0].payload as MasterPlayer).displayName, "Marcos");
+  assert.equal((state.outbox[0].payload as MasterPlayer).managedPhoto?.provider, "CLOUDINARY");
+  assert.equal(state.outbox[0].status, "ERROR");
+
+  local.retryErrors("cd-alameda");
+  const remote = new TeamRemote();
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch("cd-alameda");
+  state = local.getSyncState("cd-alameda");
+  const remotePlayer = remote.documents.get(teamEntityKey("PLAYER", latest.playerId));
+  assert.equal(state.outbox.length, 0);
+  assert.equal(state.conflicts.length, 0);
+  assert.equal(remotePlayer?.revision, 1);
+  assert.equal(remotePlayer?.operationId, "marcos-create");
+  assert.equal((remotePlayer?.payload as MasterPlayer).managedPhoto?.provider, "CLOUDINARY");
 });
 
 test("asignar temporada legacy conserva identidad eventos revisión y procedencia", () => {

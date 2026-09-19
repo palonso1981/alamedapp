@@ -44,9 +44,11 @@ test("Rules: roles, scope y revocación protegen deporte", () => {
 
 test("Rules: EDITOR hereda club deportivo pero no Club institucional ni Access", () => {
   assert.match(rules, /access\(clubId\)\.role in \['ADMIN', 'EDITOR'\]/);
-  assert.match(rules, /match \/clubs\/\{clubId\} \{[\s\S]*?allow create, update: if isAdmin\(clubId\)/);
+  assert.match(rules, /match \/clubs\/\{clubId\} \{[\s\S]*?allow create: if isAdmin\(clubId\)/);
+  assert.match(rules, /match \/clubs\/\{clubId\} \{[\s\S]*?allow update: if isAdmin\(clubId\)/);
   assert.match(rules, /match \/clubs\/\{clubId\}\/accesses\/\{accessId\} \{[\s\S]*?allow create, update: if isAdmin\(clubId\)/);
-  assert.match(rules, /match \/teams\/\{teamId\} \{[\s\S]*?allow create, update: if canWriteTeam\(clubId, teamId\)[\s\S]*?request\.resource\.data\.payload\.clubId == clubId/);
+  assert.match(rules, /match \/teams\/\{teamId\} \{[\s\S]*?allow create: if canWriteTeam\(clubId, teamId\)[\s\S]*?request\.resource\.data\.payload\.clubId == clubId/);
+  assert.match(rules, /match \/teams\/\{teamId\} \{[\s\S]*?allow update: if canWriteTeam\(clubId, teamId\)[\s\S]*?nextRevision\(\)/);
 });
 
 test("creación comprueba colisión y no persiste plaintext; regeneración no se expone", () => {
@@ -90,6 +92,30 @@ test("transporte: MATCH base 0 crea sin leer un documento inexistente", () => {
   assert.ok(guardedCreate >= 0);
   assert.ok(directCreate > guardedCreate);
   assert.ok(revisionedTransaction > directCreate);
+});
+
+test("Rules: altas de plantilla son revision 1 y updates avanzan exactamente una revisión", () => {
+  assert.match(rules, /function initialRevision\(\) \{ return request\.resource\.data\.revision == 1; \}/);
+  assert.match(rules, /function nextRevision\(\) \{ return resource\.data\.revision is int && request\.resource\.data\.revision == resource\.data\.revision \+ 1; \}/);
+  const canonicalPlayers = rules.match(/match \/clubs\/\{clubId\}[\s\S]*?match \/players\/\{playerId\} \{([\s\S]*?)\n      \}/)?.[1] ?? "";
+  assert.match(canonicalPlayers, /allow create:[\s\S]*?initialRevision\(\)/);
+  assert.match(canonicalPlayers, /allow update:[\s\S]*?nextRevision\(\)/);
+  assert.match(canonicalPlayers, /allow delete: if false/);
+  const canonicalSports = rules.match(/match \/clubs\/\{clubId\} \{([\s\S]*?)\n    \/\/ Única lectura previa/)?.[1] ?? rules;
+  for (const entityType of ["CLUB", "TEAM_UNIT", "PLAYER", "STAFF", "SEASON", "SEASON_PLAYER", "SEASON_STAFF"]) {
+    assert.match(canonicalSports, new RegExp(`entityType == "${entityType}"`));
+  }
+});
+
+test("transporte: toda entidad de plantilla base 0 usa creación directa protegida", () => {
+  const implementation = readFileSync("src/lib/sync/firestoreTeamRepository.ts", "utf8");
+  const guardedCreate = implementation.indexOf("operation.baseRevision === 0");
+  const directCreate = implementation.indexOf("await setDoc(reference, firestoreDocument(operation, 1))", guardedCreate);
+  const revisionedTransaction = implementation.indexOf("return runTransaction", guardedCreate);
+  assert.ok(guardedCreate >= 0);
+  assert.ok(directCreate > guardedCreate);
+  assert.ok(revisionedTransaction > directCreate);
+  assert.match(implementation, /sameFirestorePayload\(current\.payload, payload\)/);
 });
 
 test("Rules: una sesión CLOSED solo se reemplaza por candidato completo del mismo UID", () => {
