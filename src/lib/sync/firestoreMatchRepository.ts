@@ -6,7 +6,7 @@ import {
   RemoteMatchRepository,
 } from "./remoteMatchRepository";
 import { MatchSyncOperation } from "./syncTypes";
-import { RemoteMatchEntitySnapshot, syncPayloadsEqual } from "./syncTypes";
+import { matchTombstoneAlreadyApplied, RemoteMatchEntitySnapshot, syncPayloadsEqual } from "./syncTypes";
 
 function firestoreValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -69,6 +69,12 @@ export class FirestoreDevMatchRepository implements RemoteMatchRepository {
             const current = snapshot.data();
             const remoteRevision = typeof current.revision === "number" ? current.revision : 0;
             if (current.lastOperationId === operation.id ||
+                matchTombstoneAlreadyApplied(operation, {
+                  entityType: current.entityType,
+                  entityId: current.entityId,
+                  matchId: current.matchId,
+                  payload: current.payload,
+                }) ||
                 (current.removed === (operation.kind === "TOMBSTONE") &&
                   syncPayloadsEqual(current.payload, firestoreValue(operation.payload)))) {
               return { status: "ALREADY_APPLIED", revision: remoteRevision };
@@ -108,6 +114,14 @@ export class FirestoreDevMatchRepository implements RemoteMatchRepository {
         }
       }
       if (current?.lastOperationId === operation.id) {
+        return { status: "ALREADY_APPLIED", revision: remoteRevision };
+      }
+      if (current && matchTombstoneAlreadyApplied(operation, {
+        entityType: current.entityType,
+        entityId: current.entityId,
+        matchId: current.matchId,
+        payload: current.payload,
+      })) {
         return { status: "ALREADY_APPLIED", revision: remoteRevision };
       }
       if (current && current.removed === (operation.kind === "TOMBSTONE") && syncPayloadsEqual(current.payload, firestoreValue(operation.payload))) {

@@ -12,6 +12,7 @@ import { getRuntimeAccessGrant } from "../access/accessRuntime";
 import { captureOperationCanSync, getRuntimeCaptureContext } from "../captureLease";
 import {
   emptyMatchSyncState,
+  matchTombstoneAlreadyApplied,
   MATCH_REMOTE_SCHEMA_VERSION,
   MatchRemoteMetadata,
   MatchSyncConflict,
@@ -295,6 +296,10 @@ export class LocalMatchRepository {
       const snapshot = remote.get(key);
       if (!snapshot) return operation;
       if (snapshot.exists) revisions[key] = snapshot.revision;
+      if (snapshot.exists && matchTombstoneAlreadyApplied(operation, snapshot)) {
+        reconciledIds.add(operation.id);
+        return operation;
+      }
       const sameRemoval = snapshot.exists && snapshot.removed === (operation.kind === "TOMBSTONE");
       if (sameRemoval && syncPayloadsEqual(operation.payload, snapshot.payload)) {
         reconciledIds.add(operation.id);

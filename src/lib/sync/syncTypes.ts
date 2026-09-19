@@ -163,6 +163,37 @@ export function syncPayloadsEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(canonicalSyncValue(left)) === JSON.stringify(canonicalSyncValue(right));
 }
 
+/**
+ * Un tombstone MATCH expresa un objetivo, no una actualización del instante de
+ * borrado. Si ese mismo agregado ya tiene deletedAt remoto, volver a escribirlo
+ * solo crearía una revisión artificial. La identidad se comprueba completa para
+ * no aceptar como equivalente un documento o payload de otro partido.
+ */
+export function matchTombstoneAlreadyApplied(
+  operation: Pick<MatchSyncOperation, "matchId" | "entityType" | "entityId" | "kind">,
+  remote: {
+    entityType: unknown;
+    entityId: unknown;
+    matchId?: unknown;
+    payload: unknown;
+  },
+): boolean {
+  if (
+    operation.kind !== "TOMBSTONE" ||
+    operation.entityType !== "MATCH" ||
+    operation.entityId !== operation.matchId ||
+    remote.entityType !== "MATCH" ||
+    remote.entityId !== operation.entityId ||
+    (remote.matchId !== undefined && remote.matchId !== operation.matchId) ||
+    !isObject(remote.payload) ||
+    remote.payload.matchId !== operation.matchId ||
+    !isObject(remote.payload.preparation)
+  ) {
+    return false;
+  }
+  return typeof remote.payload.preparation.deletedAt === "number";
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }

@@ -1,5 +1,6 @@
 import {
   MatchSyncOperation,
+  matchTombstoneAlreadyApplied,
   RemoteMatchEntitySnapshot,
   SyncErrorKind,
   syncEntityKey,
@@ -77,7 +78,14 @@ export class InMemoryRemoteMatchRepository implements RemoteMatchRepository {
       return { status: "ALREADY_APPLIED", revision: current.revision };
     }
     const remoteRevision = current?.revision ?? 0;
-    if (current && current.removed === (operation.kind === "TOMBSTONE") && syncPayloadsEqual(current.payload, operation.payload)) {
+    if (current && (
+      matchTombstoneAlreadyApplied(operation, {
+        entityType: operation.entityType,
+        entityId: operation.entityId,
+        payload: current.payload,
+      }) ||
+      (current.removed === (operation.kind === "TOMBSTONE") && syncPayloadsEqual(current.payload, operation.payload))
+    )) {
       return { status: "ALREADY_APPLIED", revision: current.revision };
     }
     if (remoteRevision !== operation.baseRevision) {
@@ -119,12 +127,13 @@ export class InMemoryRemoteMatchRepository implements RemoteMatchRepository {
     entityId: string,
     revision: number,
     payload: unknown,
+    removed = false,
   ): void {
     this.documents.set(`${matchId}:${syncEntityKey(entityType, entityId)}`, {
       revision,
       lastOperationId: `remote-seed-${revision}`,
       payload,
-      removed: false,
+      removed,
     });
   }
 }

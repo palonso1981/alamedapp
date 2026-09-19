@@ -31,7 +31,7 @@ import {
   RemoteMatchRepository,
 } from "./remoteMatchRepository";
 import { MatchSyncCoordinator } from "./syncCoordinator";
-import { hasUnreconciledMatchSyncState, migrateMatchSyncState, syncEntityKey } from "./syncTypes";
+import { hasUnreconciledMatchSyncState, matchTombstoneAlreadyApplied, migrateMatchSyncState, syncEntityKey } from "./syncTypes";
 import {
   buildLocalVideoResolutionPayload,
   hasVideoOnlyMatchConflict,
@@ -45,7 +45,7 @@ import { createVideoSegment, upsertVideoEventOverride, upsertVideoSegment } from
 import { resetRuntimeCaptureContextsForTests, setRuntimeCaptureContext } from "../captureLease";
 import { buildDashboardV2, emptyDashboardScope } from "../dashboardV2";
 import { listMatchCatalog, visibleMatchCatalog } from "../matchCatalog";
-import { remoteEnvelopePayload } from "../access/accessRemoteHydration";
+import { remoteEnvelopePayload, remoteMatchSession } from "../access/accessRemoteHydration";
 
 class MemoryStorage implements LocalStorageAdapter {
   private readonly values = new Map<string, string>();
@@ -270,6 +270,107 @@ test("cola anterior con deletedAt migra UPSERT a TOMBSTONE sin cambiar identidad
   assert.deepEqual(migrated.outbox[0].payload, {
     matchId: "legacy-delete", preparation: { deletedAt: 123 },
   });
+});
+
+test("TOMBSTONE base 14 adopta remoto 15 ya eliminado aunque deletedAt sea distinto sin escribir", async () => {
+  const matchId = "delete-idempotent";
+  const session = synchronizedMatchWithEvent(matchId);
+  const localDeleted = changeMatchLifecycle(session, "DELETE", 1789810039631);
+  const remoteDeleted = changeMatchLifecycle(session, "DELETE", 1789743327755);
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 1789810039631, idFactory: () => "local-delete-op" });
+  local.hydrateRemote(session, {
+    [syncEntityKey("MATCH", matchId)]: 14,
+    [syncEntityKey("EVENT", session.events[0].id)]: 1,
+  });
+  local.save(localDeleted);
+  const remote = new InMemoryRemoteMatchRepository();
+  remote.seed(matchId, "MATCH", matchId, 15, matchRemoteMetadata(remoteDeleted), true);
+  const before = structuredClone(remote.documents.get(`${matchId}:match`));
+
+  const summary = await new MatchSyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(matchId);
+
+  assert.equal(summary.pending, 0);
+  assert.equal(summary.conflicts, 0);
+  assert.equal(local.getSyncState(matchId).outbox.length, 0);
+  assert.equal(local.getSyncState(matchId).knownRemoteRevisions[syncEntityKey("MATCH", matchId)], 15);
+  assert.equal(remote.applyCalls, 1);
+  assert.deepEqual(remote.documents.get(`${matchId}:match`), before);
+  assert.equal((remote.documents.get(`${matchId}:match`)?.payload as ReturnType<typeof matchRemoteMetadata>).preparation?.deletedAt, 1789743327755);
+});
+
+test("RECOMPROBAR limpia conflicto tombstone ya satisfecho y conserva oculto el partido", () => {
+  const matchId = "delete-reconcile-idempotent";
+  const session = synchronizedMatchWithEvent(matchId);
+  const localDeleted = changeMatchLifecycle(session, "DELETE", 1789810039631);
+  const remoteDeleted = matchRemoteMetadata(changeMatchLifecycle(session, "DELETE", 1789743327755));
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 1789810039631, idFactory: () => "conflicting-delete-op" });
+  local.hydrateRemote(session, { [syncEntityKey("MATCH", matchId)]: 14 });
+  local.save(localDeleted);
+  const operation = local.getSyncState(matchId).outbox[0];
+  local.markConflict(matchId, operation.id, 15, remoteDeleted);
+  assert.equal(local.getSummary(matchId).conflicts, 1);
+
+  const result = local.reconcileRemoteSnapshots(matchId, [{
+    entityType: "MATCH",
+    entityId: matchId,
+    exists: true,
+    revision: 15,
+    removed: true,
+    payload: remoteDeleted,
+  }]);
+
+  assert.deepEqual(result, { reconciled: 1, protected: 0, unchanged: 0 });
+  assert.equal(local.getSyncState(matchId).outbox.length, 0);
+  assert.equal(local.getSyncState(matchId).conflicts.length, 0);
+  assert.equal(local.getSyncState(matchId).knownRemoteRevisions[syncEntityKey("MATCH", matchId)], 15);
+  assert.equal(local.load(matchId)?.preparation?.deletedAt, 1789810039631);
+  assert.deepEqual(visibleMatchCatalog(listMatchCatalog(storage)), []);
+
+  const secondStorage = new MemoryStorage();
+  const second = new LocalMatchRepository({ storage: secondStorage, now: () => 2 });
+  second.hydrateRemote(remoteMatchSession(remoteDeleted, session.events), {
+    [syncEntityKey("MATCH", matchId)]: 15,
+  });
+  assert.deepEqual(visibleMatchCatalog(listMatchCatalog(secondStorage)), []);
+});
+
+test("TOMBSTONE con remoto activo y revisión distinta sigue protegido como conflicto", async () => {
+  const matchId = "delete-real-conflict";
+  const session = synchronizedMatchWithEvent(matchId);
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 200, idFactory: () => "real-delete-op" });
+  local.hydrateRemote(session, { [syncEntityKey("MATCH", matchId)]: 14 });
+  local.save(changeMatchLifecycle(session, "DELETE", 200));
+  const remote = new InMemoryRemoteMatchRepository();
+  remote.seed(matchId, "MATCH", matchId, 15, matchRemoteMetadata(session), false);
+
+  const summary = await new MatchSyncCoordinator(local, remote, { isOnline: () => true }).syncMatch(matchId);
+  assert.equal(summary.conflicts, 1);
+  assert.equal(local.getSyncState(matchId).outbox.length, 1);
+  assert.equal(remote.documents.get(`${matchId}:match`)?.removed, false);
+});
+
+test("tombstone idempotente exige identidad completa del mismo agregado", () => {
+  const operation = {
+    matchId: "match-a",
+    entityType: "MATCH" as const,
+    entityId: "match-a",
+    kind: "TOMBSTONE" as const,
+  };
+  assert.equal(matchTombstoneAlreadyApplied(operation, {
+    entityType: "MATCH",
+    entityId: "match-b",
+    matchId: "match-b",
+    payload: { matchId: "match-b", preparation: { deletedAt: 10 } },
+  }), false);
+  assert.equal(matchTombstoneAlreadyApplied(operation, {
+    entityType: "MATCH",
+    entityId: "match-a",
+    matchId: "match-a",
+    payload: { matchId: "match-a", preparation: { deletedAt: 10 } },
+  }), true);
 });
 
 test("PERMISSION conservado solo se reactiva tras validación explícita sin cambiar identidad ni base", () => {
