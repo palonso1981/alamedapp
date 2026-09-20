@@ -24,8 +24,12 @@ service cloud.firestore {
     // legacy conserve scope TEAMS. VIEWER sí respeta CLUB/TEAMS.
     function hasClubScope(clubId) { return validAccess(clubId) && (access(clubId).role in ['ADMIN', 'EDITOR'] || access(clubId).scope.type == 'CLUB'); }
     function teamAllowed(clubId, teamId) { return validAccess(clubId) && (hasClubScope(clubId) || (access(clubId).scope.type == 'TEAMS' && teamId in access(clubId).scope.teamIds)); }
-    function canWriteClub(clubId) { return hasClubScope(clubId) && access(clubId).role != 'VIEWER'; }
-    function canWriteTeam(clubId, teamId) { return teamAllowed(clubId, teamId) && access(clubId).role != 'VIEWER'; }
+    // ADMIN y EDITOR tienen escritura deportiva de club en V1. Evitamos
+    // recomponer teamAllowed -> hasClubScope -> validAccess aquí: esa cadena
+    // repetía la misma validación hasta agotar el límite de expresiones de
+    // Firestore Rules incluso en un CREATE válido.
+    function canWriteClub(clubId) { return validAccess(clubId) && access(clubId).role in ['ADMIN', 'EDITOR']; }
+    function canWriteTeam(clubId, teamId) { return validAccess(clubId) && access(clubId).role in ['ADMIN', 'EDITOR']; }
     function initialRevision() { return request.resource.data.revision == 1; }
     function nextRevision() { return resource.data.revision is int && request.resource.data.revision == resource.data.revision + 1; }
     function canonicalPlayerExistsAfter(clubId, playerId) {

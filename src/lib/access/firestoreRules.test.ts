@@ -38,7 +38,7 @@ test("Rules: roles, scope y revocación protegen deporte", () => {
   assert.match(rules, /access\(clubId\)\.status == 'ACTIVE'/);
   assert.match(rules, /access\(clubId\)\.credentialVersion == session\(clubId\)\.credentialVersion/);
   assert.match(rules, /teamId in access\(clubId\)\.scope\.teamIds/);
-  assert.match(rules, /access\(clubId\)\.role != 'VIEWER'/);
+  assert.match(rules, /access\(clubId\)\.role in \['ADMIN', 'EDITOR'\]/);
   assert.match(rules, /match \/matches\/\{matchId\}[\s\S]*?canWriteTeam/);
 });
 
@@ -81,7 +81,7 @@ test("Rules: MATCH nuevo autoriza ADMIN/EDITOR por Access y nunca sobreescribe r
   assert.match(block, /resource\.data\.revision is int/);
   assert.match(block, /allow update:[\s\S]*?request\.resource\.data\.revision == resource\.data\.revision \+ 1/);
   assert.match(rules, /access\(clubId\)\.role in \['ADMIN', 'EDITOR'\]/);
-  assert.match(rules, /access\(clubId\)\.role != 'VIEWER'/);
+  assert.match(rules, /access\(clubId\)\.role in \['ADMIN', 'EDITOR'\]/);
 });
 
 test("transporte: MATCH base 0 crea sin leer un documento inexistente", () => {
@@ -105,6 +105,18 @@ test("Rules: altas de plantilla son revision 1 y updates avanzan exactamente una
   for (const entityType of ["CLUB", "TEAM_UNIT", "PLAYER", "STAFF", "SEASON", "SEASON_PLAYER", "SEASON_STAFF"]) {
     assert.match(canonicalSports, new RegExp(`entityType == "${entityType}"`));
   }
+});
+
+test("Rules: escritura deportiva no recompone helpers de lectura hasta agotar expresiones", () => {
+  assert.match(
+    rules,
+    /function canWriteClub\(clubId\) \{ return validAccess\(clubId\) && access\(clubId\)\.role in \['ADMIN', 'EDITOR'\]; \}/,
+  );
+  assert.match(
+    rules,
+    /function canWriteTeam\(clubId, teamId\) \{ return validAccess\(clubId\) && access\(clubId\)\.role in \['ADMIN', 'EDITOR'\]; \}/,
+  );
+  assert.doesNotMatch(rules, /function canWriteTeam\(clubId, teamId\) \{ return teamAllowed\(/);
 });
 
 test("transporte: toda entidad de plantilla base 0 usa creación directa protegida", () => {

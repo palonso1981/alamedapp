@@ -1426,6 +1426,94 @@ test("dos altas base 0 del mismo jugador recuperan una sola intención con la fo
   assert.equal((remotePlayer?.payload as MasterPlayer).managedPhoto?.provider, "CLOUDINARY");
 });
 
+test("Alonso pendiente reintenta el batch sin recrear identidad ni operationIds", async () => {
+  const storage = new MemoryStorage();
+  const playerId = "1d6a0d8b-3b1a-4196-ba92-d8bf279105c4";
+  const seasonId = "d754523d-95f7-4ca7-89c0-fe0f0092510e";
+  const teamId = "d5effa12-b9df-4efb-97e1-e9dc12996b53";
+  const playerOperationId = "ecbaac9a-efda-4874-be8c-e4a157d1a85f";
+  const membershipOperationId = "afc7a8eb-9fa4-45da-bb6a-ac9515ef6746";
+  const player = createMasterPlayer([], {
+    fullName: "Alonso", displayName: "Alonso", number: 3, role: "FIELD",
+  }, { id: playerId, clubId: "cd-alameda", now: 10 });
+  let workspace = createTeamProfile(emptyTeamWorkspace("cd-alameda", 1), { name: "Senior A" }, { teamId, now: 2 });
+  workspace = createSeason(workspace, { teamId, label: "2026-27" }, { seasonId, now: 3 });
+  workspace = upsertSeasonPlayer({ ...workspace, players: [player] }, seasonId, playerId, { number: 3 }, 11);
+  const membership = workspace.seasonPlayers.find((item) => item.playerId === playerId)!;
+  const membershipEntityId = seasonPlayerEntityId(seasonId, playerId);
+  storage.setItem("alamedapp:team:v1:cd-alameda", JSON.stringify({
+    storageVersion: 4,
+    savedAt: 12,
+    roster: workspace,
+    sync: {
+      schemaVersion: 3,
+      outbox: [
+        {
+          id: playerOperationId,
+          teamId: "cd-alameda",
+          entityType: "PLAYER",
+          entityId: playerId,
+          namespace: "CLUBS",
+          authorizationTeamId: teamId,
+          authorizationSeasonId: seasonId,
+          atomicCompanions: [{ entityType: "SEASON_PLAYER", entityId: membershipEntityId, payload: membership }],
+          kind: "UPSERT",
+          payload: player,
+          baseRevision: 0,
+          clientUpdatedAt: 10,
+          attempts: 1,
+          status: "ERROR",
+          nextAttemptAt: Number.MAX_SAFE_INTEGER,
+          lastError: "Missing or insufficient permissions.",
+          errorKind: "PERMISSION",
+        },
+        {
+          id: membershipOperationId,
+          teamId: "cd-alameda",
+          entityType: "SEASON_PLAYER",
+          entityId: membershipEntityId,
+          namespace: "CLUBS",
+          kind: "UPSERT",
+          payload: membership,
+          baseRevision: 0,
+          clientUpdatedAt: 11,
+          attempts: 1,
+          status: "ERROR",
+          nextAttemptAt: Number.MAX_SAFE_INTEGER,
+          lastError: "Missing or insufficient permissions.",
+          errorKind: "PERMISSION",
+        },
+      ],
+      knownRemoteRevisions: {},
+      lastLocalMutationAt: 11,
+      lastSyncedAt: null,
+      lastError: "Missing or insufficient permissions.",
+      lastErrorKind: "PERMISSION",
+      conflicts: [],
+    },
+  }));
+
+  const local = new LocalTeamRepository({ storage });
+  const before = local.getSyncState("cd-alameda");
+  assert.deepEqual(before.outbox.map((item) => item.id), [playerOperationId, membershipOperationId]);
+  assert.equal(
+    (before.outbox[0].atomicCompanions?.[0].payload as { playerId?: string }).playerId,
+    playerId,
+  );
+
+  local.retryErrors("cd-alameda");
+  const remote = new TeamRemote();
+  await new SyncCoordinator(local, remote, { isOnline: () => true }).syncMatch("cd-alameda");
+
+  assert.equal(local.getSummary("cd-alameda").pending, 0);
+  assert.equal(local.getSummary("cd-alameda").conflicts, 0);
+  assert.equal(remote.documents.get(teamEntityKey("PLAYER", playerId))?.operationId, playerOperationId);
+  assert.equal(
+    (remote.documents.get(teamEntityKey("SEASON_PLAYER", membershipEntityId))?.payload as { playerId?: string }).playerId,
+    playerId,
+  );
+});
+
 test("asignar temporada legacy conserva identidad eventos revisión y procedencia", () => {
   let workspace = createTeamProfile(workspaceFixture(), { name: "Senior" }, { teamId: "senior-legacy", now: 1 });
   workspace = createSeason(workspace, { teamId: "senior-legacy", label: "2026-27" }, { seasonId: "season-legacy-target", now: 2 });
