@@ -15,7 +15,6 @@ import {
 import {
   createMasterPlayer,
   createMasterStaff,
-  findClubPlayerByIdentity,
   MasterPlayerInput,
   MasterStaffInput,
   updateMasterPlayer,
@@ -263,8 +262,6 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   createPlayer: (teamId, input, requestedSeasonId) => {
     try {
       const roster = get().teams[teamId] ?? browserTeamRepository.load(teamId);
-      const duplicate = findClubPlayerByIdentity(roster.players, input.fullName);
-      if (duplicate) throw new Error(`${duplicate.displayName} ya existe en el club. Usa su identidad existente.`);
       const seasonId = requestedSeasonId === null
         ? undefined
         : requestedSeasonId ?? currentSeason(roster)?.seasonId;

@@ -509,6 +509,60 @@ test("el dorsal no impone unicidad sobre PLAYER maestro y sí sobre la membershi
   );
 });
 
+test("el dorsal solo bloquea una membership activa del mismo equipo y temporada", () => {
+  const first = createMasterPlayer([], { fullName: "García", displayName: "García", number: 31, role: "FIELD" }, { id: "scope-one" });
+  const second = createMasterPlayer([first], { fullName: "García", displayName: "García", number: 31, role: "FIELD" }, { id: "scope-two" });
+  const base = createSeason(
+    { ...emptyTeamWorkspace("cd-alameda", 1), players: [first, second] },
+    { label: "2026-27", teamId: "team-a" },
+    { seasonId: "season-a", now: 2 },
+  );
+  const membership = {
+    clubId: base.clubId,
+    teamId: "team-a",
+    seasonId: "season-a",
+    playerId: first.playerId,
+    number: 31,
+    active: true,
+    createdAt: 2,
+    updatedAt: 2,
+  };
+
+  assert.throws(
+    () => upsertSeasonPlayer({ ...base, seasonPlayers: [membership] }, "season-a", second.playerId, { number: 31 }, 3),
+    /mismo equipo|equipo y temporada|ya está usado/i,
+  );
+  assert.doesNotThrow(() => upsertSeasonPlayer(
+    { ...base, seasonPlayers: [{ ...membership, teamId: "team-b" }] },
+    "season-a",
+    second.playerId,
+    { number: 31 },
+    3,
+  ));
+  assert.doesNotThrow(() => upsertSeasonPlayer(
+    { ...base, seasonPlayers: [{ ...membership, seasonId: "season-b" }] },
+    "season-a",
+    second.playerId,
+    { number: 31 },
+    3,
+  ));
+  for (const released of [
+    { active: false },
+    { active: true, deletedAt: 3 },
+    { active: true, archivedAt: 3 },
+  ]) {
+    assert.doesNotThrow(() => upsertSeasonPlayer(
+      { ...base, seasonPlayers: [{ ...membership, ...released }] },
+      "season-a",
+      second.playerId,
+      { number: 31 },
+      3,
+    ));
+  }
+  assert.equal(first.number, second.number);
+  assert.equal(first.fullName, second.fullName);
+});
+
 test("staff mantiene entidad e identidad separadas del jugador", () => {
   const player = createMasterPlayer([], { fullName: "Alex", displayName: "Alex", number: 4, role: "FIELD" }, { id: "same-visible-id" });
   const staff = createMasterStaff({ fullName: "Alex", displayName: "Alex", role: "DELEGATE" }, { id: "staff-id" });

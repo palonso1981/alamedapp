@@ -311,12 +311,15 @@ export function upsertSeasonPlayer(
   if (next.active) {
     const duplicate = workspace.seasonPlayers.find(
       (item) =>
+        item.teamId === next.teamId &&
         item.seasonId === seasonId &&
         item.playerId !== playerId &&
         item.active &&
+        !item.deletedAt &&
+        !item.archivedAt &&
         item.number === next.number,
     );
-    if (duplicate) throw new Error(`El dorsal ${next.number} ya está usado en esta temporada.`);
+    if (duplicate) throw new Error(`El dorsal ${next.number} ya está usado en este equipo y temporada.`);
   }
   return {
     ...workspace,
