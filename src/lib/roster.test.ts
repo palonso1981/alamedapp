@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   addExtraPlayerToMatch,
   createDraftMatch,
+  MAX_CALLED_PLAYERS,
   markMatchReady,
   plannedMinutes,
   selectStartingGoalkeeper,
@@ -57,7 +58,7 @@ import { InMemoryRemoteMatchRepository } from "./sync/remoteMatchRepository";
 import { RemoteApplyResult } from "./sync/remoteMatchRepository";
 import { RevisionedRemoteRepository, SyncCoordinator } from "./sync/syncCoordinator";
 import { seasonPlayerEntityId, seasonStaffEntityId, teamEntityKey, TeamSyncOperation } from "./sync/teamSyncTypes";
-import { createLiveThreatEvent, replayMatch } from "./matchEngine";
+import { createFoulEvent, createLiveThreatEvent, createSubstitutionEvent, replayMatch } from "./matchEngine";
 import { ManagedPlayerPhoto, MasterPlayer, TeamRoster, TeamWorkspace } from "../types";
 import {
   PLAYER_PHOTO_MAX_INPUT_BYTES,
@@ -1020,28 +1021,105 @@ test("Prepartido puede quedar LISTO sin quinteto pero INICIAR exige cinco y port
   assert.equal(startPreparedMatch(session, roster).preparation?.status, "LIVE");
 });
 
-test("Prepartido admite 5+8, rechaza el decimocuarto y excluye inactivos", () => {
+test("Prepartido admite convocatorias de 5, 13 y 14; rechaza el jugador 15 e inactivos", () => {
   const players: MasterPlayer[] = [
     createMasterPlayer([], { fullName: "Portero", displayName: "POR", number: 1, role: "GOALKEEPER" }, { id: "limit-gk" }),
   ];
-  for (let index = 2; index <= 14; index += 1) {
+  for (let index = 2; index <= 15; index += 1) {
     players.push(createMasterPlayer(players, { fullName: `Jugador ${index}`, displayName: `J${index}`, number: index, role: "FIELD" }, { id: `limit-${index}` }));
   }
   const roster: TeamRoster = { teamId: "cd-alameda", players, staff: [] };
   let session = createDraftMatch("prematch-limit", { ...MATCH_SCOPE, opponent: "Rival", venue: "HOME", date: "2026-09-01" });
-  for (const player of players.slice(0, 13)) {
+  for (const player of players.slice(0, 5)) {
     session = toggleCalledPlayer(session, roster, player.playerId);
   }
+  assert.equal(validatePreparation(session, roster).valid, true);
+  for (const player of players.slice(5, 13)) session = toggleCalledPlayer(session, roster, player.playerId);
   assert.equal(session.preparation?.calledPlayerIds.length, 13);
+  session = toggleCalledPlayer(session, roster, players[13].playerId);
+  assert.equal(session.preparation?.calledPlayerIds.length, MAX_CALLED_PLAYERS);
   assert.throws(
-    () => toggleCalledPlayer(session, roster, players[13].playerId),
-    /hasta 13 jugadores/i,
+    () => toggleCalledPlayer(session, roster, players[14].playerId),
+    /hasta 14 jugadores/i,
   );
-  const inactivePlayers = updateMasterPlayer(players, players[13].playerId, { active: false });
+  const inactivePlayers = updateMasterPlayer(players, players[14].playerId, { active: false });
   assert.throws(
-    () => toggleCalledPlayer(session, { ...roster, players: inactivePlayers }, players[13].playerId),
+    () => toggleCalledPlayer(session, { ...roster, players: inactivePlayers }, players[14].playerId),
     /jugadores activos/i,
   );
+});
+
+test("el jugador 14 participa, sustituye, amenaza, marca y recibe falta sin romper replay ni minutos", () => {
+  const players: MasterPlayer[] = [];
+  for (let index = 1; index <= 14; index += 1) {
+    players.push(createMasterPlayer(players, {
+      fullName: `Jugador ${index}`,
+      displayName: `J${index}`,
+      number: index,
+      role: index === 1 || index === 14 ? "GOALKEEPER" : "FIELD",
+    }, { id: `fourteen-${index}` }));
+  }
+  const roster: TeamRoster = { teamId: MATCH_SCOPE.teamId, players, staff: [] };
+  let session = createDraftMatch("fourteen-flow", { ...MATCH_SCOPE, opponent: "Rival", venue: "HOME", date: "2026-09-20" }, 1);
+  for (const player of players) session = toggleCalledPlayer(session, roster, player.playerId, 2);
+  for (const player of players.slice(0, 5)) session = toggleStarter(session, roster, player.playerId, 3);
+  session = selectStartingGoalkeeper(session, roster, "fourteen-1", 4);
+  session = startPreparedMatch(session, roster, 5);
+  const player14 = players[13];
+  const playerOut = players[0];
+  const events = [
+    ...session.events,
+    createSubstitutionEvent({ id: "fourteen-sub", matchId: session.matchId, position: { period: 1, minute: 5, order: 1 }, playerOutId: playerOut.playerId, playerInId: player14.playerId, now: 6 }),
+    createLiveThreatEvent({ id: "fourteen-shot", matchId: session.matchId, position: { period: 1, minute: 7, order: 1 }, side: "FOR", playerId: player14.playerId, origin: { x: 0.8, y: 0.5 }, outcome: "GOL", phase: "TRANSITION", assist: { status: "NONE" }, now: 7 }),
+    createFoulEvent({ id: "fourteen-foul", matchId: session.matchId, position: { period: 1, minute: 8, order: 1 }, side: "AGAINST", playerId: player14.playerId, now: 8 }),
+  ];
+  const replay = replayMatch(session.players, events, { currentClock: { period: 1, minute: 20 } });
+  assert.equal(session.players.length, 14);
+  assert.equal(replay.benchPlayerIds.length, 9);
+  assert.equal(replay.onCourtPlayerIds.includes(player14.playerId), true);
+  assert.deepEqual(replay.lineupValidation.goalkeeper, {
+    status: "PLAYER",
+    playerId: player14.playerId,
+    resolution: "REPLAY",
+  });
+  assert.equal(replay.score.for, 1);
+  assert.equal(replay.discipline.against.fouls, 1);
+  assert.equal(replay.playerMinutes[player14.playerId].totalMinutes, 15);
+  assert.deepEqual(replay.issues, []);
+});
+
+test("convocatoria de 14 sobrevive sync, reload y segundo navegador", async () => {
+  const players: MasterPlayer[] = [];
+  for (let index = 1; index <= 14; index += 1) {
+    players.push(createMasterPlayer(players, {
+      fullName: `Sync ${index}`,
+      displayName: `S${index}`,
+      number: index,
+      role: index === 1 || index === 14 ? "GOALKEEPER" : "FIELD",
+    }, { id: `sync-fourteen-${index}` }));
+  }
+  const roster: TeamRoster = { teamId: MATCH_SCOPE.teamId, players, staff: [] };
+  let session = createDraftMatch("sync-fourteen", { ...MATCH_SCOPE, opponent: "Rival", venue: "AWAY", date: "2026-09-20" }, 1);
+  for (const player of players) session = toggleCalledPlayer(session, roster, player.playerId, 2);
+  for (const player of players.slice(0, 5)) session = toggleStarter(session, roster, player.playerId, 3);
+  session = selectStartingGoalkeeper(session, roster, players[0].playerId, 4);
+  session = startPreparedMatch(session, roster, 5);
+
+  const storageA = new MemoryStorage();
+  const localA = new LocalMatchRepository({ storage: storageA, idFactory: () => "sync-fourteen-op" });
+  const remote = new InMemoryRemoteMatchRepository();
+  localA.save(session);
+  await new SyncCoordinator(localA, remote, { isOnline: () => true }).syncMatch(session.matchId);
+  assert.equal(localA.getSummary(session.matchId).pending, 0);
+  assert.equal(new LocalMatchRepository({ storage: storageA }).load(session.matchId)?.players.length, 14);
+
+  const localB = new LocalMatchRepository({ storage: new MemoryStorage() });
+  assert.equal(localB.hydrateRemote(session, { match: 1, [`event:${session.events[0].id}`]: 1 }), true);
+  const loadedB = localB.load(session.matchId)!;
+  assert.equal(loadedB.players.length, 14);
+  const lineup = loadedB.events.find((event) => event.type === "lineup_initialized");
+  assert.equal(lineup?.type === "lineup_initialized" ? lineup.squadPlayerIds.length : 0, 14);
+  assert.equal(replayMatch(loadedB.players, loadedB.events).benchPlayerIds.length, 9);
 });
 
 test("inicio es idempotente y Directo recibe alineación y portero funcional", () => {

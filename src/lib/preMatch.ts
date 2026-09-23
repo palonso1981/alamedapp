@@ -9,7 +9,7 @@ import {
   TeamRoster,
 } from "../types";
 
-export const MAX_CALLED_PLAYERS = 13;
+export const MAX_CALLED_PLAYERS = 14;
 export const STARTER_COUNT = 5;
 
 export interface CreateMatchInput {
@@ -339,7 +339,9 @@ export function validatePreparation(
   if (!preparation.opponent.trim()) reasons.push("Indica el rival.");
   if (!preparation.date) reasons.push("Indica la fecha.");
   if (preparation.calledPlayerIds.length < STARTER_COUNT) reasons.push("Convoca al menos cinco jugadores.");
-  if (preparation.calledPlayerIds.length > MAX_CALLED_PLAYERS) reasons.push("La convocatoria supera 13 jugadores.");
+  if (preparation.calledPlayerIds.length > MAX_CALLED_PLAYERS) {
+    reasons.push(`La convocatoria supera ${MAX_CALLED_PLAYERS} jugadores.`);
+  }
   if (preparation.calledPlayerIds.some((id) => !roster.players.some((player) => player.playerId === id))) reasons.push("La convocatoria contiene jugadores que ya no existen en Plantilla.");
   return { valid: reasons.length === 0, reasons };
 }

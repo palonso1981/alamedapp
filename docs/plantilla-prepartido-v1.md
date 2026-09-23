@@ -77,8 +77,8 @@ categoría y jornada numérica opcional. El ciclo de estado es:
 - `LIVE`: alineación inicial congelada y Directo activo;
 - `FINISHED`: derivado al cerrar el partido.
 
-La convocatoria toma únicamente jugadores activos y admite hasta 13 personas:
-cinco titulares más ocho suplentes. El banquillo es la diferencia derivada entre
+La convocatoria toma únicamente jugadores activos y admite hasta 14 personas:
+cinco titulares más nueve suplentes. El banquillo es la diferencia derivada entre
 convocados y titulares. Staff presente se selecciona desde staff activo.
 
 Guardar como `READY` no exige decidir el quinteto. Para iniciar sí se exigen

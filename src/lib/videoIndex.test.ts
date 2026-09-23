@@ -11,7 +11,9 @@ import {
   parseVideoTimestamp,
   parseYouTubeVideoId,
   resolveEventVideoPosition,
+  removeVideoAnchor,
   removeVideoEventOverride,
+  removeVideoSegment,
   upsertVideoEventOverride,
   upsertVideoSegment,
   youtubeBaseUrl,
@@ -285,4 +287,26 @@ test("persistencia V3 conserva segmentos anchors y overrides y acepta sesiones s
   assert.deepEqual(loadMatchSession("m1", storage)?.videoEventOverrides, current.videoEventOverrides);
   assert.equal(saveMatchSession({ ...current, videoSegments: undefined }, storage, 11).ok, true);
   assert.deepEqual(loadMatchSession("m1", storage)?.videoSegments, []);
+});
+
+test("editar lead y borrar anchor o segmento conserva eventos y limpia metadata dependiente", () => {
+  const sourceEvents = [event("video-event", 100_000)];
+  const immutableEvents = structuredClone(sourceEvents);
+  let current = session(sourceEvents);
+  const segment = createVideoSegment({ id: "editable-video", urlOrVideoId: "abcdefghijk", periods: [1], leadSeconds: 6, now: 1 });
+  current = upsertVideoSegment(current, segment);
+  current = addVideoAnchor(current, segment.id, { id: "anchor", eventId: "video-event", videoSecond: 432 });
+  current = upsertVideoEventOverride(current, { eventId: "video-event", segmentId: segment.id, videoSecond: 432, now: 2 });
+  current = upsertVideoSegment(current, { ...current.videoSegments![0], leadSeconds: 9, updatedAt: 3 });
+  const adjusted = resolveEventVideoPosition(current, "video-event");
+  assert.equal(adjusted.status, "RESOLVED");
+  if (adjusted.status === "RESOLVED") assert.equal(adjusted.openSecond, 423);
+
+  current = removeVideoAnchor(current, segment.id, "anchor");
+  assert.equal(current.videoSegments?.[0].anchors.length, 0);
+  assert.equal(current.videoEventOverrides?.length, 1, "quitar el anchor no borra el ajuste manual independiente");
+  current = removeVideoSegment(current, segment.id);
+  assert.deepEqual(current.videoSegments, []);
+  assert.deepEqual(current.videoEventOverrides, []);
+  assert.deepEqual(current.events.slice(1), immutableEvents);
 });
