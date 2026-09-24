@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppHeader } from "../../../../components/app/AppHeader";
 import { useAccess } from "../../../../components/access/AccessProvider";
+import { SyncStatusBadge } from "../../../../components/match/SyncStatusBadge";
 import { YouTubeLabPlayer, YouTubeLabPlayerHandle } from "../../../../components/video/YouTubeLabPlayer";
 import { eventDescription } from "../../../../lib/eventPresentation";
 import { buildDashboardFixture } from "../../../../lib/dashboardFixture";
@@ -90,7 +91,7 @@ export default function VideoLabPage() {
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-slate-950 text-white">
-      <AppHeader title="Video Lab" clubId={session.preparation?.clubId} />
+      <AppHeader title="Video Lab" clubId={session.preparation?.clubId} actions={<SyncStatusBadge matchId={matchId} />} />
       <main className="mx-auto max-w-[1500px] space-y-3 p-3 sm:p-5">
         <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 p-3">
           <div>
