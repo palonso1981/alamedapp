@@ -25,8 +25,12 @@ El primer anchor válido de cada segmento es el origen operativo. Un segundo anc
 ## Estado temporal de una jugada
 
 - `AUTO`: posición estimada desde anchor y `observedAt ?? createdAt`.
-- `VERIFIED`: el usuario confirma la estimación o usa **ACCIÓN AQUÍ** con el segundo real del reproductor.
-- Fuente temporal: `observedAt`, `createdAt` o `manual`.
+- `VERIFIED`: el usuario confirma la estimación o usa **ACCIÓN AQUÍ** con el segundo real del reproductor. La confirmación se persiste en `MatchSession.videoEventOverrides`, como metadata audiovisual del `MATCH`, y sincroniza mediante la outbox existente.
+- Fuente temporal: `observedAt`, `createdAt` o `manual`. `CORRECTA` conserva la fuente automática; **ACCIÓN AQUÍ** guarda `manual`.
+
+Cada verificación conserva `matchId + eventId + segmentId + syncSegmentId`, segundo, estado, fuente y timestamps técnicos. Actualizar una verificación sustituye la entrada activa del evento sin duplicarla. El `MatchEvent`, `observedAt`, `createdAt`, el reloj deportivo y el replay permanecen intactos. Los overrides legacy sin estos campos opcionales continúan siendo legibles.
+
+ADMIN y EDITOR pueden verificar. VIEWER ve la cronología y las posiciones, pero los controles de confirmación están deshabilitados; el repositorio y las Rules de `MATCH` mantienen además la denegación de escritura. No fue necesaria una colección ni una regla nueva.
 
 Las verificaciones del prototipo viven en memoria. Persistirlas exigirá una decisión posterior de modelo y sync.
 

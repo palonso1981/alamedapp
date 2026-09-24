@@ -13,11 +13,13 @@ import {
   currentVideoLabRow,
   isVideoLabClipEligible,
   nextVideoLabRow,
+  persistVideoLabVerification,
   proposeVideoSportsInsertion,
   shiftVideoSecond,
   verifyVideoLabEvent,
   videoLabSeekSecond,
 } from "./videoLab";
+import { loadMatchSession, LocalStorageAdapter, saveMatchSession } from "./matchPersistence";
 import { MatchEvent, MatchSession, MatchVideoSegment } from "../types";
 
 const players = Array.from({ length: 6 }, (_, index) => ({ id: `p${index + 1}`, name: `Jugador ${index + 1}`, number: index + 1 }));
@@ -48,7 +50,7 @@ function buildSession(segments: MatchVideoSegment[]): MatchSession {
   const substitution = createSubstitutionEvent({ id: "change", matchId: "video-lab", position: { period: 1, minute: 10, order: 1 }, playerOutId: "p2", playerInId: "p6", provenance: "LIVE", observedAt: 20_000, now: 24_000 });
   const p1Later = { ...threat("p1-later", 1, 12, 1, 30_000), playerId: "p6" } as MatchEvent;
   const p2 = threat("p2-shot", 2, 3, 1, 1_000_000);
-  return { matchId: "video-lab", players, staff: [], period: 2, minute: 20, periodMinutes: { 1: 20, 2: 20 }, events: [lineup, p1, substitution, p1Later, p2], videoSegments: segments, past: [], future: [], lastError: null, persistenceStatus: "saved", lastSavedAt: 1 };
+  return { matchId: "video-lab", players, staff: [], period: 2, minute: 20, periodMinutes: { 1: 20, 2: 20 }, closedPeriods: [], periodCloseSnapshots: {}, matchFinished: false, events: [lineup, p1, substitution, p1Later, p2], videoSegments: segments, past: [], future: [], lastError: null, persistenceStatus: "saved", lastSavedAt: 1 };
 }
 
 test("la primera pulsación se conserva como observedAt aunque la captura termine después", () => {
@@ -128,6 +130,57 @@ test("AUTO pasa a VERIFIED y selección usa ventana con lead de seis segundos", 
   assert.equal(verified.status, "VERIFIED");
   assert.equal(verified.estimatedSecond, 123);
   assert.equal(verified.openSecond, 117);
+});
+
+test("CORRECTA persiste VERIFIED con fuente automática sin modificar MatchEvent ni observedAt", () => {
+  const original = buildSession([video("first", "abcdefghijk", [1], [{ id: "a1", eventId: "p1-shot", videoSecond: 100 }])]);
+  const immutableEvents = structuredClone(original.events);
+  const automatic = buildVideoLabTimeline(original).find((row) => row.event.id === "p1-later")!;
+  assert.equal(automatic.timeSource, "observedAt");
+  const verified = persistVideoLabVerification(original, automatic, { now: 100 });
+  assert.deepEqual(verified.events, immutableEvents);
+  assert.equal(verified.events.find((event) => event.id === "p1-later")?.observedAt, 30_000);
+  assert.deepEqual(verified.videoEventOverrides, [{
+    matchId: "video-lab",
+    eventId: "p1-later",
+    segmentId: "first",
+    syncSegmentId: "first:P1",
+    videoSecond: 120,
+    status: "VERIFIED",
+    timeSource: "observedAt",
+    createdAt: 100,
+    updatedAt: 100,
+  }]);
+  assert.equal(buildVideoLabTimeline(verified).find((row) => row.event.id === "p1-later")?.status, "VERIFIED");
+});
+
+test("ACCIÓN AQUÍ persiste el segundo manual y corrige sin duplicar", () => {
+  const original = buildSession([video("first", "abcdefghijk", [1], [{ id: "a1", eventId: "p1-shot", videoSecond: 100 }])]);
+  const row = buildVideoLabTimeline(original).find((candidate) => candidate.event.id === "p1-later")!;
+  const first = persistVideoLabVerification(original, row, { videoSecond: 123, timeSource: "manual", now: 100 });
+  const correctedRow = buildVideoLabTimeline(first).find((candidate) => candidate.event.id === "p1-later")!;
+  const corrected = persistVideoLabVerification(first, correctedRow, { videoSecond: 127, timeSource: "manual", now: 200 });
+  assert.equal(corrected.videoEventOverrides?.length, 1);
+  assert.equal(corrected.videoEventOverrides?.[0].videoSecond, 127);
+  assert.equal(corrected.videoEventOverrides?.[0].createdAt, 100);
+  assert.equal(corrected.videoEventOverrides?.[0].updatedAt, 200);
+});
+
+test("reload conserva VERIFIED y dos periodos del mismo vídeo usan syncSegmentId distinto", () => {
+  const shared = video("full", "abcdefghijk", [1, 2], [
+    { id: "a1", eventId: "p1-shot", videoSecond: 100 },
+    { id: "a2", eventId: "p2-shot", videoSecond: 1_300 },
+  ]);
+  let current = buildSession([shared]);
+  const initialRows = buildVideoLabTimeline(current);
+  current = persistVideoLabVerification(current, initialRows.find((row) => row.event.id === "p1-later")!, { videoSecond: 121, timeSource: "manual", now: 10 });
+  current = persistVideoLabVerification(current, initialRows.find((row) => row.event.id === "p2-shot")!, { videoSecond: 1_305, timeSource: "manual", now: 20 });
+  assert.deepEqual(current.videoEventOverrides?.map((item) => item.syncSegmentId), ["full:P1", "full:P2"]);
+  const values = new Map<string, string>();
+  const storage: LocalStorageAdapter = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); } };
+  assert.equal(saveMatchSession(current, storage, 30).ok, true);
+  const reloaded = loadMatchSession("video-lab", storage)!;
+  assert.deepEqual(buildVideoLabTimeline(reloaded).filter((row) => row.status === "VERIFIED").map((row) => [row.event.id, row.estimatedSecond]), [["p1-later", 121], ["p2-shot", 1_305]]);
 });
 
 test("verificar permite avanzar a la siguiente jugada sin volver al inicio", () => {

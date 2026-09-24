@@ -1316,7 +1316,7 @@ test("eventos Directo V2 sobreviven offline reload y sincronizan por el mismo ID
   assert.equal(local.getSummary(session.matchId).pending, 0);
 });
 
-test("segmentos y anchors viajan como metadata MATCH sin modificar eventos", async () => {
+test("segmentos, anchors y verificación Video Lab viajan como metadata MATCH a un segundo navegador", async () => {
   const storage = new MemoryStorage();
   const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
   const remote = new InMemoryRemoteMatchRepository();
@@ -1326,7 +1326,9 @@ test("segmentos y anchors viajan como metadata MATCH sin modificar eventos", asy
   await coordinator.syncMatch(session.matchId);
   const segment = createVideoSegment({ id: "video-1", urlOrVideoId: "abcdefghijk", periods: [1, 2], now: 10 });
   const indexed = upsertVideoSegment(session, { ...segment, anchors: [{ id: "anchor-1", eventId: session.events[0].id, videoSecond: 20 }] });
-  const withVideo = upsertVideoEventOverride(indexed, { eventId: session.events[0].id, segmentId: segment.id, videoSecond: 17, now: 11 });
+  const immutableEvents = structuredClone(indexed.events);
+  const withVideo = upsertVideoEventOverride(indexed, { eventId: session.events[0].id, segmentId: segment.id, syncSegmentId: `${segment.id}:P1`, videoSecond: 17, status: "VERIFIED", timeSource: "manual", now: 11 });
+  assert.deepEqual(withVideo.events, immutableEvents);
   local.save(withVideo);
   const queued = local.getSyncState(session.matchId).outbox;
   assert.deepEqual(queued.map((operation) => operation.entityType), ["MATCH"]);
@@ -1337,6 +1339,13 @@ test("segmentos y anchors viajan como metadata MATCH sin modificar eventos", asy
   assert.equal(remotePayload.videoSegments?.[0].videoId, "abcdefghijk");
   assert.equal(remotePayload.videoEventOverrides?.[0].eventId, session.events[0].id);
   assert.equal(local.getSummary(session.matchId).pending, 0);
+  const secondStorage = new MemoryStorage();
+  const secondBrowser = new LocalMatchRepository({ storage: secondStorage, idFactory: idFactory() });
+  const remoteRevision = remote.documents.get(`${session.matchId}:match`)?.revision ?? 0;
+  assert.equal(secondBrowser.hydrateRemote(remoteMatchSession(remotePayload, session.events), { [syncEntityKey("MATCH", session.matchId)]: remoteRevision }), true);
+  assert.equal(secondBrowser.load(session.matchId)?.videoEventOverrides?.[0].status, "VERIFIED");
+  assert.equal(secondBrowser.load(session.matchId)?.videoEventOverrides?.[0].videoSecond, 17);
+  assert.equal(secondBrowser.getSummary(session.matchId).pending, 0);
 });
 
 test("hidratación PROD-style refresca una caché incompleta con eventos y vídeo sin crear outbox", () => {

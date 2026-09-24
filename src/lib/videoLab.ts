@@ -1,6 +1,6 @@
 import { isVideoReviewableEvent } from "./videoReview";
 import { replayMatch, sortEvents } from "./matchEngine";
-import { normalizeLeadSeconds, videoEventTime } from "./videoIndex";
+import { normalizeLeadSeconds, upsertVideoEventOverride, videoEventTime } from "./videoIndex";
 import {
   MatchEvent,
   MatchSession,
@@ -140,7 +140,10 @@ export function buildVideoLabTimeline(
       const leadSeconds = segment?.leadSeconds ?? 6;
       const verification = verifications[event.id];
       const persistedOverride = segment
-        ? (session.videoEventOverrides ?? []).find((candidate) => candidate.eventId === event.id && candidate.segmentId === segment.physicalSegmentId)
+        ? (session.videoEventOverrides ?? []).find((candidate) =>
+            candidate.eventId === event.id &&
+            candidate.segmentId === segment.physicalSegmentId &&
+            (!candidate.syncSegmentId || candidate.syncSegmentId === segment.id))
         : undefined;
       const verifiedSecond = verification && verification.syncSegmentId === segment?.id
         ? verification.videoSecond
@@ -155,8 +158,8 @@ export function buildVideoLabTimeline(
           estimatedSecond: verifiedSecond,
           openSecond: Math.max(0, verifiedSecond - leadSeconds),
           leadSeconds,
-          status: "VERIFIED" as const,
-          timeSource: "manual" as const,
+          status: persistedOverride?.status ?? "VERIFIED" as const,
+          timeSource: persistedOverride?.timeSource ?? "manual" as const,
           diagnostic: resolveAutomatic(session, event, segment).diagnostic,
         };
       }
@@ -190,6 +193,31 @@ export function verifyVideoLabEvent(
       timeSource: "manual",
     },
   };
+}
+
+/**
+ * Guarda una verificación como metadata MATCH. El evento deportivo se usa
+ * únicamente como referencia y nunca se modifica.
+ */
+export function persistVideoLabVerification(
+  session: MatchSession,
+  row: VideoLabTimelineRow,
+  input: { videoSecond?: number; timeSource?: VideoLabTimeSource; now?: number } = {},
+): MatchSession {
+  const videoSecond = input.videoSecond ?? row.estimatedSecond;
+  const syncSegment = row.syncSegmentId
+    ? buildVideoLabSyncSegments(session).find((candidate) => candidate.id === row.syncSegmentId)
+    : undefined;
+  if (!syncSegment || videoSecond === undefined || !Number.isFinite(videoSecond)) return session;
+  return upsertVideoEventOverride(session, {
+    eventId: row.event.id,
+    segmentId: syncSegment.physicalSegmentId,
+    syncSegmentId: syncSegment.id,
+    videoSecond: Math.max(0, Math.round(videoSecond)),
+    status: "VERIFIED",
+    timeSource: input.timeSource ?? row.timeSource ?? "manual",
+    now: input.now,
+  });
 }
 
 export function shiftVideoSecond(current: number, delta: -5 | -1 | 1 | 5): number {

@@ -241,7 +241,15 @@ export function removeVideoSegment(session: MatchSession, segmentId: string): Ma
 
 export function upsertVideoEventOverride(
   session: MatchSession,
-  input: { eventId: string; segmentId: string; videoSecond: number; now?: number },
+  input: {
+    eventId: string;
+    segmentId: string;
+    syncSegmentId?: string;
+    videoSecond: number;
+    status?: "VERIFIED";
+    timeSource?: "observedAt" | "createdAt" | "manual";
+    now?: number;
+  },
 ): MatchSession {
   const event = session.events.find((candidate) => candidate.id === input.eventId);
   const segment = (session.videoSegments ?? []).find((candidate) => candidate.id === input.segmentId);
@@ -251,9 +259,13 @@ export function upsertVideoEventOverride(
   const now = input.now ?? Date.now();
   const previous = (session.videoEventOverrides ?? []).find((item) => item.eventId === input.eventId);
   const override: MatchVideoEventOverride = {
+    matchId: session.matchId,
     eventId: input.eventId,
     segmentId: input.segmentId,
+    syncSegmentId: input.syncSegmentId ?? input.segmentId,
     videoSecond: input.videoSecond,
+    status: input.status ?? "VERIFIED",
+    timeSource: input.timeSource ?? "manual",
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
   };

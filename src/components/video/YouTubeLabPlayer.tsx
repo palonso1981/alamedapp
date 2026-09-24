@@ -28,12 +28,13 @@ interface Props {
   initialSecond?: number;
   onTimeChange?: (second: number) => void;
   onActionHere?: (second: number) => void;
+  actionDisabled?: boolean;
 }
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
 
 export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(function YouTubeLabPlayer(
-  { videoId, initialSecond = 0, onTimeChange, onActionHere },
+  { videoId, initialSecond = 0, onTimeChange, onActionHere, actionDisabled = false },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -109,7 +110,7 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
           </button>
         ))}
         <span className="rounded-xl bg-slate-950 px-3 py-2 font-mono text-sm font-black text-cyan-300">{formatVideoTimestamp(currentSecond)}</span>
-        <button type="button" onClick={() => onActionHere?.(Math.round(readCurrentSecond()))} className="min-h-12 flex-1 rounded-xl bg-amber-400 px-4 text-sm font-black text-slate-950 active:scale-[.99]">ACCIÓN AQUÍ</button>
+        <button type="button" disabled={actionDisabled} onClick={() => onActionHere?.(Math.round(readCurrentSecond()))} className="min-h-12 flex-1 rounded-xl bg-amber-400 px-4 text-sm font-black text-slate-950 active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-35">ACCIÓN AQUÍ</button>
       </div>
       <div className="flex flex-wrap gap-2" aria-label="Velocidad de reproducción">
         {SPEEDS.map((value) => (

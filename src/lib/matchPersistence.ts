@@ -139,11 +139,15 @@ function isVideoSegment(value: unknown): value is MatchVideoSegment {
     typeof value.updatedAt === "number";
 }
 
-function isVideoEventOverride(value: unknown): value is MatchVideoEventOverride {
+function isVideoEventOverride(value: unknown, expectedMatchId: string): value is MatchVideoEventOverride {
   return isObject(value) &&
+    (value.matchId === undefined || value.matchId === expectedMatchId) &&
     typeof value.eventId === "string" &&
     typeof value.segmentId === "string" &&
+    (value.syncSegmentId === undefined || typeof value.syncSegmentId === "string") &&
     typeof value.videoSecond === "number" && Number.isSafeInteger(value.videoSecond) && value.videoSecond >= 0 &&
+    (value.status === undefined || value.status === "VERIFIED") &&
+    (value.timeSource === undefined || ["observedAt", "createdAt", "manual"].includes(String(value.timeSource))) &&
     typeof value.createdAt === "number" &&
     typeof value.updatedAt === "number";
 }
@@ -581,7 +585,7 @@ function validPersistedSession(
     (value.videoSegments !== undefined &&
       (!Array.isArray(value.videoSegments) || !value.videoSegments.every(isVideoSegment))) ||
     (value.videoEventOverrides !== undefined &&
-      (!Array.isArray(value.videoEventOverrides) || !value.videoEventOverrides.every(isVideoEventOverride))) ||
+      (!Array.isArray(value.videoEventOverrides) || !value.videoEventOverrides.every((item) => isVideoEventOverride(item, expectedMatchId)))) ||
     !isEventList(value.events, expectedMatchId) ||
     !Array.isArray(value.past) ||
     !value.past.every((events) => isEventList(events, expectedMatchId)) ||
@@ -595,6 +599,12 @@ function validPersistedSession(
     const events = value.events as MatchEvent[];
     const past = value.past as MatchEvent[][];
     const future = value.future as MatchEvent[][];
+    const videoOverrides = (value.videoEventOverrides ?? []) as MatchVideoEventOverride[];
+    const eventIds = new Set(events.map((event) => event.id));
+    const overrideKeys = videoOverrides.map((item) => `${item.eventId}:${item.syncSegmentId ?? item.segmentId}`);
+    if (overrideKeys.length !== new Set(overrideKeys).size || videoOverrides.some((item) => !eventIds.has(item.eventId))) {
+      return false;
+    }
     const staffIds = new Set((value.staff as StaffMember[]).map((member) => member.id));
     const validStaffReferences = [events, ...past, ...future].every(
       (chronology) =>

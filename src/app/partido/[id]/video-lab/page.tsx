@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppHeader } from "../../../../components/app/AppHeader";
+import { useAccess } from "../../../../components/access/AccessProvider";
 import { YouTubeLabPlayer, YouTubeLabPlayerHandle } from "../../../../components/video/YouTubeLabPlayer";
 import { eventDescription } from "../../../../lib/eventPresentation";
 import { buildDashboardFixture } from "../../../../lib/dashboardFixture";
@@ -13,8 +14,7 @@ import {
   buildVideoLabTimeline,
   currentVideoLabRow,
   nextVideoLabRow,
-  verifyVideoLabEvent,
-  VideoLabVerificationMap,
+  persistVideoLabVerification,
   videoLabSeekSecond,
 } from "../../../../lib/videoLab";
 import { useMatchStore } from "../../../../store/useMatchStore";
@@ -22,6 +22,7 @@ import { useMatchStore } from "../../../../store/useMatchStore";
 export default function VideoLabPage() {
   const { id: matchId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
+  const { canWrite } = useAccess();
   const storedSession = useMatchStore((state) => state.matches[matchId]);
   const fixtureSession = useMemo(() =>
     process.env.NODE_ENV !== "production" && searchParams.get("fixture") === "1"
@@ -37,14 +38,13 @@ export default function VideoLabPage() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [currentSecond, setCurrentSecond] = useState(0);
   const [followVideo, setFollowVideo] = useState(true);
-  const [verifications, setVerifications] = useState<VideoLabVerificationMap>({});
 
   useEffect(() => { if (!fixtureSession) ensureMatch(matchId); }, [ensureMatch, fixtureSession, matchId]);
   const segments = useMemo(() => session ? buildVideoLabSyncSegments(session) : [], [session]);
   useEffect(() => {
     if (!segments.some((segment) => segment.id === segmentId)) setSegmentId(segments[0]?.id ?? "");
   }, [segmentId, segments]);
-  const rows = useMemo(() => session ? buildVideoLabTimeline(session, verifications) : [], [session, verifications]);
+  const rows = useMemo(() => session ? buildVideoLabTimeline(session) : [], [session]);
   const segment = segments.find((candidate) => candidate.id === segmentId);
   const segmentRows = rows.filter((row) => row.syncSegmentId === segmentId);
   const activeRow = currentVideoLabRow(rows, segmentId, currentSecond);
@@ -66,9 +66,14 @@ export default function VideoLabPage() {
     const second = row ? videoLabSeekSecond(row) : null;
     if (second !== null) playerRef.current?.seekTo(second);
   };
-  const verifySelected = (videoSecond?: number, advance = false) => {
-    if (!selectedRow) return;
-    setVerifications((current) => verifyVideoLabEvent(current, selectedRow, videoSecond));
+  const setOverrides = useMatchStore((state) => state.setVideoEventOverrides);
+  const verifySelected = (videoSecond?: number, timeSource?: "manual", advance = false) => {
+    if (!session || !selectedRow || !canWrite) return;
+    const nextSession = persistVideoLabVerification(session, selectedRow, {
+      videoSecond,
+      timeSource: timeSource ?? selectedRow.timeSource,
+    });
+    setOverrides(matchId, nextSession.videoEventOverrides ?? []);
     if (advance && selectedRow.syncSegmentId) {
       const next = nextVideoLabRow(rows, selectedRow.syncSegmentId, selectedRow.event.id);
       if (next) chooseRow(next.event.id);
@@ -107,9 +112,9 @@ export default function VideoLabPage() {
             </nav>
             {segment && <div className="grid gap-3 lg:grid-cols-[minmax(0,1.55fr)_minmax(340px,.85fr)]">
               <section className="rounded-3xl border border-slate-800 bg-slate-900 p-3 sm:p-4">
-                <YouTubeLabPlayer ref={playerRef} videoId={segment.videoId} onTimeChange={handleTimeChange} onActionHere={(second) => verifySelected(second, true)} />
+                <YouTubeLabPlayer ref={playerRef} videoId={segment.videoId} onTimeChange={handleTimeChange} actionDisabled={!canWrite} onActionHere={(second) => verifySelected(second, "manual", true)} />
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <button type="button" disabled={selectedRow?.estimatedSecond === undefined} onClick={() => verifySelected(undefined, true)} className="min-h-12 rounded-xl bg-emerald-500 px-3 text-sm font-black text-slate-950 disabled:opacity-40">✓ CORRECTA</button>
+                  <button type="button" disabled={!canWrite || selectedRow?.estimatedSecond === undefined} onClick={() => verifySelected(undefined, undefined, true)} className="min-h-12 rounded-xl bg-emerald-500 px-3 text-sm font-black text-slate-950 disabled:opacity-40">✓ CORRECTA</button>
                   <button type="button" onClick={goNext} className="min-h-12 rounded-xl bg-slate-700 px-3 text-sm font-black">SIGUIENTE →</button>
                   {!followVideo && <button type="button" onClick={() => setFollowVideo(true)} className="col-span-2 min-h-12 rounded-xl bg-cyan-400 px-3 text-sm font-black text-slate-950 sm:col-span-1">◎ SEGUIR VÍDEO</button>}
                 </div>

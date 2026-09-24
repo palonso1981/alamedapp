@@ -270,12 +270,20 @@ export interface MatchVideoSegment {
 }
 
 export interface MatchVideoEventOverride {
+  /** Partido propietario. Opcional únicamente para leer metadata legacy. */
+  matchId?: string;
   /** Identidad estable del evento deportivo; el evento no se modifica. */
   eventId: string;
   /** Segmento lógico sobre el que se introdujo la posición real. */
   segmentId: string;
+  /** Segmento de sincronización (incluye periodo) usado por Video Lab. */
+  syncSegmentId?: string;
   /** Segundo real de la acción, antes de aplicar el lead del segmento. */
   videoSecond: number;
+  /** Los overrides persistidos representan una confirmación audiovisual. */
+  status?: "VERIFIED";
+  /** Fuente de la posición confirmada; opcional para metadata legacy. */
+  timeSource?: "observedAt" | "createdAt" | "manual";
   createdAt: number;
   updatedAt: number;
 }
