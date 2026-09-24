@@ -12,6 +12,7 @@ import {
   buildVideoLabSyncSegments,
   buildVideoLabTimeline,
   currentVideoLabRow,
+  nextVideoLabRow,
   verifyVideoLabEvent,
   VideoLabVerificationMap,
   videoLabSeekSecond,
@@ -65,9 +66,13 @@ export default function VideoLabPage() {
     const second = row ? videoLabSeekSecond(row) : null;
     if (second !== null) playerRef.current?.seekTo(second);
   };
-  const verifySelected = (videoSecond?: number) => {
+  const verifySelected = (videoSecond?: number, advance = false) => {
     if (!selectedRow) return;
     setVerifications((current) => verifyVideoLabEvent(current, selectedRow, videoSecond));
+    if (advance && selectedRow.syncSegmentId) {
+      const next = nextVideoLabRow(rows, selectedRow.syncSegmentId, selectedRow.event.id);
+      if (next) chooseRow(next.event.id);
+    }
   };
   const goNext = () => {
     if (segmentRows.length === 0) return;
@@ -102,9 +107,9 @@ export default function VideoLabPage() {
             </nav>
             {segment && <div className="grid gap-3 lg:grid-cols-[minmax(0,1.55fr)_minmax(340px,.85fr)]">
               <section className="rounded-3xl border border-slate-800 bg-slate-900 p-3 sm:p-4">
-                <YouTubeLabPlayer ref={playerRef} videoId={segment.videoId} onTimeChange={handleTimeChange} onActionHere={(second) => verifySelected(second)} />
+                <YouTubeLabPlayer ref={playerRef} videoId={segment.videoId} onTimeChange={handleTimeChange} onActionHere={(second) => verifySelected(second, true)} />
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <button type="button" disabled={selectedRow?.estimatedSecond === undefined} onClick={() => verifySelected()} className="min-h-12 rounded-xl bg-emerald-500 px-3 text-sm font-black text-slate-950 disabled:opacity-40">✓ CORRECTA</button>
+                  <button type="button" disabled={selectedRow?.estimatedSecond === undefined} onClick={() => verifySelected(undefined, true)} className="min-h-12 rounded-xl bg-emerald-500 px-3 text-sm font-black text-slate-950 disabled:opacity-40">✓ CORRECTA</button>
                   <button type="button" onClick={goNext} className="min-h-12 rounded-xl bg-slate-700 px-3 text-sm font-black">SIGUIENTE →</button>
                   {!followVideo && <button type="button" onClick={() => setFollowVideo(true)} className="col-span-2 min-h-12 rounded-xl bg-cyan-400 px-3 text-sm font-black text-slate-950 sm:col-span-1">◎ SEGUIR VÍDEO</button>}
                 </div>

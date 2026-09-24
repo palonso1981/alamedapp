@@ -12,6 +12,7 @@ import {
   buildVideoLabTimeline,
   currentVideoLabRow,
   isVideoLabClipEligible,
+  nextVideoLabRow,
   proposeVideoSportsInsertion,
   shiftVideoSecond,
   verifyVideoLabEvent,
@@ -127,6 +128,15 @@ test("AUTO pasa a VERIFIED y selección usa ventana con lead de seis segundos", 
   assert.equal(verified.status, "VERIFIED");
   assert.equal(verified.estimatedSecond, 123);
   assert.equal(verified.openSecond, 117);
+});
+
+test("verificar permite avanzar a la siguiente jugada sin volver al inicio", () => {
+  const session = buildSession([video("first", "abcdefghijk", [1], [{ id: "a1", eventId: "p1-shot", videoSecond: 100 }])]);
+  const rows = buildVideoLabTimeline(session);
+  const current = rows.find((row) => row.event.id === "p1-shot")!;
+  const next = nextVideoLabRow(rows, current.syncSegmentId!, current.event.id);
+  assert.equal(next?.event.id, "change");
+  assert.equal(nextVideoLabRow(rows, current.syncSegmentId!, "p1-later"), null);
 });
 
 test("controles temporales hacen clamp y el seguimiento elige el último hito pasado", () => {

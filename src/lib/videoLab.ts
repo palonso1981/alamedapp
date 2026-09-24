@@ -200,6 +200,18 @@ export function videoLabSeekSecond(row: VideoLabTimelineRow): number | null {
   return row.openSecond ?? row.estimatedSecond ?? null;
 }
 
+export function nextVideoLabRow(
+  rows: readonly VideoLabTimelineRow[],
+  syncSegmentId: string,
+  currentEventId: string,
+): VideoLabTimelineRow | null {
+  const segmentRows = rows.filter((row) => row.syncSegmentId === syncSegmentId);
+  if (segmentRows.length < 2) return null;
+  const index = segmentRows.findIndex((row) => row.event.id === currentEventId);
+  if (index < 0 || index === segmentRows.length - 1) return null;
+  return segmentRows[index + 1];
+}
+
 export function currentVideoLabRow(
   rows: readonly VideoLabTimelineRow[],
   syncSegmentId: string,
