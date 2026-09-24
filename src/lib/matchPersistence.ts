@@ -157,6 +157,10 @@ function hasEventBase(value: Record<string, unknown>, matchId: string): boolean 
     Number.isInteger(value.minute) &&
     Number.isInteger(value.order) &&
     typeof value.createdAt === "number" &&
+    (value.observedAt === undefined ||
+      (typeof value.observedAt === "number" &&
+        Number.isFinite(value.observedAt) &&
+        value.observedAt > 0)) &&
     typeof value.updatedAt === "number" &&
     (value.deletedAt === null || typeof value.deletedAt === "number") &&
     typeof value.pendingReview === "boolean" &&

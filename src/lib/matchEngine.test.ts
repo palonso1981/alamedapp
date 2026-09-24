@@ -1452,6 +1452,7 @@ test("interacción jugador en pista y banquillo produce sustitución y replay", 
   let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
     type: "COURT_PLAYER_TAPPED",
     playerId: "p1",
+    observedAt: 1_000,
   });
   transition = reduceLiveInteraction(transition.state, {
     type: "BENCH_PLAYER_TAPPED",
@@ -1462,6 +1463,7 @@ test("interacción jugador en pista y banquillo produce sustitución y replay", 
     type: "RECORD_SUBSTITUTION",
     playerOutId: "p1",
     playerInId: "p6",
+    observedAt: 1_000,
   });
 
   useMatchStore.setState({ matches: {} });
@@ -1496,6 +1498,7 @@ test("jugador y pista preparan amenaza CDA con autor sin guardar antes de comple
   let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
     type: "COURT_PLAYER_TAPPED",
     playerId: "p2",
+    observedAt: 2_000,
   });
   transition = reduceLiveInteraction(transition.state, {
     type: "COURT_TAPPED",
@@ -1524,6 +1527,7 @@ test("jugador y pista preparan amenaza CDA con autor sin guardar antes de comple
   assert.deepEqual(transition.effect, {
     type: "RECORD_THREAT",
     id: "intent-for-event",
+    observedAt: 2_000,
     side: "FOR",
     playerId: "p2",
     origin: { x: 0.72, y: 0.31 },
@@ -1592,16 +1596,19 @@ test("selección puede cambiarse o cancelarse sin cronología ni controles perma
   let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
     type: "COURT_PLAYER_TAPPED",
     playerId: "p1",
+    observedAt: 1_000,
   });
   assert.equal(showsThreatControls(transition.state), false);
   transition = reduceLiveInteraction(transition.state, {
     type: "COURT_PLAYER_TAPPED",
     playerId: "p3",
+    observedAt: 3_000,
   });
   assert.deepEqual(transition.state, {
     kind: "PLAYER_SELECTED",
     playerId: "p3",
     location: "COURT",
+    observedAt: 3_000,
   });
   transition = reduceLiveInteraction(transition.state, {
     type: "COURT_TAPPED",
@@ -1627,9 +1634,10 @@ test("banquillo neutro abre contexto propio y tras jugador en pista mantiene sus
   let transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
     type: "BENCH_PLAYER_TAPPED",
     playerId: "p6",
+    observedAt: 6_000,
   });
   assert.deepEqual(transition, {
-    state: { kind: "PLAYER_SELECTED", playerId: "p6", location: "BENCH" },
+    state: { kind: "PLAYER_SELECTED", playerId: "p6", location: "BENCH", observedAt: 6_000 },
   });
   assert.equal(transition.effect, undefined);
 
@@ -1642,6 +1650,7 @@ test("banquillo neutro abre contexto propio y tras jugador en pista mantiene sus
   transition = reduceLiveInteraction(IDLE_LIVE_INTERACTION, {
     type: "COURT_PLAYER_TAPPED",
     playerId: "p1",
+    observedAt: 1_000,
   });
   transition = reduceLiveInteraction(transition.state, {
     type: "BENCH_PLAYER_TAPPED",
@@ -1651,6 +1660,7 @@ test("banquillo neutro abre contexto propio y tras jugador en pista mantiene sus
     type: "RECORD_SUBSTITUTION",
     playerOutId: "p1",
     playerInId: "p6",
+    observedAt: 1_000,
   });
 });
 

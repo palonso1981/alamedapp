@@ -54,10 +54,12 @@ export type LiveInteractionState =
       kind: "PLAYER_SELECTED";
       playerId: string;
       location: "COURT" | "BENCH";
+      observedAt: number;
     }
   | {
       kind: "THREAT_PENDING";
       eventId: string;
+      observedAt: number;
       flowId: ThreatCaptureFlowId;
       side: ThreatSide;
       playerId?: string;
@@ -80,9 +82,9 @@ export type LiveInteractionState =
     };
 
 export type LiveInteractionAction =
-  | { type: "COURT_PLAYER_TAPPED"; playerId: string }
-  | { type: "BENCH_PLAYER_TAPPED"; playerId: string }
-  | { type: "COURT_TAPPED"; origin: NormalizedCoordinates; eventId?: string }
+  | { type: "COURT_PLAYER_TAPPED"; playerId: string; observedAt?: number }
+  | { type: "BENCH_PLAYER_TAPPED"; playerId: string; observedAt?: number }
+  | { type: "COURT_TAPPED"; origin: NormalizedCoordinates; eventId?: string; observedAt?: number }
   | {
       type: "GOAL_TARGET_SELECTED";
       goalTarget: GoalTargetCoordinates;
@@ -102,10 +104,12 @@ export type LiveInteractionEffect =
       type: "RECORD_SUBSTITUTION";
       playerOutId: string;
       playerInId: string;
+      observedAt: number;
     }
   | {
       type: "RECORD_THREAT";
       id: string;
+      observedAt: number;
       side: ThreatSide;
       playerId?: string;
       origin: NormalizedCoordinates;
@@ -142,6 +146,7 @@ function startThreat(
   side: ThreatSide,
   origin: NormalizedCoordinates,
   eventId: string,
+  observedAt: number,
   playerId?: string,
   sequence?: {
     parentEventId: string;
@@ -154,6 +159,7 @@ function startThreat(
   return {
     kind: "THREAT_PENDING",
     eventId,
+    observedAt,
     flowId: flow.id,
     side,
     playerId,
@@ -182,6 +188,7 @@ function recordDefensiveThreat(
   const effect: Extract<LiveInteractionEffect, { type: "RECORD_THREAT" }> = {
     type: "RECORD_THREAT",
     id: state.eventId,
+    observedAt: state.observedAt,
     side: "AGAINST",
     origin: state.origin,
     phase,
@@ -235,6 +242,7 @@ export function reduceLiveInteraction(
         kind: "PLAYER_SELECTED",
         playerId: action.playerId,
         location: "COURT",
+        observedAt: action.observedAt ?? Date.now(),
       },
     };
   }
@@ -247,6 +255,7 @@ export function reduceLiveInteraction(
           type: "RECORD_SUBSTITUTION",
           playerOutId: state.playerId,
           playerInId: action.playerId,
+          observedAt: state.observedAt,
         },
       };
     }
@@ -262,6 +271,7 @@ export function reduceLiveInteraction(
         kind: "PLAYER_SELECTED",
         playerId: action.playerId,
         location: "BENCH",
+        observedAt: action.observedAt ?? Date.now(),
       },
     };
   }
@@ -276,6 +286,7 @@ export function reduceLiveInteraction(
           "AGAINST",
           action.origin,
           action.eventId ?? interactionId(),
+          action.observedAt ?? Date.now(),
           undefined,
           state,
         ),
@@ -288,6 +299,7 @@ export function reduceLiveInteraction(
         ownThreat ? "FOR" : "AGAINST",
         action.origin,
         action.eventId ?? interactionId(),
+        ownThreat ? state.observedAt : action.observedAt ?? Date.now(),
         ownThreat ? state.playerId : undefined,
       ),
     };
@@ -400,6 +412,7 @@ export function reduceLiveInteraction(
       effect: {
         type: "RECORD_THREAT",
         id: state.eventId,
+        observedAt: state.observedAt,
         side: state.side,
         playerId: state.playerId,
         origin: state.origin,
@@ -424,6 +437,7 @@ export function reduceLiveInteraction(
     effect: {
       type: "RECORD_THREAT",
       id: state.eventId,
+      observedAt: state.observedAt,
       side: state.side,
       playerId: state.playerId,
       origin: state.origin,

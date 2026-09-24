@@ -294,6 +294,12 @@ interface MatchEventBase extends EventPosition {
   matchId: string;
   schemaVersion: typeof MATCH_EVENT_SCHEMA_VERSION;
   createdAt: number;
+  /**
+   * Instante real de la primera interacción significativa de una captura LIVE.
+   * Es opcional para mantener compatibles los eventos históricos. No representa
+   * tiempo deportivo ni sustituye a createdAt.
+   */
+  observedAt?: number;
   updatedAt: number;
   deletedAt: number | null;
   /** Marca operativa: el evento sigue siendo válido y computable. */

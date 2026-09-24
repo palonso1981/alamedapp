@@ -149,10 +149,11 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const [clockSide, setClockSide] = useState<ClockSide>("right");
   const [clockVerticalSlot, setClockVerticalSlot] = useState<ClockVerticalSlot>("center");
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
+  const [selectedStaffObservedAt, setSelectedStaffObservedAt] = useState<number | null>(null);
   const [disciplineFocus, setDisciplineFocus] = useState<DisciplineFocusRequest | null>(null);
   const [selectingFlyingGoalkeeper, setSelectingFlyingGoalkeeper] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [genericFoulConfirm, setGenericFoulConfirm] = useState<"FOR" | "AGAINST" | null>(null);
+  const [genericFoulConfirm, setGenericFoulConfirm] = useState<{ side: "FOR" | "AGAINST"; observedAt: number } | null>(null);
   const [secondPeriodSetupOpen, setSecondPeriodSetupOpen] = useState(false);
   const [benchMode, setBenchMode] = useState<"CLOSED" | "BROWSE" | "CHANGE_OUT" | "CHANGE_IN">("CLOSED");
   const [attackDirection, setAttackDirection] = useState<AttackDirection>("RIGHT");
@@ -349,6 +350,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         matchId,
         effect.playerOutId,
         effect.playerInId,
+        effect.observedAt,
       );
       const playerOut = session.players.find(
         (player) => player.id === effect.playerOutId,
@@ -377,6 +379,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       type: "COURT_TAPPED",
       origin: visualToCanonicalPoint(normalizeCourtPoint(event.clientX, event.clientY, bounds), attackDirection),
       eventId: globalThis.crypto.randomUUID(),
+      observedAt: Date.now(),
     });
   };
 
@@ -391,19 +394,21 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const quickRestart = (end: "LEFT" | "RIGHT", spatialSide: "TOP" | "BOTTOM", restart: "CORNER" | "DANGEROUS_KICK_IN") => {
     if (captureBlocked) return blockedAction();
     const inferred = visualRestartToCanonical({ end, band: spatialSide, direction: attackDirection });
-    recordRestart(matchId, inferred.side, restart, inferred.spatialSide);
+    recordRestart(matchId, inferred.side, restart, inferred.spatialSide, Date.now());
     setFeedback(`✓ ${restart === "CORNER" ? "CÓRNER" : "BANDA CERCANA"} ${inferred.side === "FOR" ? "CDA" : "RIV"}`);
   };
 
   const handleStaffTap = (staffId: string) => {
     setInteraction(IDLE_LIVE_INTERACTION);
     setRedDecisionPlayerId(null);
+    setSelectedStaffObservedAt(Date.now());
     setSelectedStaffId((current) => current === staffId ? null : staffId);
   };
 
   const handleStaffCard = (staffId: string, color: "YELLOW" | "RED") => {
-    recordStaffCard(matchId, staffId, color);
+    recordStaffCard(matchId, staffId, color, selectedStaffObservedAt ?? Date.now());
     setSelectedStaffId(null);
+    setSelectedStaffObservedAt(null);
     setFeedback(color === "YELLOW" ? "✓ Amarilla cuerpo técnico" : "✓ Roja cuerpo técnico");
   };
 
@@ -414,22 +419,24 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   };
 
   const recordPlayerFoul = (playerId: string, received: boolean) => {
-    recordFoul(matchId, received ? "AGAINST" : "FOR", playerId);
+    const observedAt = interaction.kind === "PLAYER_SELECTED" ? interaction.observedAt : Date.now();
+    recordFoul(matchId, received ? "AGAINST" : "FOR", playerId, undefined, observedAt);
     finishPlayerAction(received ? "✓ Falta recibida" : "✓ Falta cometida");
   };
 
   const recordPlayerPossessionLost = (playerId: string) => {
-    recordPossessionLost(matchId, playerId);
+    const observedAt = interaction.kind === "PLAYER_SELECTED" ? interaction.observedAt : Date.now();
+    recordPossessionLost(matchId, playerId, observedAt);
     finishPlayerAction("✓ Pérdida");
   };
 
   const recordGenericFoul = (side: "FOR" | "AGAINST") => {
     if (captureBlocked) return blockedAction();
-    if (genericFoulConfirm !== side) {
-      setGenericFoulConfirm(side);
+    if (genericFoulConfirm?.side !== side) {
+      setGenericFoulConfirm({ side, observedAt: Date.now() });
       return;
     }
-    recordFoul(matchId, side, null);
+    recordFoul(matchId, side, null, undefined, genericFoulConfirm.observedAt);
     setGenericFoulConfirm(null);
     setFeedback(side === "FOR" ? "✓ Falta CDA · sin asignar" : "✓ Falta recibida · sin asignar");
   };
@@ -439,7 +446,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     color: "YELLOW" | "RED",
     causesInferiority = false,
   ) => {
-    recordCard(matchId, "FOR", color, playerId, causesInferiority);
+    const observedAt = interaction.kind === "PLAYER_SELECTED" ? interaction.observedAt : Date.now();
+    recordCard(matchId, "FOR", color, playerId, causesInferiority, observedAt);
     finishPlayerAction(
       color === "YELLOW"
         ? "✓ Amarilla CDA"
@@ -551,7 +559,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             totalAgainst={chronologyReplay.discipline.against}
             foulThresholds={FOUL_THRESHOLDS}
             onGenericFoul={recordGenericFoul}
-            confirmFoulSide={genericFoulConfirm}
+            confirmFoulSide={genericFoulConfirm?.side ?? null}
             onInspect={(side, kind) => {
               setDisciplineFocus({ token: Date.now(), side, kind, period: capturePeriod });
               setHistoryOpen(true);

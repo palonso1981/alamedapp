@@ -33,6 +33,22 @@ export type VideoPositionResolution =
       anchorSpreadSeconds: number;
     };
 
+export type VideoEventTime = {
+  timestamp: number;
+  source: "observedAt" | "createdAt";
+};
+
+/** Instante audiovisual fiable: la primera intención de captura prevalece sobre el guardado. */
+export function videoEventTime(event: MatchEvent): VideoEventTime | null {
+  if (event.provenance !== "LIVE") return null;
+  if (Number.isFinite(event.observedAt) && (event.observedAt ?? 0) > 0) {
+    return { timestamp: event.observedAt!, source: "observedAt" };
+  }
+  return Number.isFinite(event.createdAt) && event.createdAt > 0
+    ? { timestamp: event.createdAt, source: "createdAt" }
+    : null;
+}
+
 export function parseYouTubeVideoId(value: string): string | null {
   const trimmed = value.trim();
   if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) return trimmed;
@@ -78,7 +94,7 @@ export function formatVideoTimestamp(totalSeconds: number): string {
 }
 
 export function isVideoTimeResolvable(event: MatchEvent): boolean {
-  return event.provenance === "LIVE" && Number.isFinite(event.createdAt) && event.createdAt > 0;
+  return videoEventTime(event) !== null;
 }
 
 export function youtubeBaseUrl(videoId: string): string {
@@ -134,13 +150,15 @@ export function resolveEventVideoPosition(
   const eventById = new Map(session.events.map((candidate) => [candidate.id, candidate]));
   const offsets = segment.anchors.flatMap((anchor) => {
     const anchorEvent = eventById.get(anchor.eventId);
-    return anchorEvent && isVideoTimeResolvable(anchorEvent) && segment.periods.includes(anchorEvent.period as MatchVideoPeriod)
-      ? [anchor.videoSecond - anchorEvent.createdAt / 1000]
+    const anchorTime = anchorEvent ? videoEventTime(anchorEvent) : null;
+    return anchorEvent && anchorTime && segment.periods.includes(anchorEvent.period as MatchVideoPeriod)
+      ? [anchor.videoSecond - anchorTime.timestamp / 1000]
       : [];
   });
   if (offsets.length === 0) return { status: "PENDING_SYNC", segmentId: segment.id, videoId: segment.videoId };
   const calibratedOffset = median(offsets);
-  const estimatedSecond = Math.max(0, Math.round(event.createdAt / 1000 + calibratedOffset));
+  const eventTime = videoEventTime(event)!;
+  const estimatedSecond = Math.max(0, Math.round(eventTime.timestamp / 1000 + calibratedOffset));
   const leadSeconds = normalizeLeadSeconds(segment.leadSeconds);
   const spread = offsets.length > 1 ? Math.max(...offsets) - Math.min(...offsets) : 0;
   const quality: VideoResolutionQuality = offsets.length === 1

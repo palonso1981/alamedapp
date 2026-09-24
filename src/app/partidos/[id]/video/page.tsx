@@ -20,6 +20,7 @@ import {
   upsertVideoSegment,
   youtubeBaseUrl,
   buildYouTubeWatchAtUrl,
+  videoEventTime,
 } from "../../../../lib/videoIndex";
 import { useMatchStore } from "../../../../store/useMatchStore";
 import {
@@ -31,12 +32,15 @@ import {
 } from "../../../../types";
 import { useAccess } from "../../../../components/access/AccessProvider";
 
-const captureTime = (event: MatchEvent) =>
-  new Date(event.createdAt).toLocaleTimeString("es-ES", {
+const captureReference = (event: MatchEvent) => {
+  const reference = videoEventTime(event);
+  const time = new Date(reference?.timestamp ?? event.createdAt).toLocaleTimeString("es-ES", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
   });
+  return `${reference?.source === "observedAt" ? "Observado" : "Registrado"} ${time}`;
+};
 
 export default function MatchVideoPage() {
   const { canWrite } = useAccess();
@@ -148,6 +152,12 @@ export default function MatchVideoPage() {
                   "Sin competición"}
               </p>
             </div>
+            <Link
+              href={`/partido/${matchId}/video-lab`}
+              className="inline-grid min-h-11 place-items-center rounded-xl bg-cyan-400 px-4 text-xs font-black text-slate-950"
+            >
+              ABRIR VIDEO LAB
+            </Link>
             <Link
               href={
                 session.matchFinished
@@ -552,8 +562,7 @@ function SegmentCard({
                     ? "★ RECOMENDADO · "
                     : ""}
                   P{event.period} · min {event.minute} ·{" "}
-                  {eventDescription(event, session.players)} · Registrado{" "}
-                  {captureTime(event)}
+                  {eventDescription(event, session.players)} · {captureReference(event)}
                 </option>
               ))}
             </select>

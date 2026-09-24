@@ -17,6 +17,7 @@ import {
   upsertVideoEventOverride,
   upsertVideoSegment,
   youtubeBaseUrl,
+  videoEventTime,
 } from "./videoIndex";
 import { MatchEvent, MatchSession } from "../types";
 
@@ -66,6 +67,15 @@ test("solo LIVE conserva un instante utilizable, incluso tras editar updatedAt",
   assert.equal(isVideoTimeResolvable(live), true);
   assert.equal(isVideoTimeResolvable(event("review", 100_000, 1, "MANUAL_REVIEW")), false);
   assert.equal(isVideoTimeResolvable({ ...live, provenance: undefined }), false);
+});
+
+test("prioriza observedAt y mantiene fallback compatible a createdAt en LIVE legacy", () => {
+  const current = { ...event("observed", 120_000), observedAt: 100_000 } as MatchEvent;
+  assert.deepEqual(videoEventTime(current), { timestamp: 100_000, source: "observedAt" });
+  const legacy = { ...current } as MatchEvent;
+  delete legacy.observedAt;
+  assert.deepEqual(videoEventTime(legacy), { timestamp: 120_000, source: "createdAt" });
+  assert.equal(videoEventTime({ ...legacy, provenance: "MANUAL_REVIEW" }), null);
 });
 
 test("un anchor resuelve la posición con margen y nunca guarda URL en el evento", () => {

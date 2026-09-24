@@ -155,6 +155,8 @@ interface EventFactoryBase {
   matchId: string;
   position: EventPosition;
   now?: number;
+  /** Primera interacción significativa de una captura LIVE. */
+  observedAt?: number;
   provenance?: EventProvenance;
 }
 
@@ -261,6 +263,7 @@ function createId(): string {
 
 function eventBase(input: EventFactoryBase) {
   const now = input.now ?? Date.now();
+  const provenance = input.provenance ?? "LIVE";
   return {
     id: input.id ?? createId(),
     matchId: input.matchId,
@@ -269,10 +272,13 @@ function eventBase(input: EventFactoryBase) {
     minute: input.position.minute,
     order: input.position.order,
     createdAt: now,
+    ...(provenance === "LIVE"
+      ? { observedAt: input.observedAt ?? now }
+      : {}),
     updatedAt: now,
     deletedAt: null,
     pendingReview: false,
-    provenance: input.provenance ?? "LIVE",
+    provenance,
   } as const;
 }
 

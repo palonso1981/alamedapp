@@ -166,6 +166,7 @@ interface RecordThreatInput {
   parentEventId?: string;
   restartEventId?: string;
   assist?: GoalAssist;
+  observedAt?: number;
   defensiveCapture?: {
     goalTarget: GoalTargetCoordinates;
     keeperBodyPart?: KeeperBodyPart;
@@ -199,12 +200,14 @@ interface MatchState {
     state: GameStateKind,
     playerId?: string,
     side?: DisciplineSide,
+    observedAt?: number,
   ) => void;
   recordRestart: (
     matchId: string,
     side: DisciplineSide,
     restart: RestartKind,
     spatialSide: RestartSpatialSide,
+    observedAt?: number,
   ) => void;
   adjustFoulCount: (matchId: string, side: DisciplineSide, delta: 1 | -1) => void;
   recordFoul: (
@@ -212,26 +215,29 @@ interface MatchState {
     side: DisciplineSide,
     playerId?: string | null,
     origin?: NormalizedCoordinates,
+    observedAt?: number,
   ) => void;
-  recordPossessionLost: (matchId: string, playerId: string) => void;
+  recordPossessionLost: (matchId: string, playerId: string, observedAt?: number) => void;
   recordCard: (
     matchId: string,
     side: DisciplineSide,
     color: CardColor,
     playerId?: string,
     causesInferiority?: boolean,
+    observedAt?: number,
   ) => void;
   recordStaffCard: (
     matchId: string,
     staffId: string,
     color: CardColor,
+    observedAt?: number,
   ) => void;
   setPendingReview: (
     matchId: string,
     eventId: string,
     pendingReview: boolean,
   ) => void;
-  swapPlayer: (matchId: string, playerOutId: string, playerInId: string) => void;
+  swapPlayer: (matchId: string, playerOutId: string, playerInId: string, observedAt?: number) => void;
   editEvent: (
     matchId: string,
     eventId: string,
@@ -844,13 +850,14 @@ export const useMatchStore = create<MatchState>((set) => ({
             assist: input.assist,
             defensive,
             provenance: captureProvenance(session),
+            observedAt: input.observedAt,
           });
           return appendEvent(session.players, session.events, event);
         }),
       ),
     ),
 
-  toggleGameState: (matchId, stateKind, playerId, side = "FOR") =>
+  toggleGameState: (matchId, stateKind, playerId, side = "FOR", observedAt) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -896,13 +903,14 @@ export const useMatchStore = create<MatchState>((set) => ({
                 : undefined,
             side: stateKind === "FLYING_GOALKEEPER" ? side : undefined,
             provenance: captureProvenance(session),
+            observedAt,
           });
           return appendEvent(session.players, session.events, event);
         }),
       ),
     ),
 
-  recordRestart: (matchId, side, restart, spatialSide) =>
+  recordRestart: (matchId, side, restart, spatialSide, observedAt) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -915,6 +923,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             restart,
             spatialSide,
             provenance: captureProvenance(session),
+            observedAt,
           }));
         }),
       ),
@@ -940,7 +949,7 @@ export const useMatchStore = create<MatchState>((set) => ({
       ),
     ),
 
-  recordFoul: (matchId, side, playerId, origin) =>
+  recordFoul: (matchId, side, playerId, origin, observedAt) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -961,13 +970,14 @@ export const useMatchStore = create<MatchState>((set) => ({
             playerId,
             origin,
             provenance: captureProvenance(session),
+            observedAt,
           });
           return appendEvent(session.players, session.events, event);
         }),
       ),
     ),
 
-  recordPossessionLost: (matchId, playerId) =>
+  recordPossessionLost: (matchId, playerId, observedAt) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -982,6 +992,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             playerId,
             position: { ...clock, order: getNextOrder(session.events, clock.period, clock.minute) },
             provenance: captureProvenance(session),
+            observedAt,
           }));
         }),
       ),
@@ -993,6 +1004,7 @@ export const useMatchStore = create<MatchState>((set) => ({
     color,
     playerId,
     causesInferiority = false,
+    observedAt,
   ) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
@@ -1015,6 +1027,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             color,
             playerId,
             provenance: captureProvenance(session),
+            observedAt,
           });
 
           if (!causesInferiority) {
@@ -1047,6 +1060,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             playerInId: INFERIORITY_SLOT_ID,
             relatedCardEventId: card.id,
             provenance: captureProvenance(session),
+            observedAt,
           });
           return appendEvents(session.players, session.events, [
             card,
@@ -1056,7 +1070,7 @@ export const useMatchStore = create<MatchState>((set) => ({
       ),
     ),
 
-  recordStaffCard: (matchId, staffId, color) =>
+  recordStaffCard: (matchId, staffId, color, observedAt) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -1076,6 +1090,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             color,
             staffId,
             provenance: captureProvenance(session),
+            observedAt,
           });
           return appendEvent(session.players, session.events, card);
         }),
@@ -1093,7 +1108,7 @@ export const useMatchStore = create<MatchState>((set) => ({
       ),
     ),
 
-  swapPlayer: (matchId, playerOutId, playerInId) =>
+  swapPlayer: (matchId, playerOutId, playerInId, observedAt) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -1112,6 +1127,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             playerOutId,
             playerInId,
             provenance: captureProvenance(session),
+            observedAt,
           });
           return appendEvent(session.players, session.events, event);
         }),
