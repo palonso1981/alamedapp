@@ -95,7 +95,7 @@ export default function VideoLabPage() {
       <main className="mx-auto max-w-[1500px] space-y-3 p-3 sm:p-5">
         <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 p-3">
           <div>
-            <p className="text-[10px] font-black tracking-[.2em] text-cyan-300">PROTOTIPO LOCAL · SIN CAMBIOS DE DATOS</p>
+            <p className="text-[10px] font-black tracking-[.2em] text-cyan-300">METADATA AUDIOVISUAL · SIN CAMBIOS DEPORTIVOS</p>
             <h1 className="text-xl font-black">{session.preparation?.opponent ?? matchId}</h1>
           </div>
           <div className="flex flex-wrap gap-2">
