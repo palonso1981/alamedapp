@@ -128,7 +128,7 @@ export function DashboardV2Page() {
   const analysis = useMemo(() => buildDashboardV2(resolvedRecords, scope), [resolvedRecords, scope]);
   const reference = useMemo(() => buildDashboardV2(resolvedRecords, referenceScope), [resolvedRecords, referenceScope]);
   const scores = useMemo(() => buildPlayerScores(analysis.players), [analysis.players]);
-  const videoCount = useMemo(() => buildVideoLibraryItems(resolvedRecords, EMPTY_VIDEO_LIBRARY_FILTERS, { dashboardScope: scope, includeClips: false }).length, [resolvedRecords, scope]);
+  const videoCount = useMemo(() => buildVideoLibraryItems(resolvedRecords, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT" }, { dashboardScope: scope, includeClips: false }).length, [resolvedRecords, scope]);
 
   useEffect(() => {
     if (!ready || referencePreset === "CUSTOM" || referencePreset === "MATCH") return;
