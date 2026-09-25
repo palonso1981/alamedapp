@@ -288,6 +288,24 @@ export interface MatchVideoEventOverride {
   updatedAt: number;
 }
 
+/** Anotación audiovisual independiente: nunca participa en replay ni estadísticas. */
+export interface MatchVideoAnalysisClip {
+  id: string;
+  clubId: string;
+  matchId: string;
+  segmentId: string;
+  videoId: string;
+  referenceSecond: number;
+  startSecond: number;
+  endSecond: number;
+  category?: string;
+  tags: string[];
+  playerIds: string[];
+  comment?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export const MATCH_EVENT_SCHEMA_VERSION = 1 as const;
 export const INFERIORITY_SLOT_ID = "slot:inferiority" as const;
 
@@ -665,6 +683,8 @@ export interface MatchSession {
   videoSegments?: MatchVideoSegment[];
   /** Correcciones puntuales de vídeo, separadas de eventos y anchors globales. */
   videoEventOverrides?: MatchVideoEventOverride[];
+  /** Clips tácticos separados de MatchEvent y preparados para una futura biblioteca. */
+  videoAnalysisClips?: MatchVideoAnalysisClip[];
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];

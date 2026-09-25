@@ -8,7 +8,7 @@ import {
   syncPayloadsEqual,
 } from "./syncTypes";
 
-type VideoMetadata = Pick<MatchRemoteMetadata, "videoSegments" | "videoEventOverrides">;
+type VideoMetadata = Pick<MatchRemoteMetadata, "videoSegments" | "videoEventOverrides" | "videoAnalysisClips">;
 
 export type MatchVideoConflictResolution =
   | { status: "RESOLVED"; remoteRevision: number; wroteRemote: boolean }
@@ -29,14 +29,16 @@ function splitVideoMetadata(value: unknown): {
   const {
     videoSegments = [],
     videoEventOverrides = [],
+    videoAnalysisClips = [],
     ...rest
   } = source;
-  if (!Array.isArray(videoSegments) || !Array.isArray(videoEventOverrides)) return null;
+  if (!Array.isArray(videoSegments) || !Array.isArray(videoEventOverrides) || !Array.isArray(videoAnalysisClips)) return null;
   return {
     rest,
     video: {
       videoSegments: videoSegments as MatchRemoteMetadata["videoSegments"],
       videoEventOverrides: videoEventOverrides as MatchRemoteMetadata["videoEventOverrides"],
+      videoAnalysisClips: videoAnalysisClips as MatchRemoteMetadata["videoAnalysisClips"],
     },
   };
 }
@@ -54,6 +56,7 @@ export function buildLocalVideoResolutionPayload(
     ...remotePayload as MatchRemoteMetadata,
     videoSegments: local.video.videoSegments,
     videoEventOverrides: local.video.videoEventOverrides,
+    videoAnalysisClips: local.video.videoAnalysisClips,
   };
 }
 

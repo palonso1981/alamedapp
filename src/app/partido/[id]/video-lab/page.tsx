@@ -7,6 +7,8 @@ import { AppHeader } from "../../../../components/app/AppHeader";
 import { useAccess } from "../../../../components/access/AccessProvider";
 import { SyncStatusBadge } from "../../../../components/match/SyncStatusBadge";
 import { YouTubeLabPlayer, YouTubeLabPlayerHandle } from "../../../../components/video/YouTubeLabPlayer";
+import { VideoClipComposer } from "../../../../components/video/VideoClipComposer";
+import { VideoSportsEventComposer } from "../../../../components/video/VideoSportsEventComposer";
 import { eventDescription } from "../../../../lib/eventPresentation";
 import { buildDashboardFixture } from "../../../../lib/dashboardFixture";
 import { formatVideoTimestamp } from "../../../../lib/videoIndex";
@@ -39,6 +41,7 @@ export default function VideoLabPage() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [currentSecond, setCurrentSecond] = useState(0);
   const [followVideo, setFollowVideo] = useState(true);
+  const [composer, setComposer] = useState<"EVENT" | "CLIP" | null>(null);
 
   useEffect(() => { if (!fixtureSession) ensureMatch(matchId); }, [ensureMatch, fixtureSession, matchId]);
   const segments = useMemo(() => session ? buildVideoLabSyncSegments(session) : [], [session]);
@@ -68,6 +71,9 @@ export default function VideoLabPage() {
     if (second !== null) playerRef.current?.seekTo(second);
   };
   const setOverrides = useMatchStore((state) => state.setVideoEventOverrides);
+  const addVideoLabEvent = useMatchStore((state) => state.addVideoLabEvent);
+  const upsertVideoAnalysisClip = useMatchStore((state) => state.upsertVideoAnalysisClip);
+  const readPlayerSecond = useCallback(() => playerRef.current?.currentSecond() ?? currentSecond, [currentSecond]);
   const verifySelected = (videoSecond?: number, timeSource?: "manual", advance = false) => {
     if (!session || !selectedRow || !canWrite) return;
     const nextSession = persistVideoLabVerification(session, selectedRow, {
@@ -95,7 +101,7 @@ export default function VideoLabPage() {
       <main className="mx-auto max-w-[1500px] space-y-3 p-3 sm:p-5">
         <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 p-3">
           <div>
-            <p className="text-[10px] font-black tracking-[.2em] text-cyan-300">METADATA AUDIOVISUAL · SIN CAMBIOS DEPORTIVOS</p>
+            <p className="text-[10px] font-black tracking-[.2em] text-cyan-300">REVISIÓN AUDIOVISUAL · EVENTOS VIDEO · CLIPS TÁCTICOS</p>
             <h1 className="text-xl font-black">{session.preparation?.opponent ?? matchId}</h1>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -119,6 +125,10 @@ export default function VideoLabPage() {
                   <button type="button" onClick={goNext} className="min-h-12 rounded-xl bg-slate-700 px-3 text-sm font-black">SIGUIENTE →</button>
                   {!followVideo && <button type="button" onClick={() => setFollowVideo(true)} className="col-span-2 min-h-12 rounded-xl bg-cyan-400 px-3 text-sm font-black text-slate-950 sm:col-span-1">◎ SEGUIR VÍDEO</button>}
                 </div>
+                {canWrite && selectedRow && <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" onClick={() => setComposer(composer === "EVENT" ? null : "EVENT")} className="min-h-12 rounded-xl bg-cyan-400 px-3 text-sm font-black text-slate-950">+ EVENTO</button><button type="button" onClick={() => setComposer(composer === "CLIP" ? null : "CLIP")} className="min-h-12 rounded-xl bg-violet-400 px-3 text-sm font-black text-slate-950">+ CLIP</button></div>}
+                {composer === "EVENT" && selectedRow && <div className="mt-3"><VideoSportsEventComposer session={session} referenceEventId={selectedRow.event.id} segment={segment} videoSecond={readPlayerSecond()} onSave={(event, override) => { addVideoLabEvent(matchId, event, override); setSelectedEventId(event.id); setComposer(null); }} onCancel={() => setComposer(null)}/></div>}
+                {composer === "CLIP" && <div className="mt-3"><VideoClipComposer session={session} segment={segment} currentSecond={readPlayerSecond} onSave={(clip) => { upsertVideoAnalysisClip(matchId, clip); setComposer(null); }} onCancel={() => setComposer(null)}/></div>}
+                {(session.videoAnalysisClips?.length ?? 0) > 0 && <p className="mt-3 rounded-xl bg-violet-950/50 px-3 py-2 text-xs font-bold text-violet-200">CLIPS GUARDADOS · {session.videoAnalysisClips?.length}</p>}
                 <p className="mt-3 text-xs text-slate-400">AUTO usa el primer anchor válido del periodo. Los anchors adicionales solo señalan coherencia o deriva; no desplazan la jugada silenciosamente.</p>
               </section>
 

@@ -15,6 +15,7 @@ import {
   MatchCatalogEntry,
   visibleMatchCatalog,
 } from "../../lib/matchCatalog";
+import { hasVideoLabAvailable } from "../../lib/videoLab";
 import { currentSeason } from "../../lib/seasonDomain";
 import { useTeamStore } from "../../store/useTeamStore";
 import { loadMatchSession } from "../../lib/matchPersistence";
@@ -70,10 +71,10 @@ export default function MatchesPage() {
   }, [seasonId, workspace]);
   const enriched = useMemo(
     () =>
-      matches.map((match) => ({
-        match,
-        preparation: loadMatchSession(match.matchId)?.preparation,
-      })),
+      matches.map((match) => {
+        const session = loadMatchSession(match.matchId);
+        return { match, preparation: session?.preparation, hasVideoLab: hasVideoLabAvailable(session) };
+      }),
     [matches],
   );
   const availableRivals = useMemo(
@@ -290,6 +291,7 @@ export default function MatchesPage() {
             const preparation = enriched.find(
               (item) => item.match.matchId === match.matchId,
             )?.preparation;
+            const hasVideoLab = enriched.find((item) => item.match.matchId === match.matchId)?.hasVideoLab;
             const legacySeasons =
               workspace?.seasons.filter(
                 (item) =>
@@ -345,6 +347,15 @@ export default function MatchesPage() {
                   >
                     VÍDEO
                   </Link>
+                  {hasVideoLab && (
+                    <Link
+                      href={`/partido/${match.matchId}/video-lab`}
+                      aria-label={`Video Lab del partido contra ${match.opponent}`}
+                      className="grid min-h-11 place-items-center rounded-xl bg-cyan-950 px-3 text-[10px] font-black text-cyan-200"
+                    >
+                      VIDEO LAB
+                    </Link>
+                  )}
                   {canWrite && (
                     <Link
                       href={`/partidos/${match.matchId}/editar`}

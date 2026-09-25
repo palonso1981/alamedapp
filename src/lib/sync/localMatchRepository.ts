@@ -66,6 +66,7 @@ export function matchRemoteMetadata(session: MatchSession): MatchRemoteMetadata 
     reviewReopenedAt: session.reviewReopenedAt,
     videoSegments: session.videoSegments ?? [],
     videoEventOverrides: session.videoEventOverrides ?? [],
+    videoAnalysisClips: session.videoAnalysisClips ?? [],
     preparation: session.preparation,
   };
 }

@@ -1,12 +1,139 @@
 import { isVideoReviewableEvent } from "./videoReview";
-import { replayMatch, sortEvents } from "./matchEngine";
+import {
+  createCardEvent,
+  createFoulEvent,
+  createLiveThreatEvent,
+  createPossessionLostEvent,
+  createRestartEvent,
+  getNextOrder,
+  replayMatch,
+  sortEvents,
+} from "./matchEngine";
 import { normalizeLeadSeconds, upsertVideoEventOverride, videoEventTime } from "./videoIndex";
 import {
   MatchEvent,
   MatchSession,
+  MatchVideoAnalysisClip,
+  MatchVideoEventOverride,
   MatchVideoPeriod,
   MatchVideoSegment,
 } from "../types";
+
+export const VIDEO_CLIP_SUGGESTED_CATEGORIES = ["OFENSIVO", "DEFENSIVO", "ESTRATEGIA", "RIVAL", "INDIVIDUAL"] as const;
+
+export function hasVideoLabAvailable(session: MatchSession | null | undefined): boolean {
+  return Boolean(session?.videoSegments?.some((segment) => segment.provider === "YOUTUBE" && segment.videoId.trim().length > 0));
+}
+
+export type VideoSportsEventInput =
+  | { kind: "THREAT"; side: "FOR" | "AGAINST"; playerId?: string; outcome: "GOL" | "PARADA" | "FUERA"; phase: "POSITIONAL" | "TRANSITION" | "SET_PIECE_CORNER" | "SET_PIECE_FREE_KICK" | "SET_PIECE_KICK_IN" | "FLYING_GOALKEEPER" | "PENALTY" | "DOUBLE_PENALTY"; origin: { x: number; y: number } }
+  | { kind: "LOSS"; playerId: string }
+  | { kind: "FOUL"; side: "FOR" | "AGAINST"; playerId?: string | null }
+  | { kind: "CARD"; side: "FOR" | "AGAINST"; color: "YELLOW" | "RED"; playerId?: string }
+  | { kind: "RESTART"; side: "FOR" | "AGAINST"; restart: "CORNER" | "DANGEROUS_KICK_IN"; spatialSide: "TOP" | "BOTTOM" };
+
+export interface VideoSportsInsertionResult {
+  event: MatchEvent;
+  override: MatchVideoEventOverride;
+  onCourtPlayerIds: string[];
+}
+
+/** Crea un evento VIDEO tras el hito elegido, sin reescribir eventos existentes. */
+export function createVideoSportsInsertion(
+  session: MatchSession,
+  referenceEventId: string,
+  segment: VideoLabSyncSegment,
+  videoSecond: number,
+  input: VideoSportsEventInput,
+  now = Date.now(),
+  id: string = globalThis.crypto.randomUUID(),
+): VideoSportsInsertionResult | null {
+  const proposal = proposeVideoSportsInsertion(session, referenceEventId, "AFTER");
+  if (!proposal || segment.period !== proposal.period) return null;
+  const position = {
+    period: proposal.period,
+    minute: proposal.minute,
+    order: getNextOrder(session.events, proposal.period, proposal.minute),
+  };
+  const placementReplay = replayMatch(session.players, session.events, {
+    throughPosition: { ...position, order: Math.max(-1, position.order - 1) },
+  });
+  const base = { id, matchId: session.matchId, position, provenance: "VIDEO" as const, now };
+  let event: MatchEvent;
+  if (input.kind === "THREAT") {
+    event = createLiveThreatEvent({
+      ...base,
+      side: input.side,
+      playerId: input.playerId,
+      origin: input.origin,
+      outcome: input.outcome,
+      phase: input.phase,
+      assist: input.side === "FOR" && input.outcome === "GOL" ? { status: "PENDING" } : undefined,
+      pendingReview: input.side === "FOR" && input.outcome === "GOL",
+    });
+  } else if (input.kind === "LOSS") {
+    event = createPossessionLostEvent({ ...base, playerId: input.playerId });
+  } else if (input.kind === "FOUL") {
+    event = createFoulEvent({ ...base, side: input.side, playerId: input.playerId });
+  } else if (input.kind === "CARD") {
+    event = createCardEvent({ ...base, side: input.side, color: input.color, playerId: input.playerId });
+  } else {
+    event = createRestartEvent({ ...base, side: input.side, restart: input.restart, spatialSide: input.spatialSide });
+  }
+  return {
+    event,
+    onCourtPlayerIds: placementReplay.onCourtPlayerIds,
+    override: {
+      matchId: session.matchId,
+      eventId: event.id,
+      segmentId: segment.physicalSegmentId,
+      syncSegmentId: segment.id,
+      videoSecond: Math.max(0, Math.round(videoSecond)),
+      status: "VERIFIED",
+      timeSource: "manual",
+      createdAt: now,
+      updatedAt: now,
+    },
+  };
+}
+
+export function defaultVideoClipWindow(referenceSecond: number): Pick<MatchVideoAnalysisClip, "referenceSecond" | "startSecond" | "endSecond"> {
+  const reference = Math.max(0, Math.round(referenceSecond));
+  return { referenceSecond: reference, startSecond: Math.max(0, reference - 3), endSecond: reference + 6 };
+}
+
+export function createVideoAnalysisClip(input: Omit<MatchVideoAnalysisClip, "id" | "createdAt" | "updatedAt"> & { id?: string; now?: number }): MatchVideoAnalysisClip {
+  const now = input.now ?? Date.now();
+  const startSecond = Math.max(0, Math.round(input.startSecond));
+  const endSecond = Math.max(startSecond, Math.round(input.endSecond));
+  return {
+    id: input.id ?? globalThis.crypto.randomUUID(),
+    clubId: input.clubId,
+    matchId: input.matchId,
+    segmentId: input.segmentId,
+    videoId: input.videoId,
+    referenceSecond: Math.max(0, Math.round(input.referenceSecond)),
+    startSecond,
+    endSecond,
+    ...(input.category?.trim() ? { category: input.category.trim() } : {}),
+    tags: Array.from(new Set(input.tags.map((tag) => tag.trim()).filter(Boolean))),
+    playerIds: Array.from(new Set(input.playerIds)),
+    ...(input.comment?.trim() ? { comment: input.comment.trim() } : {}),
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function videoClipTagSuggestions(clips: readonly MatchVideoAnalysisClip[]): string[] {
+  const stats = new Map<string, { count: number; updatedAt: number }>();
+  clips.forEach((clip) => clip.tags.forEach((tag) => {
+    const current = stats.get(tag) ?? { count: 0, updatedAt: 0 };
+    stats.set(tag, { count: current.count + 1, updatedAt: Math.max(current.updatedAt, clip.updatedAt) });
+  }));
+  return Array.from(stats.entries())
+    .sort((a, b) => b[1].count - a[1].count || b[1].updatedAt - a[1].updatedAt || a[0].localeCompare(b[0]))
+    .map(([tag]) => tag);
+}
 
 export type VideoLabTimeSource = "observedAt" | "createdAt" | "manual";
 export type VideoLabVerificationStatus = "AUTO" | "VERIFIED";

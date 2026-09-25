@@ -56,6 +56,7 @@ export interface MatchBundle {
   videoMetadata: {
     segments: unknown[];
     eventOverrides: unknown[];
+    analysisClips?: unknown[];
   };
   integrity: {
     eventIds: string[];
@@ -322,6 +323,7 @@ export function createSelectiveMatchBundle(dataset: LogicalDataset, matchId: str
     videoMetadata: {
       segments: Array.isArray(match.payload.videoSegments) ? match.payload.videoSegments : [],
       eventOverrides: Array.isArray(match.payload.videoEventOverrides) ? match.payload.videoEventOverrides : [],
+      analysisClips: Array.isArray(match.payload.videoAnalysisClips) ? match.payload.videoAnalysisClips : [],
     },
     integrity: {
       eventIds: events.map((item) => item.path.split("/").at(-1) as string).sort(),

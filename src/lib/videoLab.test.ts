@@ -11,11 +11,16 @@ import {
   buildVideoLabSyncSegments,
   buildVideoLabTimeline,
   currentVideoLabRow,
+  createVideoAnalysisClip,
+  createVideoSportsInsertion,
+  defaultVideoClipWindow,
+  hasVideoLabAvailable,
   isVideoLabClipEligible,
   nextVideoLabRow,
   persistVideoLabVerification,
   proposeVideoSportsInsertion,
   shiftVideoSecond,
+  videoClipTagSuggestions,
   verifyVideoLabEvent,
   videoLabSeekSecond,
 } from "./videoLab";
@@ -76,6 +81,12 @@ test("dos URLs producen segmentos P1/P2 independientes", () => {
   const rows = buildVideoLabTimeline(session);
   assert.equal(rows.find((row) => row.event.id === "p1-shot")?.estimatedSecond, 100);
   assert.equal(rows.find((row) => row.event.id === "p2-shot")?.estimatedSecond, 50);
+});
+
+test("Video Lab solo se ofrece cuando existe un YouTube configurado", () => {
+  assert.equal(hasVideoLabAvailable(buildSession([])), false);
+  assert.equal(hasVideoLabAvailable(buildSession([video("first", "abcdefghijk", [1], [])])), true);
+  assert.equal(hasVideoLabAvailable({ ...buildSession([]), videoSegments: [video("empty", "", [1], [])] }), false);
 });
 
 test("una URL compartida mantiene calibraciones independientes para P1 y P2", () => {
@@ -200,4 +211,43 @@ test("controles temporales hacen clamp y el seguimiento elige el último hito pa
   const session = buildSession([video("first", "abcdefghijk", [1], [{ id: "a1", eventId: "p1-shot", videoSecond: 100 }])]);
   const rows = buildVideoLabTimeline(session);
   assert.equal(currentVideoLabRow(rows, "first:P1", 111)?.event.id, "change");
+});
+
+test("+ EVENTO crea provenance VIDEO tras la sustitución y VERIFIED sin mutar cronología previa", () => {
+  const session = buildSession([video("first", "abcdefghijk", [1], [{ id: "a1", eventId: "p1-shot", videoSecond: 100 }])]);
+  const immutable = structuredClone(session.events);
+  const segment = buildVideoLabSyncSegments(session)[0];
+  const result = createVideoSportsInsertion(session, "change", segment, 117, { kind: "LOSS", playerId: "p6" }, 99, "video-event")!;
+  assert.deepEqual(session.events, immutable);
+  assert.equal(result.event.provenance, "VIDEO");
+  assert.deepEqual({ period: result.event.period, minute: result.event.minute, order: result.event.order }, { period: 1, minute: 10, order: 2 });
+  assert.equal(result.onCourtPlayerIds.includes("p6"), true);
+  assert.equal(result.onCourtPlayerIds.includes("p2"), false);
+  assert.deepEqual(result.override, { matchId: "video-lab", eventId: "video-event", segmentId: "first", syncSegmentId: "first:P1", videoSecond: 117, status: "VERIFIED", timeSource: "manual", createdAt: 99, updatedAt: 99 });
+  assert.equal(result.event.observedAt, undefined);
+});
+
+test("clips proponen -3/+6, admiten vacío, varios jugadores y etiquetas reutilizables", () => {
+  assert.deepEqual(defaultVideoClipWindow(2), { referenceSecond: 2, startSecond: 0, endSecond: 8 });
+  assert.deepEqual(defaultVideoClipWindow(40), { referenceSecond: 40, startSecond: 37, endSecond: 46 });
+  const empty = createVideoAnalysisClip({ id: "c0", now: 10, clubId: "club", matchId: "video-lab", segmentId: "first:P1", videoId: "abcdefghijk", referenceSecond: 40, startSecond: 37, endSecond: 46, category: "", tags: [], playerIds: [], comment: "" });
+  assert.equal(empty.category, undefined);
+  assert.deepEqual(empty.playerIds, []);
+  const rich = createVideoAnalysisClip({ id: "c1", now: 20, clubId: "club", matchId: "video-lab", segmentId: "first:P1", videoId: "abcdefghijk", referenceSecond: 50, startSecond: 45, endSecond: 58, category: "OFENSIVO", tags: [" presión alta ", "ABP", "ABP"], playerIds: ["p1", "p2", "p1"], comment: " Segundo palo " });
+  assert.deepEqual(rich.tags, ["presión alta", "ABP"]);
+  assert.deepEqual(rich.playerIds, ["p1", "p2"]);
+  assert.equal(rich.comment, "Segundo palo");
+  assert.deepEqual(videoClipTagSuggestions([empty, rich, { ...rich, id: "c2", tags: ["ABP"], updatedAt: 30 }]), ["ABP", "presión alta"]);
+});
+
+test("clip separado persiste tras reload sin contaminar MatchEvent", () => {
+  const session = buildSession([video("first", "abcdefghijk", [1], [{ id: "a1", eventId: "p1-shot", videoSecond: 100 }])]);
+  const events = structuredClone(session.events);
+  const clip = createVideoAnalysisClip({ id: "clip-reload", now: 50, clubId: "club", matchId: session.matchId, segmentId: "first:P1", videoId: "abcdefghijk", referenceSecond: 40, startSecond: 37, endSecond: 46, tags: ["rival #7"], playerIds: ["p1", "p4"] });
+  const values = new Map<string, string>();
+  const storage: LocalStorageAdapter = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); } };
+  assert.equal(saveMatchSession({ ...session, videoAnalysisClips: [clip] }, storage, 60).ok, true);
+  const reloaded = loadMatchSession(session.matchId, storage)!;
+  assert.deepEqual(reloaded.videoAnalysisClips, [clip]);
+  assert.equal(JSON.stringify(reloaded.events), JSON.stringify(events));
 });

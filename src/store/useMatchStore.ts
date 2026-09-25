@@ -39,6 +39,7 @@ import {
   LiveThreatOutcome,
   MatchEvent,
   MatchSession,
+  MatchVideoAnalysisClip,
   MatchVideoEventOverride,
   MatchVideoSegment,
   NormalizedCoordinates,
@@ -268,6 +269,8 @@ interface MatchState {
   resetDemo: (matchId: string) => void;
   setVideoSegments: (matchId: string, segments: MatchVideoSegment[]) => void;
   setVideoEventOverrides: (matchId: string, overrides: MatchVideoEventOverride[]) => void;
+  addVideoLabEvent: (matchId: string, event: MatchEvent, override: MatchVideoEventOverride) => void;
+  upsertVideoAnalysisClip: (matchId: string, clip: MatchVideoAnalysisClip) => void;
 }
 
 export function createSession(matchId: string): MatchSession {
@@ -1278,6 +1281,39 @@ export const useMatchStore = create<MatchState>((set) => ({
       updateAndPersistSession(state, matchId, (session) => ({
         ...session,
         videoEventOverrides: overrides,
+        lastError: null,
+      })),
+    ),
+
+  addVideoLabEvent: (matchId, event, override) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => {
+        try {
+          const events = appendEvent(session.players, session.events, event);
+          const videoEventOverrides = [
+            ...(session.videoEventOverrides ?? []).filter((item) =>
+              !(item.eventId === override.eventId &&
+                (item.syncSegmentId ?? item.segmentId) === (override.syncSegmentId ?? override.segmentId))),
+            override,
+          ];
+          return {
+            ...commitEvents(session, events),
+            videoEventOverrides,
+            lastError: null,
+          };
+        } catch (error) {
+          return { ...session, lastError: error instanceof Error ? error.message : "No se pudo crear el evento desde vídeo." };
+        }
+      }),
+    ),
+
+  upsertVideoAnalysisClip: (matchId, clip) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => ({
+        ...session,
+        videoAnalysisClips: (session.videoAnalysisClips ?? []).some((item) => item.id === clip.id)
+          ? (session.videoAnalysisClips ?? []).map((item) => item.id === clip.id ? clip : item)
+          : [...(session.videoAnalysisClips ?? []), clip],
         lastError: null,
       })),
     ),
