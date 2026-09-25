@@ -2,13 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildDashboardFixture } from "./dashboardFixture";
 import { emptyDashboardScope } from "./dashboardV2";
-import { buildVideoLibraryItems, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, shouldAdvanceReel } from "./videoLibrary";
+import { buildVideoLibraryItems, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, shouldAdvanceReel, videoLibraryKeyboardAction } from "./videoLibrary";
 import { MatchVideoAnalysisClip } from "../types";
 
 function libraryRecords() {
   const records = structuredClone(buildDashboardFixture().slice(0, 2));
   records.forEach((record, recordIndex) => {
-    const reviewable = record.session.events.filter((event) => ["threat_recorded", "possession_lost", "foul_recorded", "card_recorded", "restart_recorded"].includes(event.type) && event.deletedAt === null).slice(0, 4);
+    const reviewable = record.session.events.filter((event) => ["threat_recorded", "possession_lost", "foul_recorded", "card_recorded", "restart_recorded"].includes(event.type) && event.deletedAt === null);
     const segment = { id: `segment-${recordIndex}`, provider: "YOUTUBE" as const, videoId: recordIndex ? "BBBBBBBBBBB" : "AAAAAAAAAAA", label: "Partido", periods: [1, 2] as Array<1 | 2>, leadSeconds: 6, anchors: [], createdAt: 1, updatedAt: 1 };
     record.session.videoSegments = [segment];
     record.session.videoEventOverrides = reviewable.map((event, index) => ({ matchId: record.catalog.matchId, eventId: event.id, segmentId: segment.id, syncSegmentId: `${segment.id}:P${event.period}`, videoSecond: 30 + index * 10, status: "VERIFIED" as const, timeSource: "manual" as const, createdAt: 1, updatedAt: 1 }));
@@ -66,6 +66,43 @@ test("scope estadístico reutiliza filterDashboardDataset y excluye clips por de
   assert.ok(withAnalysisFilter.some((item) => item.source === "CLIP"));
 });
 
+test("Salesianos + córner conserva exactamente las amenazas de córner del Dashboard", () => {
+  const records = libraryRecords();
+  const record = records.find((candidate) => candidate.session.events.some((event) => event.type === "threat_recorded" && event.phase === "SET_PIECE_CORNER"));
+  assert.ok(record);
+  if (!record) return;
+  record.catalog.opponent = "Salesianos";
+  const scope = emptyDashboardScope(record.catalog.clubId ?? "", record.catalog.teamId ?? "", record.catalog.seasonId ?? "");
+  scope.matchIds = [record.catalog.matchId];
+  scope.phases = ["SET_PIECE_CORNER"];
+  const items = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT" }, { dashboardScope: scope });
+  assert.ok(items.length > 0);
+  assert.ok(items.every((item) => item.source === "EVENT" && item.event.type === "threat_recorded" && item.event.phase === "SET_PIECE_CORNER"));
+  assert.equal(items.some((item) => item.source === "EVENT" && ["restart_recorded", "foul_recorded", "card_recorded"].includes(item.event.type)), false);
+});
+
+test("Biblioteca respeta también resultados y zonas avanzadas sin ampliar el conjunto", () => {
+  const records = libraryRecords();
+  const record = records.find((candidate) => candidate.session.events.some((event) => event.type === "threat_recorded" && event.outcome === "GOL"));
+  assert.ok(record);
+  if (!record) return;
+  const base = emptyDashboardScope(record.catalog.clubId ?? "", record.catalog.teamId ?? "", record.catalog.seasonId ?? "");
+  base.matchIds = [record.catalog.matchId];
+  const goals = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT" }, { dashboardScope: { ...base, outcomes: ["GOL"] } });
+  assert.ok(goals.length > 0);
+  assert.ok(goals.every((item) => item.source === "EVENT" && item.event.type === "threat_recorded" && item.event.outcome === "GOL"));
+
+  const candidate = record.session.events.find((event) => event.type === "threat_recorded");
+  assert.ok(candidate?.type === "threat_recorded");
+  if (candidate?.type !== "threat_recorded") return;
+  const far = candidate.origin.x >= .25;
+  const lane = candidate.origin.y >= 2 / 3 ? 1 : candidate.origin.y <= 1 / 3 ? 3 : 2;
+  const zone = `Z${far ? lane + 3 : lane}` as typeof base.originZones[number];
+  const zoned = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT" }, { dashboardScope: { ...base, originZones: [zone] } });
+  assert.ok(zoned.length > 0);
+  assert.ok(zoned.every((item) => item.source === "EVENT" && item.event.type === "threat_recorded"));
+});
+
 test("reel navega circularmente, avanza al final y conserva vídeos distintos", () => {
   const items = buildVideoLibraryItems(libraryRecords(), EMPTY_VIDEO_LIBRARY_FILTERS, { includeClips: true });
   assert.equal(nextReelIndex(items, items.length - 1, 1), 0);
@@ -74,6 +111,15 @@ test("reel navega circularmente, avanza al final y conserva vídeos distintos", 
   assert.equal(shouldAdvanceReel(items[0], items[0].endSecond, true), true);
   assert.equal(shouldAdvanceReel(items[0], items[0].endSecond, false), false);
   assert.equal(new Set(items.map((item) => item.videoId)).size, 2);
+});
+
+test("teclado reserva espacio para reproducción y flechas para navegación, salvo en controles editables", () => {
+  assert.equal(videoLibraryKeyboardAction("Space", false), "TOGGLE_PLAYBACK");
+  assert.equal(videoLibraryKeyboardAction("ArrowLeft", false), "PREVIOUS");
+  assert.equal(videoLibraryKeyboardAction("ArrowRight", false), "NEXT");
+  assert.equal(videoLibraryKeyboardAction("Space", true), null);
+  assert.equal(videoLibraryKeyboardAction("ArrowLeft", true), null);
+  assert.equal(videoLibraryKeyboardAction("ArrowRight", true), null);
 });
 
 test("volver al análisis conserva exactamente el scope Dashboard y elimina solo filtros de Biblioteca", () => {

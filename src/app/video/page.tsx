@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppHeader } from "../../components/app/AppHeader";
 import { useAccess } from "../../components/access/AccessProvider";
@@ -15,7 +15,7 @@ import { listMatchCatalog } from "../../lib/matchCatalog";
 import { loadMatchSession } from "../../lib/matchPersistence";
 import { buildVideoLabSyncSegments, VIDEO_CLIP_SUGGESTED_CATEGORIES, videoClipTagSuggestions } from "../../lib/videoLab";
 import { formatVideoTimestamp } from "../../lib/videoIndex";
-import { buildVideoLibraryItems, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, shouldAdvanceReel, VideoLibraryEventKind, VideoLibraryFilters, VideoLibraryItem, VideoLibrarySourceFilter } from "../../lib/videoLibrary";
+import { buildVideoLibraryItems, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, shouldAdvanceReel, videoLibraryKeyboardAction, VideoLibraryEventKind, VideoLibraryFilters, VideoLibraryItem, VideoLibrarySourceFilter } from "../../lib/videoLibrary";
 import { useMatchStore } from "../../store/useMatchStore";
 import { useTeamStore } from "../../store/useTeamStore";
 import { MatchVideoAnalysisClip } from "../../types";
@@ -90,6 +90,13 @@ function VideoLibraryContent() {
   const allItems = useMemo(() => buildVideoLibraryItems(visibleRecords, { ...filters, verifiedOnly: false }, { dashboardScope }), [dashboardScope, filters, visibleRecords]);
   const verifiedCount = allItems.filter((item) => item.verified).length;
   const active = items[selected] ?? items[0];
+  const move = useCallback((direction: 1 | -1) => {
+    const next = nextReelIndex(items, selected, direction);
+    if (next >= 0) {
+      setAutoPlaySelection(true);
+      setSelected(next);
+    }
+  }, [items, selected]);
 
   useEffect(() => { if (selected >= items.length) setSelected(Math.max(0, items.length - 1)); }, [items.length, selected]);
   useEffect(() => {
@@ -107,11 +114,16 @@ function VideoLibraryContent() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "Space") return;
       const target = event.target as HTMLElement | null;
-      if (target?.isContentEditable || target?.closest("input, textarea, select")) return;
+      const editable = Boolean(target?.isContentEditable || target?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])"));
+      const action = videoLibraryKeyboardAction(event.code, editable);
+      if (!action) return;
       event.preventDefault();
-      if (playing) {
+      if (action === "PREVIOUS") {
+        move(-1);
+      } else if (action === "NEXT") {
+        move(1);
+      } else if (playing) {
         playerRef.current?.pause();
         setReel(false);
         setAutoPlaySelection(false);
@@ -121,7 +133,7 @@ function VideoLibraryContent() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [playing]);
+  }, [move, playing]);
 
   const players = useMemo(() => Array.from(new Map(visibleRecords.flatMap((record) => record.session.players).map((player) => [player.id, player])).values()).sort((a, b) => a.name.localeCompare(b.name)), [visibleRecords]);
   const rivals = useMemo(() => Array.from(new Set(visibleRecords.map((record) => record.catalog.opponent))).sort(), [visibleRecords]);
@@ -129,7 +141,6 @@ function VideoLibraryContent() {
   const tags = useMemo(() => videoClipTagSuggestions(visibleRecords.flatMap((record) => record.session.videoAnalysisClips ?? [])), [visibleRecords]);
   const categories = useMemo(() => Array.from(new Set([...VIDEO_CLIP_SUGGESTED_CATEGORIES, ...visibleRecords.flatMap((record) => (record.session.videoAnalysisClips ?? []).flatMap((clip) => clip.category ? [clip.category] : []))])), [visibleRecords]);
 
-  const move = (direction: 1 | -1) => { const next = nextReelIndex(items, selected, direction); if (next >= 0) { setAutoPlaySelection(true); setSelected(next); } };
   const onTimeChange = (second: number) => { if (shouldAdvanceReel(active, second, reel)) move(1); };
   const openEdit = (clip: MatchVideoAnalysisClip) => { ensureMatch(clip.matchId); setEditing(clip); setReel(false); };
   const editingRecord = editing ? visibleRecords.find((record) => record.catalog.matchId === editing.matchId) : undefined;
@@ -161,7 +172,7 @@ function VideoLibraryContent() {
       <button type="button" onClick={() => updateFilter("verifiedOnly", !filters.verifiedOnly)} className={`min-h-11 rounded-xl px-3 text-xs font-black ${filters.verifiedOnly ? "bg-emerald-400 text-slate-950" : "bg-slate-800"}`}>{filters.verifiedOnly ? "✓ SOLO VERIFIED" : "TODOS / SOLO VERIFIED"}</button>
     </section>
 
-    {!ready ? <p className="p-10 text-center text-slate-500">Preparando vídeos…</p> : !active ? <section className="rounded-3xl border border-dashed border-slate-700 p-10 text-center"><strong>Sin vídeos para esta combinación</strong><p className="mt-2 text-sm text-slate-500">Retira un filtro o verifica la calibración del partido.</p></section> : <div className="grid gap-3 lg:grid-cols-[minmax(0,1.55fr)_minmax(340px,.85fr)]"><section className="rounded-3xl border border-slate-800 bg-slate-900 p-3"><YouTubeLabPlayer key={`${active.videoId}:${active.key}`} ref={playerRef} videoId={active.videoId} initialSecond={active.startSecond} autoPlay={reel || autoPlaySelection} onPlayingChange={setPlaying} onTimeChange={onTimeChange}/><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4"><button type="button" onClick={() => move(-1)} className="min-h-12 rounded-xl bg-slate-800 text-xs font-black">← ANTERIOR</button><button type="button" onClick={() => move(1)} className="min-h-12 rounded-xl bg-slate-800 text-xs font-black">SIGUIENTE →</button><button type="button" onClick={() => { const next = !reel; setReel(next); setAutoPlaySelection(next); if (next) playerRef.current?.play(); else playerRef.current?.pause(); }} className={`min-h-12 rounded-xl text-xs font-black ${reel ? "bg-amber-400 text-slate-950" : "bg-cyan-400 text-slate-950"}`}>{reel ? "Ⅱ PAUSA REEL" : "▶ REANUDAR REEL"}</button><span className="grid min-h-12 place-items-center rounded-xl bg-slate-950 font-mono text-xs text-cyan-300">{formatVideoTimestamp(active.startSecond)}–{formatVideoTimestamp(active.endSecond)}</span></div><p className="mt-2 text-center text-[10px] font-bold text-slate-500">ESPACIO · PLAY / PAUSA</p><article className="mt-3 rounded-2xl bg-slate-950 p-4"><div className="flex items-start justify-between gap-3"><div><span className={`text-[9px] font-black ${active.source === "EVENT" ? "text-cyan-300" : "text-violet-300"}`}>{active.source === "EVENT" ? "EVENTO DEPORTIVO" : "CLIP DE ANÁLISIS"}</span><h2 className="text-xl font-black">{labelFor(active)}</h2><p className="text-xs text-slate-400">{active.opponent} · {active.date}</p></div><span className={`rounded-full px-3 py-2 text-[10px] font-black ${active.verified ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>{active.verified ? "VERIFIED" : "AUTO"}</span></div>{active.source === "EVENT" ? <p className="mt-2 text-sm text-slate-300">P{active.event.period} · min {active.event.minute} · {eventDescription(active.event, visibleRecords.find((record) => record.catalog.matchId === active.matchId)?.session.players ?? [])}</p> : <><p className="mt-2 text-sm text-slate-300">{active.clip.tags.join(" · ") || "Sin etiquetas"}</p>{active.clip.comment && <p className="mt-2 text-sm text-slate-400">{active.clip.comment}</p>}{canWrite && <div className="mt-3 flex gap-2"><button type="button" onClick={() => openEdit(active.clip)} className="min-h-11 rounded-xl bg-violet-500 px-4 text-xs font-black text-slate-950">EDITAR CLIP</button><button type="button" onClick={() => { if (window.confirm("¿Eliminar este clip de análisis?")) { ensureMatch(active.matchId); window.setTimeout(() => { removeClip(active.matchId, active.clip.id); setRecords(readLocalRecords()); }, 0); } }} className="min-h-11 rounded-xl bg-rose-950 px-4 text-xs font-black text-rose-200">ELIMINAR</button></div>}</>}</article>{editing && editingRecord && editingSegment && <div className="mt-3"><VideoClipComposer session={editingRecord.session} segment={editingSegment} initialClip={editing} currentSecond={() => playerRef.current?.currentSecond() ?? editing.referenceSecond} onSave={(clip) => { upsertClip(editing.matchId, clip); window.setTimeout(() => setRecords(readLocalRecords()), 0); setEditing(null); }} onCancel={() => setEditing(null)}/></div>}</section>
+    {!ready ? <p className="p-10 text-center text-slate-500">Preparando vídeos…</p> : !active ? <section className="rounded-3xl border border-dashed border-slate-700 p-10 text-center"><strong>Sin vídeos para esta combinación</strong><p className="mt-2 text-sm text-slate-500">Retira un filtro o verifica la calibración del partido.</p></section> : <div className="grid gap-3 lg:grid-cols-[minmax(0,1.55fr)_minmax(340px,.85fr)]"><section className="rounded-3xl border border-slate-800 bg-slate-900 p-3"><YouTubeLabPlayer key={`${active.videoId}:${active.key}`} ref={playerRef} videoId={active.videoId} initialSecond={active.startSecond} autoPlay={reel || autoPlaySelection} onPlayingChange={setPlaying} onTimeChange={onTimeChange}/><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4"><button type="button" onClick={() => move(-1)} className="min-h-12 rounded-xl bg-slate-800 text-xs font-black">← ANTERIOR</button><button type="button" onClick={() => move(1)} className="min-h-12 rounded-xl bg-slate-800 text-xs font-black">SIGUIENTE →</button><button type="button" onClick={() => { const next = !reel; setReel(next); setAutoPlaySelection(next); if (next) playerRef.current?.play(); else playerRef.current?.pause(); }} className={`min-h-12 rounded-xl text-xs font-black ${reel ? "bg-amber-400 text-slate-950" : "bg-cyan-400 text-slate-950"}`}>{reel ? "Ⅱ PAUSA REEL" : "▶ REANUDAR REEL"}</button><span className="grid min-h-12 place-items-center rounded-xl bg-slate-950 font-mono text-xs text-cyan-300">{formatVideoTimestamp(active.startSecond)}–{formatVideoTimestamp(active.endSecond)}</span></div><p className="mt-2 text-center text-[10px] font-bold text-slate-500">← / → · ANTERIOR / SIGUIENTE &nbsp;·&nbsp; ESPACIO · PLAY / PAUSA</p><article className="mt-3 rounded-2xl bg-slate-950 p-4"><div className="flex items-start justify-between gap-3"><div><span className={`text-[9px] font-black ${active.source === "EVENT" ? "text-cyan-300" : "text-violet-300"}`}>{active.source === "EVENT" ? "EVENTO DEPORTIVO" : "CLIP DE ANÁLISIS"}</span><h2 className="text-xl font-black">{labelFor(active)}</h2><p className="text-xs text-slate-400">{active.opponent} · {active.date}</p></div><span className={`rounded-full px-3 py-2 text-[10px] font-black ${active.verified ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>{active.verified ? "VERIFIED" : "AUTO"}</span></div>{active.source === "EVENT" ? <p className="mt-2 text-sm text-slate-300">P{active.event.period} · min {active.event.minute} · {eventDescription(active.event, visibleRecords.find((record) => record.catalog.matchId === active.matchId)?.session.players ?? [])}</p> : <><p className="mt-2 text-sm text-slate-300">{active.clip.tags.join(" · ") || "Sin etiquetas"}</p>{active.clip.comment && <p className="mt-2 text-sm text-slate-400">{active.clip.comment}</p>}{canWrite && <div className="mt-3 flex gap-2"><button type="button" onClick={() => openEdit(active.clip)} className="min-h-11 rounded-xl bg-violet-500 px-4 text-xs font-black text-slate-950">EDITAR CLIP</button><button type="button" onClick={() => { if (window.confirm("¿Eliminar este clip de análisis?")) { ensureMatch(active.matchId); window.setTimeout(() => { removeClip(active.matchId, active.clip.id); setRecords(readLocalRecords()); }, 0); } }} className="min-h-11 rounded-xl bg-rose-950 px-4 text-xs font-black text-rose-200">ELIMINAR</button></div>}</>}</article>{editing && editingRecord && editingSegment && <div className="mt-3"><VideoClipComposer session={editingRecord.session} segment={editingSegment} initialClip={editing} currentSecond={() => playerRef.current?.currentSecond() ?? editing.referenceSecond} onSave={(clip) => { upsertClip(editing.matchId, clip); window.setTimeout(() => setRecords(readLocalRecords()), 0); setEditing(null); }} onCancel={() => setEditing(null)}/></div>}</section>
       <section className="max-h-[75vh] space-y-2 overflow-y-auto rounded-3xl border border-slate-800 bg-slate-900 p-2">{items.map((item, index) => <button key={item.key} type="button" onClick={() => { setSelected(index); setReel(false); setAutoPlaySelection(false); }} className={`w-full rounded-2xl border p-3 text-left ${index === selected ? "border-cyan-400 bg-cyan-950/30" : "border-transparent bg-slate-950"}`}><div className="flex justify-between gap-2"><strong className="truncate text-sm">{labelFor(item)}</strong><span className="font-mono text-[10px] text-cyan-300">{formatVideoTimestamp(item.startSecond)}</span></div><p className="mt-1 text-[10px] text-slate-400">{item.opponent} · {item.date}</p><div className="mt-2 flex gap-2"><span className={`rounded-full px-2 py-1 text-[9px] font-black ${item.source === "EVENT" ? "bg-cyan-950 text-cyan-300" : "bg-violet-950 text-violet-300"}`}>{item.source}</span><span className={`rounded-full px-2 py-1 text-[9px] font-black ${item.verified ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>{item.verified ? "VERIFIED" : "AUTO"}</span></div></button>)}</section></div>}
   </main></div>;
 }

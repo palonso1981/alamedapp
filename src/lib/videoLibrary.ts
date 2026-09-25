@@ -1,5 +1,5 @@
 import { DashboardMatchRecord } from "./dashboardAnalytics";
-import { DashboardScopeV2, filterDashboardDataset } from "./dashboardV2";
+import { DashboardScopeV2, filterDashboardDataset, filterDashboardEventSelection } from "./dashboardV2";
 import { eventDescription } from "./eventPresentation";
 import { isVideoReviewableEvent } from "./videoReview";
 import { resolveEventVideoPosition } from "./videoIndex";
@@ -70,7 +70,7 @@ function eventPlayerIds(event: MatchEvent): string[] {
 }
 
 function eventItems(records: readonly DashboardMatchRecord[], scope?: DashboardScopeV2): VideoLibraryEventItem[] {
-  const scoped = scope ? filterDashboardDataset(records, scope) : records;
+  const scoped = scope ? filterDashboardEventSelection(records, scope) : records;
   return scoped.flatMap((record) => record.session.events.flatMap((event) => {
     if (event.deletedAt !== null || !isVideoReviewableEvent(event)) return [];
     const resolution = resolveEventVideoPosition(record.session, event.id);
@@ -155,6 +155,16 @@ export function nextReelIndex(items: readonly VideoLibraryItem[], current: numbe
 
 export function shouldAdvanceReel(item: VideoLibraryItem | undefined, currentSecond: number, playing: boolean): boolean {
   return Boolean(playing && item && currentSecond >= item.endSecond);
+}
+
+export type VideoLibraryKeyboardAction = "TOGGLE_PLAYBACK" | "PREVIOUS" | "NEXT";
+
+export function videoLibraryKeyboardAction(code: string, editableTarget: boolean): VideoLibraryKeyboardAction | null {
+  if (editableTarget) return null;
+  if (code === "Space") return "TOGGLE_PLAYBACK";
+  if (code === "ArrowLeft") return "PREVIOUS";
+  if (code === "ArrowRight") return "NEXT";
+  return null;
 }
 
 export function dashboardReturnHref(search: string): string {

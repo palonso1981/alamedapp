@@ -287,6 +287,42 @@ export function filterDashboardDataset(
     });
 }
 
+/**
+ * Devuelve los eventos que pertenecen directamente a la selección del Dashboard.
+ * `filterDashboardDataset` conserva eventos de apoyo para replay y cálculos de
+ * contexto; esos eventos no deben confundirse con el conjunto que abre VIDEO.
+ */
+export function filterDashboardEventSelection(
+  records: readonly DashboardMatchRecord[],
+  scope: DashboardScopeV2,
+): DashboardMatchRecord[] {
+  const filtered = filterDashboardDataset(records, scope);
+  const hasThreatFilter = scope.phases.length > 0
+    || scope.outcomes.length > 0
+    || scope.outcomeGroup !== "ALL"
+    || scope.originDistance !== "ALL"
+    || scope.originZones.length > 0
+    || scope.targetZones.length > 0;
+  const hasPlayerFilter = scope.playerIds.length > 0;
+
+  if (!hasThreatFilter && !hasPlayerFilter) return filtered;
+
+  return filtered.map((record) => ({
+    catalog: record.catalog,
+    session: {
+      ...record.session,
+      events: record.session.events.filter((event) => {
+        if (hasThreatFilter) return event.type === "threat_recorded";
+        if (!hasPlayerFilter) return true;
+        return event.type === "threat_recorded"
+          || event.type === "foul_recorded"
+          || event.type === "card_recorded"
+          || event.type === "possession_lost";
+      }),
+    },
+  }));
+}
+
 export function buildDashboardV2(
   records: readonly DashboardMatchRecord[],
   scope: DashboardScopeV2,
