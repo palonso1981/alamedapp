@@ -7,8 +7,10 @@ import { MatchEvent, MatchVideoAnalysisClip } from "../types";
 
 export type VideoLibraryEventKind = "ALL" | MatchEvent["type"];
 export type VideoLibrarySource = "EVENT" | "CLIP";
+export type VideoLibrarySourceFilter = "ALL" | VideoLibrarySource;
 
 export interface VideoLibraryFilters {
+  source: VideoLibrarySourceFilter;
   playerId: string;
   eventKind: VideoLibraryEventKind;
   category: string;
@@ -49,6 +51,7 @@ export interface VideoLibraryClipItem extends BaseVideoLibraryItem {
 export type VideoLibraryItem = VideoLibraryEventItem | VideoLibraryClipItem;
 
 export const EMPTY_VIDEO_LIBRARY_FILTERS: VideoLibraryFilters = {
+  source: "ALL",
   playerId: "",
   eventKind: "ALL",
   category: "",
@@ -113,6 +116,7 @@ function clipItems(records: readonly DashboardMatchRecord[]): VideoLibraryClipIt
 
 function filterItems(items: VideoLibraryItem[], filters: VideoLibraryFilters): VideoLibraryItem[] {
   return items.filter((item) => {
+    if (filters.source !== "ALL" && item.source !== filters.source) return false;
     if (filters.playerId && !item.playerIds.includes(filters.playerId)) return false;
     if (filters.rival && item.opponent !== filters.rival) return false;
     if (filters.matchId && item.matchId !== filters.matchId) return false;
@@ -130,7 +134,7 @@ export function buildVideoLibraryItems(
   filters: VideoLibraryFilters = EMPTY_VIDEO_LIBRARY_FILTERS,
   options: { dashboardScope?: DashboardScopeV2; includeClips?: boolean } = {},
 ): VideoLibraryItem[] {
-  const clipsRequested = Boolean(options.includeClips || filters.category || filters.tag);
+  const clipsRequested = Boolean(options.includeClips || filters.source !== "EVENT" || filters.category || filters.tag);
   const scopedMatchIds = options.dashboardScope
     ? new Set(filterDashboardDataset(records, options.dashboardScope).map((record) => record.catalog.matchId))
     : null;
@@ -151,4 +155,12 @@ export function nextReelIndex(items: readonly VideoLibraryItem[], current: numbe
 
 export function shouldAdvanceReel(item: VideoLibraryItem | undefined, currentSecond: number, playing: boolean): boolean {
   return Boolean(playing && item && currentSecond >= item.endSecond);
+}
+
+export function dashboardReturnHref(search: string): string {
+  const params = new URLSearchParams(search);
+  params.delete("from");
+  Array.from(params.keys()).filter((key) => key.startsWith("v")).forEach((key) => params.delete(key));
+  const query = params.toString();
+  return `/dashboard${query ? `?${query}` : ""}`;
 }

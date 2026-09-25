@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildDashboardFixture } from "./dashboardFixture";
 import { emptyDashboardScope } from "./dashboardV2";
-import { buildVideoLibraryItems, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, shouldAdvanceReel } from "./videoLibrary";
+import { buildVideoLibraryItems, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, shouldAdvanceReel } from "./videoLibrary";
 import { MatchVideoAnalysisClip } from "../types";
 
 function libraryRecords() {
@@ -28,6 +28,18 @@ test("Biblioteca lista eventos y clips sin mezclar sus modelos", () => {
   assert.equal(records[0].session.events.some((event) => "tags" in event), false);
 });
 
+test("selector de fuente separa TODO, eventos y todos los clips sin filtros auxiliares", () => {
+  const records = libraryRecords();
+  const all = buildVideoLibraryItems(records, EMPTY_VIDEO_LIBRARY_FILTERS);
+  const events = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT" });
+  const clips = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "CLIP" });
+  assert.ok(all.some((item) => item.source === "EVENT"));
+  assert.equal(all.filter((item) => item.source === "CLIP").length, 2);
+  assert.ok(events.length > 0 && events.every((item) => item.source === "EVENT"));
+  assert.equal(clips.length, 2);
+  assert.ok(clips.every((item) => item.source === "CLIP"));
+});
+
 test("Biblioteca combina jugador, evento, categoría, etiqueta, rival, partido, temporada y VERIFIED", () => {
   const records = libraryRecords();
   const clip = records[0].session.videoAnalysisClips![0];
@@ -47,7 +59,7 @@ test("scope estadístico reutiliza filterDashboardDataset y excluye clips por de
   const first = records[0];
   const scope = emptyDashboardScope(first.catalog.clubId ?? "", first.catalog.teamId ?? "", first.catalog.seasonId ?? "");
   scope.matchIds = [first.catalog.matchId];
-  const items = buildVideoLibraryItems(records, EMPTY_VIDEO_LIBRARY_FILTERS, { dashboardScope: scope, includeClips: false });
+  const items = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT" }, { dashboardScope: scope, includeClips: false });
   assert.ok(items.length > 0);
   assert.ok(items.every((item) => item.source === "EVENT" && item.matchId === first.catalog.matchId));
   const withAnalysisFilter = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, category: "ESTRATEGIA" }, { dashboardScope: scope, includeClips: false });
@@ -64,3 +76,8 @@ test("reel navega circularmente, avanza al final y conserva vídeos distintos", 
   assert.equal(new Set(items.map((item) => item.videoId)).size, 2);
 });
 
+test("volver al análisis conserva exactamente el scope Dashboard y elimina solo filtros de Biblioteca", () => {
+  const href = dashboardReturnHref("from=dashboard&aClub=club&aTeam=team&aCompetition=ALL&rCompetition=LEAGUE&mode=TOTALS&area=PLAYERS&vSource=CLIP&vMatch=match&vVerified=1");
+  assert.equal(href, "/dashboard?aClub=club&aTeam=team&aCompetition=ALL&rCompetition=LEAGUE&mode=TOTALS&area=PLAYERS");
+  assert.equal(dashboardReturnHref("from=dashboard&vSource=EVENT"), "/dashboard");
+});

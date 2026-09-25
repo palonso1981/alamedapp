@@ -13,6 +13,8 @@ type YTPlayer = {
   pauseVideo?: () => void;
 };
 
+type YTPlayerEvent = { target: YTPlayer; data?: number };
+
 declare global {
   interface Window {
     YT?: { Player: new (element: HTMLElement, options: Record<string, unknown>) => YTPlayer };
@@ -33,12 +35,14 @@ interface Props {
   onTimeChange?: (second: number) => void;
   onActionHere?: (second: number) => void;
   actionDisabled?: boolean;
+  autoPlay?: boolean;
+  onPlayingChange?: (playing: boolean) => void;
 }
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
 
 export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(function YouTubeLabPlayer(
-  { videoId, initialSecond = 0, onTimeChange, onActionHere, actionDisabled = false },
+  { videoId, initialSecond = 0, onTimeChange, onActionHere, actionDisabled = false, autoPlay = false, onPlayingChange },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -65,7 +69,14 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
       playerRef.current?.destroy?.();
       playerRef.current = new window.YT.Player(hostRef.current, {
         videoId,
-        playerVars: { autoplay: 0, start: Math.max(0, Math.round(initialSecond)), playsinline: 1, rel: 0 },
+        playerVars: { autoplay: autoPlay ? 1 : 0, start: Math.max(0, Math.round(initialSecond)), playsinline: 1, rel: 0 },
+        events: {
+          onReady: (event: YTPlayerEvent) => { if (autoPlay) event.target.playVideo?.(); },
+          onStateChange: (event: YTPlayerEvent) => {
+            if (event.data === 1) onPlayingChange?.(true);
+            if (event.data === 0 || event.data === 2) onPlayingChange?.(false);
+          },
+        },
       });
     };
     if (window.YT?.Player) create();
@@ -84,7 +95,7 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
       playerRef.current?.destroy?.();
       playerRef.current = null;
     };
-  }, [initialSecond, videoId]);
+  }, [autoPlay, initialSecond, onPlayingChange, videoId]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
