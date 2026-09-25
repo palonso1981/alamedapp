@@ -9,6 +9,8 @@ type YTPlayer = {
   getCurrentTime?: () => number;
   seekTo?: (seconds: number, allowSeekAhead: boolean) => void;
   setPlaybackRate?: (rate: number) => void;
+  playVideo?: () => void;
+  pauseVideo?: () => void;
 };
 
 declare global {
@@ -21,6 +23,8 @@ declare global {
 export interface YouTubeLabPlayerHandle {
   currentSecond: () => number;
   seekTo: (second: number) => void;
+  play: () => void;
+  pause: () => void;
 }
 
 interface Props {
@@ -50,6 +54,8 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
   useImperativeHandle(ref, () => ({
     currentSecond: () => Math.round(readCurrentSecond()),
     seekTo: (second) => playerRef.current?.seekTo?.(Math.max(0, second), true),
+    play: () => playerRef.current?.playVideo?.(),
+    pause: () => playerRef.current?.pauseVideo?.(),
   }), [readCurrentSecond]);
 
   useEffect(() => {

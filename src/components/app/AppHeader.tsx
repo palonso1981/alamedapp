@@ -16,10 +16,11 @@ export function AppHeader({ title, actions, clubId }: { title: string; actions?:
             <ClubContextLabel clubId={clubId} />
           </div>
         </div>
-        <nav className="flex items-center gap-2 text-xs font-bold sm:text-sm">
+        <nav className="flex max-w-[72vw] items-center gap-1 overflow-x-auto text-xs font-bold sm:max-w-none sm:gap-2 sm:text-sm">
           <Link href="/plantilla" aria-label="Plantilla" className="grid min-h-10 min-w-10 place-items-center rounded-lg px-2 hover:bg-slate-800 sm:block sm:min-w-0 sm:px-3 sm:py-2.5"><span className="sm:hidden" aria-hidden="true">●</span><span className="hidden sm:inline">PLANTILLA</span></Link>
           <Link href="/partidos" aria-label="Partidos" className="grid min-h-10 min-w-10 place-items-center rounded-lg px-2 hover:bg-slate-800 sm:block sm:min-w-0 sm:px-3 sm:py-2.5"><span className="sm:hidden" aria-hidden="true">▦</span><span className="hidden sm:inline">PARTIDOS</span></Link>
           <Link href="/dashboard" aria-label="Dashboard" className="grid min-h-10 min-w-10 place-items-center rounded-lg px-2 hover:bg-slate-800 sm:block sm:min-w-0 sm:px-3 sm:py-2.5"><span className="sm:hidden" aria-hidden="true">▥</span><span className="hidden sm:inline">DASHBOARD</span></Link>
+          <Link href="/video" aria-label="Biblioteca Video" className="grid min-h-10 min-w-10 place-items-center rounded-lg px-2 hover:bg-slate-800 sm:block sm:min-w-0 sm:px-3 sm:py-2.5"><span className="sm:hidden" aria-hidden="true">▶</span><span className="hidden sm:inline">VIDEO</span></Link>
           {grant.profile.role !== "VIEWER" && <Link href="/configuracion" aria-label="Configuración deportiva" className="grid min-h-10 min-w-10 place-items-center rounded-lg px-2 text-base hover:bg-slate-800">⚙</Link>}
           {actions}
           <AccessIdentityBadge />

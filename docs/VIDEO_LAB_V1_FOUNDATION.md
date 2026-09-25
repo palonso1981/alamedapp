@@ -46,11 +46,26 @@ Los tipos expuestos son los eventos canónicos compatibles con el motor actual: 
 
 ### Clip táctico
 
-`+ CLIP` crea un `MatchVideoAnalysisClip` separado de `MatchEvent`: `clubId`, `matchId`, segmento/video, segundo de referencia, inicio/fin, categoría libre opcional, etiquetas libres, jugadores CDA opcionales, comentario y timestamps. La propuesta inicial es referencia −3 s / +6 s y ambos extremos se pueden ajustar o tomar de la posición actual del reproductor. Los clips no cambian marcador, replay ni estadísticas y quedan preparados para una futura biblioteca global.
+`+ CLIP` crea un `MatchVideoAnalysisClip` separado de `MatchEvent`: `clubId`, `matchId`, segmento/video, segundo de referencia, inicio/fin, categoría libre opcional, etiquetas libres, jugadores CDA opcionales, comentario y timestamps. La propuesta inicial es referencia −3 s / +6 s y ambos extremos se pueden ajustar o tomar de la posición actual del reproductor. Los clips no cambian marcador, replay ni estadísticas.
 
 Las categorías visibles son sugerencias ampliables, no un enum persistido cerrado. Las etiquetas usadas se ordenan por frecuencia y recencia para su reutilización.
 
 Eventos, overrides y clips se guardan en una sola mutación local del partido y viajan por la outbox existente. Un segundo navegador los recibe con la hidratación normal del `MATCH`. La resolución de conflictos limitada a vídeo incluye las tres piezas (`videoSegments`, `videoEventOverrides`, `videoAnalysisClips`) para no perder clips.
+
+El bloque `CLIPS GUARDADOS (N)` permite abrir, editar o eliminar con confirmación sin abandonar Video Lab. Editar conserva `id` y `createdAt`; eliminar solo retira metadata audiovisual y nunca toca eventos deportivos.
+
+## Biblioteca Video
+
+La ruta global `/video` reúne visualmente dos fuentes sin copiarlas ni mezclarlas en el dominio:
+
+- eventos `MatchEvent` con posición audiovisual resoluble;
+- clips `MatchVideoAnalysisClip` con ventana explícita.
+
+Los filtros combinan jugador, tipo de evento, categoría, etiqueta, rival, partido, temporada y `SOLO VERIFIED`. Las etiquetas proceden de los clips persistidos y continúan siendo texto libre reutilizable.
+
+El enlace `VER VÍDEOS (N)` del Dashboard serializa el mismo `DashboardScopeV2` mediante los parámetros estructurados `a…`. La Biblioteca vuelve a ejecutar `filterDashboardDataset`; no traduce el filtro a texto ni mantiene un motor estadístico paralelo. Al llegar desde Dashboard solo incorpora los eventos deportivos de ese conjunto. Los clips aparecen desde la Biblioteca directa o al escoger expresamente categoría/etiqueta, respetando el ámbito de partidos heredado.
+
+El reproductor principal admite anterior, siguiente y pausa/reanudación del reel. Los eventos usan la posición resuelta y el margen existente de seis segundos; los clips usan sus `startSecond/endSecond`. Al terminar una ventana activa se selecciona el siguiente elemento y se salta a su inicio, incluso si cambia el vídeo de YouTube.
 
 ## Ruta de prototipo
 
@@ -62,6 +77,6 @@ Incluye reproductor principal, cronología, saltos `-5/-1/+1/+5`, velocidades `0
 
 - YouTube continúa siendo la fuente audiovisual; no se descargan ni generan clips.
 - No se implementa interpolación por deriva.
-- No existe aún biblioteca/reel global, export MP4, IA ni jugador rival estructurado.
+- No existe export MP4, IA ni jugador rival estructurado.
 - La recuperación de balón no se ofrece hasta que exista como evento canónico del dominio.
 - No cambia la UX de captura del Directo.

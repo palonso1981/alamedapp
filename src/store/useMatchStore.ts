@@ -26,6 +26,7 @@ import {
   softDeleteEvent as softDeleteChronologyEvent,
 } from "../lib/matchEngine";
 import { browserMatchRepository } from "../lib/sync/localMatchRepository";
+import { removeVideoAnalysisClip as withoutVideoAnalysisClip } from "../lib/videoLab";
 import {
   CardColor,
   DefensiveThreatDetailV2,
@@ -271,6 +272,7 @@ interface MatchState {
   setVideoEventOverrides: (matchId: string, overrides: MatchVideoEventOverride[]) => void;
   addVideoLabEvent: (matchId: string, event: MatchEvent, override: MatchVideoEventOverride) => void;
   upsertVideoAnalysisClip: (matchId: string, clip: MatchVideoAnalysisClip) => void;
+  removeVideoAnalysisClip: (matchId: string, clipId: string) => void;
 }
 
 export function createSession(matchId: string): MatchSession {
@@ -1316,6 +1318,11 @@ export const useMatchStore = create<MatchState>((set) => ({
           : [...(session.videoAnalysisClips ?? []), clip],
         lastError: null,
       })),
+    ),
+
+  removeVideoAnalysisClip: (matchId, clipId) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => ({ ...withoutVideoAnalysisClip(session, clipId), lastError: null })),
     ),
 
   resetDemo: (matchId) =>

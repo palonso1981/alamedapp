@@ -102,7 +102,7 @@ export function defaultVideoClipWindow(referenceSecond: number): Pick<MatchVideo
   return { referenceSecond: reference, startSecond: Math.max(0, reference - 3), endSecond: reference + 6 };
 }
 
-export function createVideoAnalysisClip(input: Omit<MatchVideoAnalysisClip, "id" | "createdAt" | "updatedAt"> & { id?: string; now?: number }): MatchVideoAnalysisClip {
+export function createVideoAnalysisClip(input: Omit<MatchVideoAnalysisClip, "id" | "createdAt" | "updatedAt"> & { id?: string; createdAt?: number; now?: number }): MatchVideoAnalysisClip {
   const now = input.now ?? Date.now();
   const startSecond = Math.max(0, Math.round(input.startSecond));
   const endSecond = Math.max(startSecond, Math.round(input.endSecond));
@@ -119,7 +119,7 @@ export function createVideoAnalysisClip(input: Omit<MatchVideoAnalysisClip, "id"
     tags: Array.from(new Set(input.tags.map((tag) => tag.trim()).filter(Boolean))),
     playerIds: Array.from(new Set(input.playerIds)),
     ...(input.comment?.trim() ? { comment: input.comment.trim() } : {}),
-    createdAt: now,
+    createdAt: input.createdAt ?? now,
     updatedAt: now,
   };
 }
@@ -133,6 +133,10 @@ export function videoClipTagSuggestions(clips: readonly MatchVideoAnalysisClip[]
   return Array.from(stats.entries())
     .sort((a, b) => b[1].count - a[1].count || b[1].updatedAt - a[1].updatedAt || a[0].localeCompare(b[0]))
     .map(([tag]) => tag);
+}
+
+export function removeVideoAnalysisClip(session: MatchSession, clipId: string): MatchSession {
+  return { ...session, videoAnalysisClips: (session.videoAnalysisClips ?? []).filter((clip) => clip.id !== clipId) };
 }
 
 export type VideoLabTimeSource = "observedAt" | "createdAt" | "manual";

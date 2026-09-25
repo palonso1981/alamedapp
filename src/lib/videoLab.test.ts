@@ -19,6 +19,7 @@ import {
   nextVideoLabRow,
   persistVideoLabVerification,
   proposeVideoSportsInsertion,
+  removeVideoAnalysisClip,
   shiftVideoSecond,
   videoClipTagSuggestions,
   verifyVideoLabEvent,
@@ -250,4 +251,18 @@ test("clip separado persiste tras reload sin contaminar MatchEvent", () => {
   const reloaded = loadMatchSession(session.matchId, storage)!;
   assert.deepEqual(reloaded.videoAnalysisClips, [clip]);
   assert.equal(JSON.stringify(reloaded.events), JSON.stringify(events));
+});
+
+test("editar clip conserva identidad y creación; eliminarlo no altera MatchEvent", () => {
+  const session = buildSession([video("first", "abcdefghijk", [1], [{ id: "a1", eventId: "p1-shot", videoSecond: 100 }])]);
+  const original = createVideoAnalysisClip({ id: "clip-edit", now: 10, clubId: "club", matchId: session.matchId, segmentId: "first:P1", videoId: "abcdefghijk", referenceSecond: 40, startSecond: 37, endSecond: 46, tags: ["ABP"], playerIds: ["p1"] });
+  const edited = createVideoAnalysisClip({ ...original, createdAt: original.createdAt, now: 20, startSecond: 36, endSecond: 48, tags: ["ABP", "segundo palo"] });
+  assert.equal(edited.id, original.id);
+  assert.equal(edited.createdAt, 10);
+  assert.equal(edited.updatedAt, 20);
+  const withClip = { ...session, videoAnalysisClips: [edited] };
+  const events = structuredClone(withClip.events);
+  const removed = removeVideoAnalysisClip(withClip, original.id);
+  assert.deepEqual(removed.videoAnalysisClips, []);
+  assert.deepEqual(removed.events, events);
 });

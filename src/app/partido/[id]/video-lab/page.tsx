@@ -42,6 +42,7 @@ export default function VideoLabPage() {
   const [currentSecond, setCurrentSecond] = useState(0);
   const [followVideo, setFollowVideo] = useState(true);
   const [composer, setComposer] = useState<"EVENT" | "CLIP" | null>(null);
+  const [editingClipId, setEditingClipId] = useState<string | null>(null);
 
   useEffect(() => { if (!fixtureSession) ensureMatch(matchId); }, [ensureMatch, fixtureSession, matchId]);
   const segments = useMemo(() => session ? buildVideoLabSyncSegments(session) : [], [session]);
@@ -73,6 +74,7 @@ export default function VideoLabPage() {
   const setOverrides = useMatchStore((state) => state.setVideoEventOverrides);
   const addVideoLabEvent = useMatchStore((state) => state.addVideoLabEvent);
   const upsertVideoAnalysisClip = useMatchStore((state) => state.upsertVideoAnalysisClip);
+  const removeVideoAnalysisClip = useMatchStore((state) => state.removeVideoAnalysisClip);
   const readPlayerSecond = useCallback(() => playerRef.current?.currentSecond() ?? currentSecond, [currentSecond]);
   const verifySelected = (videoSecond?: number, timeSource?: "manual", advance = false) => {
     if (!session || !selectedRow || !canWrite) return;
@@ -92,6 +94,14 @@ export default function VideoLabPage() {
     const next = segmentRows[(index + 1 + segmentRows.length) % segmentRows.length];
     chooseRow(next.event.id);
   };
+  const clips = session?.videoAnalysisClips ?? [];
+  const editingClip = clips.find((clip) => clip.id === editingClipId);
+  useEffect(() => {
+    if (!editingClip) return;
+    setSegmentId(editingClip.segmentId);
+    const timer = window.setTimeout(() => playerRef.current?.seekTo(editingClip.startSecond), 50);
+    return () => window.clearTimeout(timer);
+  }, [editingClip]);
 
   if (!session) return <div className="grid min-h-screen place-items-center bg-slate-950 text-white">Preparando Video Lab…</div>;
 
@@ -128,7 +138,11 @@ export default function VideoLabPage() {
                 {canWrite && selectedRow && <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" onClick={() => setComposer(composer === "EVENT" ? null : "EVENT")} className="min-h-12 rounded-xl bg-cyan-400 px-3 text-sm font-black text-slate-950">+ EVENTO</button><button type="button" onClick={() => setComposer(composer === "CLIP" ? null : "CLIP")} className="min-h-12 rounded-xl bg-violet-400 px-3 text-sm font-black text-slate-950">+ CLIP</button></div>}
                 {composer === "EVENT" && selectedRow && <div className="mt-3"><VideoSportsEventComposer session={session} referenceEventId={selectedRow.event.id} segment={segment} videoSecond={readPlayerSecond()} onSave={(event, override) => { addVideoLabEvent(matchId, event, override); setSelectedEventId(event.id); setComposer(null); }} onCancel={() => setComposer(null)}/></div>}
                 {composer === "CLIP" && <div className="mt-3"><VideoClipComposer session={session} segment={segment} currentSecond={readPlayerSecond} onSave={(clip) => { upsertVideoAnalysisClip(matchId, clip); setComposer(null); }} onCancel={() => setComposer(null)}/></div>}
-                {(session.videoAnalysisClips?.length ?? 0) > 0 && <p className="mt-3 rounded-xl bg-violet-950/50 px-3 py-2 text-xs font-bold text-violet-200">CLIPS GUARDADOS · {session.videoAnalysisClips?.length}</p>}
+                {editingClip && segment?.id === editingClip.segmentId && <div className="mt-3"><VideoClipComposer session={session} segment={segment} initialClip={editingClip} currentSecond={readPlayerSecond} onSave={(clip) => { upsertVideoAnalysisClip(matchId, clip); setEditingClipId(null); }} onCancel={() => setEditingClipId(null)}/></div>}
+                <section className="mt-3 rounded-2xl border border-violet-900/70 bg-violet-950/20 p-3">
+                  <div className="flex items-center justify-between"><p className="text-xs font-black text-violet-200">CLIPS GUARDADOS ({clips.length})</p><Link href={`/video?vMatch=${encodeURIComponent(matchId)}&vSource=all`} className="text-[10px] font-black text-cyan-300">VER EN BIBLIOTECA →</Link></div>
+                  {clips.length === 0 ? <p className="mt-2 text-xs text-slate-500">Todavía no hay clips tácticos en este partido.</p> : <div className="mt-2 grid gap-2 sm:grid-cols-2">{clips.map((clip) => <article key={clip.id} className="rounded-xl bg-slate-900 p-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-sm">{clip.category || clip.tags[0] || "Clip de análisis"}</strong><span className="font-mono text-[10px] text-cyan-300">{formatVideoTimestamp(clip.startSecond)}–{formatVideoTimestamp(clip.endSecond)}</span></div><span className="rounded-full bg-violet-950 px-2 py-1 text-[9px] font-black text-violet-200">{clip.endSecond - clip.startSecond}s</span></div>{clip.tags.length > 0 && <p className="mt-1 truncate text-[10px] text-slate-400">{clip.tags.join(" · ")}</p>}{clip.comment && <p className="mt-1 line-clamp-2 text-xs text-slate-300">{clip.comment}</p>}<div className="mt-2 grid grid-cols-3 gap-1"><button type="button" onClick={() => { setSegmentId(clip.segmentId); setEditingClipId(null); window.setTimeout(() => playerRef.current?.seekTo(clip.startSecond), 50); }} className="min-h-10 rounded-lg bg-cyan-950 text-[10px] font-black text-cyan-200">▶ ABRIR</button>{canWrite && <button type="button" onClick={() => { setComposer(null); setEditingClipId(clip.id); }} className="min-h-10 rounded-lg bg-slate-800 text-[10px] font-black">EDITAR</button>}{canWrite && <button type="button" onClick={() => { if (window.confirm("¿Eliminar este clip de análisis? No se modificará ningún evento deportivo.")) removeVideoAnalysisClip(matchId, clip.id); }} className="min-h-10 rounded-lg bg-rose-950 text-[10px] font-black text-rose-200">ELIMINAR</button>}</div></article>)}</div>}
+                </section>
                 <p className="mt-3 text-xs text-slate-400">AUTO usa el primer anchor válido del periodo. Los anchors adicionales solo señalan coherencia o deriva; no desplazan la jugada silenciosamente.</p>
               </section>
 
