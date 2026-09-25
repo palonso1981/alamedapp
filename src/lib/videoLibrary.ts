@@ -71,7 +71,12 @@ function eventPlayerIds(event: MatchEvent): string[] {
 
 function eventItems(records: readonly DashboardMatchRecord[], scope?: DashboardScopeV2): VideoLibraryEventItem[] {
   const scoped = scope ? filterDashboardEventSelection(records, scope) : records;
-  return scoped.flatMap((record) => record.session.events.flatMap((event) => {
+  const accepted = new Map(scoped.map((record) => [
+    record.catalog.matchId,
+    new Set(record.session.events.map((event) => event.id)),
+  ]));
+  return records.flatMap((record) => record.session.events.flatMap((event) => {
+    if (!accepted.get(record.catalog.matchId)?.has(event.id)) return [];
     if (event.deletedAt !== null || !isVideoReviewableEvent(event)) return [];
     const resolution = resolveEventVideoPosition(record.session, event.id);
     if (resolution.status !== "RESOLVED") return [];

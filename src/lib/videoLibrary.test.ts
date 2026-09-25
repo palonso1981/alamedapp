@@ -72,6 +72,12 @@ test("Salesianos + córner conserva exactamente las amenazas de córner del Dash
   assert.ok(record);
   if (!record) return;
   record.catalog.opponent = "Salesianos";
+  const cornerIds = new Set(record.session.events.filter((event) => event.type === "threat_recorded" && event.phase === "SET_PIECE_CORNER").map((event) => event.id));
+  const anchor = record.session.events.find((event) => !cornerIds.has(event.id) && event.deletedAt === null);
+  assert.ok(anchor);
+  if (!anchor) return;
+  record.session.videoSegments![0].anchors = [{ id: "anchor-context", eventId: anchor.id, videoSecond: 30 }];
+  record.session.videoEventOverrides = record.session.videoEventOverrides?.filter((override) => !cornerIds.has(override.eventId));
   const scope = emptyDashboardScope(record.catalog.clubId ?? "", record.catalog.teamId ?? "", record.catalog.seasonId ?? "");
   scope.matchIds = [record.catalog.matchId];
   scope.phases = ["SET_PIECE_CORNER"];
