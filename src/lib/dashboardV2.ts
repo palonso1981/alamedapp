@@ -72,6 +72,7 @@ export interface DashboardViewState {
   referencePreset: DashboardReferencePreset;
   mode: DashboardValueMode;
   area: DashboardArea;
+  comparisonEnabled?: boolean;
 }
 
 export interface OutcomeDistributionItem {
@@ -769,7 +770,9 @@ export function scopeFromSearchParams(
     competitiveContext: params.get(`${prefix}Context`) === "KEY" ? "KEY" : params.get(`${prefix}Context`) === "GOLD" ? "GOLD" : fallback.competitiveContext,
     playingState: params.get(`${prefix}PJState`) === "PJ_CDA" ? "PJ_CDA" : params.get(`${prefix}PJState`) === "PJ_RIVAL" ? "PJ_RIVAL" : fallback.playingState,
     scoreState: params.get(`${prefix}ScoreState`) === "LEADING" ? "LEADING" : params.get(`${prefix}ScoreState`) === "DRAWING" ? "DRAWING" : params.get(`${prefix}ScoreState`) === "TRAILING" ? "TRAILING" : fallback.scoreState,
-    matchIds: read<string>("matchIds"),
+    matchIds: params.has(`${prefix}matchIds`)
+      ? read<string>("matchIds")
+      : [params.get(`${prefix}Match`), params.get(`${prefix}MatchId`)].filter((value): value is string => Boolean(value)),
     venues: read<Exclude<VenueFilter, "ALL">>("venues"),
     results: read<Exclude<ResultFilter, "ALL">>("results"),
     rivals: read<string>("rivals"),
@@ -800,5 +803,11 @@ export function mergeDashboardSearchParams(
   params.set("mode", view.mode);
   params.set("area", view.area);
   params.set("reference", view.referencePreset);
+  if (view.comparisonEnabled === false) params.set("compare", "off");
+  else params.delete("compare");
   return params.toString();
+}
+
+export function comparisonEnabledFromSearchParams(params: URLSearchParams): boolean {
+  return params.get("compare") !== "off";
 }

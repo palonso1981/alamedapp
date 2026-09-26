@@ -9,7 +9,7 @@ import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEA
 import { compareMetricValues, METRIC_DEFINITIONS } from "./dashboardMetricDefinitions";
 import { dashboardMapPointTitle, resolveDashboardMapPoint } from "./dashboardTrace";
 import { revisionEventHref, safeDashboardReturnTo } from "./dashboardNavigation";
-import { adaptiveChartLayout, filterSearchableMatches, searchableMatchLabel } from "./dashboardSelectors";
+import { adaptiveChartLayout, filterSearchableMatches, matchSelectionLabel, searchableMatchLabel, toggleMatchSelection } from "./dashboardSelectors";
 import { withCurrentPlayerIdentity } from "./dashboardIdentity";
 import { COMPARISON_BAR_MAX_PERCENT, comparisonBarPercentage, comparisonBarValueStyle } from "./dashboardBarLayout";
 import { createMasterPlayer } from "./rosterDomain";
@@ -56,6 +56,7 @@ import {
   buildDashboardV2,
   buildPlayerScores,
   chronologicalParticipationPercentage,
+  comparisonEnabledFromSearchParams,
   defaultDashboardCompetition,
   derivedThreatSummary,
   emptyDashboardScope,
@@ -185,6 +186,52 @@ test("scope y referencia viajan separados por URL y sobreviven reload", () => {
   assert.deepEqual(scopeFromSearchParams(params, "r", baseScope()), reference);
   assert.equal(params.get("mode"), "PER_40");
   assert.equal(params.get("area"), "PLAYERS");
+});
+
+test("multiselección conserva uno o varios partidos en DashboardScopeV2 y en URL", () => {
+  const records = buildDashboardFixture();
+  const selected = [records[0].catalog.matchId, records[17].catalog.matchId];
+  const scope = { ...baseScope(), competition: "ALL" as const, matchIds: selected };
+  const filtered = filterDashboardDataset(records, scope);
+  assert.deepEqual(filtered.map((record) => record.catalog.matchId).sort(), [...selected].sort());
+  const query = mergeDashboardSearchParams({ analysis: scope, reference: scope, referencePreset: "SEASON", mode: "TOTALS", area: "SUMMARY", comparisonEnabled: false });
+  const params = new URLSearchParams(query);
+  assert.deepEqual(scopeFromSearchParams(params, "a", baseScope()).matchIds, selected);
+  assert.equal(comparisonEnabledFromSearchParams(params), false);
+  assert.equal(comparisonEnabledFromSearchParams(new URLSearchParams()), true);
+});
+
+test("selector múltiple marca, desmarca, limpia y resume la selección", () => {
+  const records = buildDashboardFixture().slice(0, 2);
+  const matches = records.map((record) => ({ ...record.catalog }));
+  const first = records[0].catalog.matchId;
+  const second = records[1].catalog.matchId;
+  assert.deepEqual(toggleMatchSelection([], first), [first]);
+  assert.deepEqual(toggleMatchSelection([first], second), [first, second]);
+  assert.deepEqual(toggleMatchSelection([first, second], first), [second]);
+  assert.equal(matchSelectionLabel(matches, [], "Todos"), "Todos");
+  assert.match(matchSelectionLabel(matches, [first]), new RegExp(records[0].catalog.opponent));
+  assert.equal(matchSelectionLabel(matches, [first, second]), "2 partidos seleccionados");
+});
+
+test("multiselección combina libremente competición, sede, periodo y estado del marcador", () => {
+  const records = buildDashboardFixture();
+  const home = records.find((record) => record.catalog.venue === "HOME" && record.session.preparation?.competitionType === "LEAGUE")!;
+  const away = records.find((record) => record.catalog.venue === "AWAY" && record.session.preparation?.competitionType === "FRIENDLY")!;
+  const selected = [home.catalog.matchId, away.catalog.matchId];
+  const mixed = buildDashboardV2(records, { ...baseScope(), competition: "ALL", matchIds: selected });
+  assert.equal(mixed.samples, 2);
+  assert.equal(teamPlayerTableMetricValue(mixed, "matches", "TOTALS"), 2);
+  assert.equal(teamPlayerTableMetricValue(mixed, "goals", "PER_MATCH"), mixed.analytics.goalsFor / 2);
+  assert.equal(teamPlayerTableMetricValue(mixed, "goals", "PER_40"), mixed.rates.goalsFor40);
+  const awayP2 = filterDashboardDataset(records, { ...baseScope(), competition: "ALL", matchIds: selected, venues: ["AWAY"], period: 2, scoreState: "DRAWING" });
+  assert.ok(awayP2.every((record) => record.catalog.matchId === away.catalog.matchId));
+  assert.ok(awayP2.flatMap((record) => record.session.events).every((event) => event.period === 2));
+});
+
+test("una URL legacy de partido único sigue hidratando matchIds", () => {
+  assert.deepEqual(scopeFromSearchParams(new URLSearchParams("aMatch=legacy-one"), "a", baseScope()).matchIds, ["legacy-one"]);
+  assert.deepEqual(scopeFromSearchParams(new URLSearchParams("aMatchId=legacy-two"), "a", baseScope()).matchIds, ["legacy-two"]);
 });
 
 test("una URL parcial de referencia se reconoce sin exigir rClub", () => {
