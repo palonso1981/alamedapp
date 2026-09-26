@@ -498,6 +498,13 @@ export function outcomeDistribution(
 
 export type TeamMetricKey = "threatsFor" | "threatsAgainst" | "goalsFor" | "goalsAgainst" | "foulsFor" | "foulsAgainst" | "possessionLosses";
 
+export type TeamPlayerTableMetricKey =
+  | "matches" | "minutes" | "avgMinutes" | "goals" | "assists" | "threats" | "possessionLosses"
+  | "points" | "plusMinus" | "goalsFor" | "goalsAgainst" | "threatsFor" | "threatsAgainst" | "threatBalance"
+  | "onTargetFor" | "onTargetAgainst" | "onTargetBalance" | "nearFor" | "nearAgainst" | "nearBalance"
+  | "keyMinutes" | "keyPercentage" | "goldMinutes" | "goldPercentage"
+  | "foulsCommitted" | "foulsReceived" | "criticalCommitted" | "criticalReceived" | "yellowCards" | "redCards" | "score";
+
 export function teamMetricValue(
   analysis: DashboardAnalysis,
   metric: TeamMetricKey,
@@ -520,6 +527,70 @@ export function teamMetricValue(
             : metric === "foulsFor" ? "foulsFor40"
               : metric === "foulsAgainst" ? "foulsAgainst40" : "possessionLosses40"
   ];
+}
+
+/**
+ * Agregado cronológico del equipo para la tabla de jugadores. Nunca se deriva
+ * sumando o promediando filas individuales: los conteos salen de eventos y los
+ * tiempos de los intervalos del equipo ya acotados por el scope activo.
+ */
+export function teamPlayerTableMetricValue(
+  analysis: DashboardAnalysis,
+  metric: TeamPlayerTableMetricKey,
+  mode: DashboardValueMode,
+): number | null {
+  const matches = analysis.samples;
+  const observedMinutes = analysis.rates.observedMinutes;
+  const normalizeCount = (value: number) => mode === "TOTALS" ? value
+    : mode === "PER_MATCH" ? matches > 0 ? value / matches : null
+      : per40(value, observedMinutes);
+  const normalizeTime = (value: number) => mode === "TOTALS" ? value
+    : mode === "PER_MATCH" ? matches > 0 ? value / matches : null
+      : per40(value, observedMinutes);
+  const threatsFor = derivedThreatSummary(analysis.records.flatMap((record) => record.session.events), "FOR");
+  const threatsAgainst = derivedThreatSummary(analysis.records.flatMap((record) => record.session.events), "AGAINST");
+
+  if (metric === "matches") return analysis.analytics.matches;
+  if (metric === "minutes") return normalizeTime(observedMinutes);
+  if (metric === "avgMinutes") return matches > 0 ? observedMinutes / matches : null;
+  if (metric === "goals" || metric === "goalsFor") return normalizeCount(analysis.analytics.goalsFor);
+  if (metric === "goalsAgainst") return normalizeCount(analysis.analytics.goalsAgainst);
+  if (metric === "plusMinus") return normalizeCount(analysis.analytics.goalsFor - analysis.analytics.goalsAgainst);
+  if (metric === "assists") {
+    const assists = analysis.records.flatMap((record) => record.session.events).filter((event) =>
+      event.deletedAt === null
+      && event.type === "threat_recorded"
+      && event.side === "FOR"
+      && event.outcome === "GOL"
+      && event.assist?.status === "PLAYER"
+    ).length;
+    return normalizeCount(assists);
+  }
+  if (metric === "threats" || metric === "threatsFor") return normalizeCount(threatsFor.total);
+  if (metric === "threatsAgainst") return normalizeCount(threatsAgainst.total);
+  if (metric === "threatBalance") return normalizeCount(threatsFor.total - threatsAgainst.total);
+  if (metric === "onTargetFor") return normalizeCount(threatsFor.onTarget);
+  if (metric === "onTargetAgainst") return normalizeCount(threatsAgainst.onTarget);
+  if (metric === "onTargetBalance") return normalizeCount(threatsFor.onTarget - threatsAgainst.onTarget);
+  if (metric === "nearFor") return normalizeCount(threatsFor.near);
+  if (metric === "nearAgainst") return normalizeCount(threatsAgainst.near);
+  if (metric === "nearBalance") return normalizeCount(threatsFor.near - threatsAgainst.near);
+  if (metric === "possessionLosses") return normalizeCount(analysis.possessionLosses);
+  if (metric === "foulsCommitted") return normalizeCount(analysis.analytics.discipline.for.fouls);
+  if (metric === "foulsReceived") return normalizeCount(analysis.analytics.discipline.against.fouls);
+  if (metric === "criticalCommitted") return normalizeCount(analysis.criticalFouls.for);
+  if (metric === "criticalReceived") return normalizeCount(analysis.criticalFouls.against);
+  if (metric === "yellowCards") return normalizeCount(analysis.analytics.discipline.for.yellowCards);
+  if (metric === "redCards") return normalizeCount(analysis.analytics.discipline.for.redCards);
+  if (metric === "keyMinutes") return normalizeTime(analysis.teamKeyMinutes);
+  if (metric === "goldMinutes") return normalizeTime(analysis.teamGoldMinutes);
+  if (metric === "keyPercentage") return observedMinutes > 0 ? analysis.teamKeyMinutes / observedMinutes * 100 : null;
+  if (metric === "goldPercentage") return observedMinutes > 0 ? analysis.teamGoldMinutes / observedMinutes * 100 : null;
+  if (metric === "points") {
+    const points = analysis.trends.reduce((sum, trend) => sum + (trend.result === "WIN" ? 3 : trend.result === "DRAW" ? 1 : 0), 0);
+    return mode === "TOTALS" ? points : mode === "PER_MATCH" ? matches > 0 ? points / matches : null : per40(points, observedMinutes);
+  }
+  return null;
 }
 
 export type PairedMetricId = "GOALS" | "THREATS" | "ON_TARGET" | "NEAR";
