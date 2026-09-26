@@ -11,11 +11,7 @@ export function toggleMatchSelection(values: readonly string[], matchId: string)
   return values.includes(matchId) ? values.filter((value) => value !== matchId) : [...values, matchId];
 }
 
-export function matchSelectionLabel(
-  matches: readonly SearchableMatch[],
-  values: readonly string[],
-  allLabel = "Todos los partidos",
-): string {
+export function matchSelectionLabel(matches: readonly SearchableMatch[], values: readonly string[], allLabel = "Todos los partidos"): string {
   if (values.length === 0) return allLabel;
   if (values.length === 1) {
     const selected = matches.find((match) => match.matchId === values[0]);

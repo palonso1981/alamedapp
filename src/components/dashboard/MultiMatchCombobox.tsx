@@ -87,7 +87,9 @@ export function MultiMatchCombobox({
         <span className="block min-w-0 flex-1 truncate">
           {matchSelectionLabel(matches, values, allLabel)}
         </span>
-        <span aria-hidden="true" className="text-slate-400">⌄</span>
+        <span aria-hidden="true" className="text-slate-400">
+          ⌄
+        </span>
       </button>
       {open &&
         typeof document !== "undefined" &&
@@ -99,7 +101,9 @@ export function MultiMatchCombobox({
             style={position}
           >
             <div className="flex items-center gap-2">
-              <label className="sr-only" htmlFor={`${id}-search`}>{label}</label>
+              <label className="sr-only" htmlFor={`${id}-search`}>
+                {label}
+              </label>
               <input
                 ref={inputRef}
                 id={`${id}-search`}
@@ -132,15 +136,21 @@ export function MultiMatchCombobox({
                     <input
                       type="checkbox"
                       checked={checked}
-                      onChange={() => onChange(toggleMatchSelection(values, match.matchId))}
+                      onChange={() =>
+                        onChange(toggleMatchSelection(values, match.matchId))
+                      }
                       className="h-5 w-5 shrink-0 accent-cyan-300"
                     />
-                    <span className="min-w-0 flex-1">{searchableMatchLabel(match)}</span>
+                    <span className="min-w-0 flex-1">
+                      {searchableMatchLabel(match)}
+                    </span>
                   </label>
                 );
               })}
               {filtered.length === 0 && (
-                <p className="p-4 text-center text-xs text-slate-500">Sin resultados</p>
+                <p className="p-4 text-center text-xs text-slate-500">
+                  Sin resultados
+                </p>
               )}
             </div>
             <button

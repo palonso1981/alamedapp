@@ -49,9 +49,11 @@ export interface DashboardFilterBarProps {
   onRefresh?: () => void;
   fixture?: boolean;
   comparison?: ReactNode;
+  comparisonEnabled?: boolean;
+  onComparisonEnabled?: (enabled: boolean) => void;
 }
 
-export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams, seasons, matches, rivals, players = [], goalkeepers = [], referencePreset, referenceScope, mode, onScope, onReferencePreset, onReferenceScope, onMode, onRefresh, fixture, comparison }: DashboardFilterBarProps) {
+export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams, seasons, matches, rivals, players = [], goalkeepers = [], referencePreset, referenceScope, mode, onScope, onReferencePreset, onReferenceScope, onMode, onRefresh, fixture, comparison, comparisonEnabled = true, onComparisonEnabled }: DashboardFilterBarProps) {
   const patch = (changes: Partial<DashboardScopeV2>) => onScope({ ...scope, ...changes });
   const chips: Array<{ key: string; label: string; clear: () => void }> = [];
   if (scope.period !== "ALL") chips.push({ key: "period", label: `P${scope.period}`, clear: () => patch({ period: "ALL" }) });
@@ -96,14 +98,14 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
         {chips.length > 1 && <button type="button" onClick={clearAll} className="shrink-0 text-[10px] font-black text-slate-500">LIMPIAR</button>}
       </div>
       <div className="flex items-center gap-2 overflow-x-auto">
-        <span className="shrink-0 text-[9px] font-black tracking-[.16em] text-slate-500">COMPARO</span>
-        <select aria-label="Referencia" value={referencePreset} onChange={(event) => onReferencePreset(event.target.value as DashboardReferencePreset)} className="min-h-9 rounded-xl bg-amber-950/70 px-3 text-[10px] font-black text-amber-100">
+        <button type="button" aria-pressed={comparisonEnabled} onClick={() => onComparisonEnabled?.(!comparisonEnabled)} className={`min-h-9 shrink-0 rounded-xl px-3 text-[10px] font-black ${comparisonEnabled ? "bg-amber-300 text-slate-950" : "border border-slate-700 text-slate-400"}`}>COMPARAR · {comparisonEnabled ? "ON" : "OFF"}</button>
+        {comparisonEnabled && <select aria-label="Referencia" value={referencePreset} onChange={(event) => onReferencePreset(event.target.value as DashboardReferencePreset)} className="min-h-9 rounded-xl bg-amber-950/70 px-3 text-[10px] font-black text-amber-100">
           <optgroup label="Preset"><option value="SEASON">Media temporada</option><option value="HOME">Media local</option><option value="AWAY">Media visitante</option><option value="WINS">Victorias</option><option value="DRAWS">Empates</option><option value="LOSSES">Derrotas</option><option value="P1">Media P1</option><option value="P2">Media P2</option><option value="FILTERED">Selección filtrada</option></optgroup><optgroup label="Flexible"><option value="MATCH">Partido concreto</option><option value="CUSTOM">Referencia personalizada</option></optgroup>
-        </select>
+        </select>}
         <div className="flex rounded-xl bg-slate-900 p-1">{(["TOTALS", "PER_MATCH", "PER_40"] as DashboardValueMode[]).map((item) => <button key={item} type="button" onClick={() => onMode(item)} className={`min-h-8 rounded-lg px-2 text-[9px] font-black ${mode === item ? "bg-white text-slate-950" : "text-slate-500"}`}>{item === "TOTALS" ? "TOTALES" : item === "PER_MATCH" ? "POR PARTIDO" : "POR 40"}</button>)}</div>
       </div>
     </div>
-    </section>{comparison}</div>{(referencePreset === "MATCH" || referencePreset === "CUSTOM") && <ReferenceBuilder preset={referencePreset} scope={referenceScope} analysis={scope} matches={matches} rivals={rivals} onChange={onReferenceScope}/>}<details data-dashboard-advanced-filters className="rounded-2xl border border-slate-800 bg-slate-900/80 px-3 py-2">
+    </section>{comparisonEnabled && comparison}</div>{comparisonEnabled && (referencePreset === "MATCH" || referencePreset === "CUSTOM") && <ReferenceBuilder preset={referencePreset} scope={referenceScope} analysis={scope} matches={matches} rivals={rivals} onChange={onReferenceScope}/>}<details data-dashboard-advanced-filters className="rounded-2xl border border-slate-800 bg-slate-900/80 px-3 py-2">
       <summary className="cursor-pointer text-[10px] font-black text-slate-400">FILTROS AVANZADOS · {chips.length}</summary>
       <div className="mt-3 space-y-3">
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">SEDE · RESULTADO</span>{(["HOME", "AWAY"] as const).map((value) => <MultiButton key={value} active={scope.venues.includes(value)} onClick={() => patch({ venues: toggle(scope.venues, value) })}>{value === "HOME" ? "LOCAL" : "VISITANTE"}</MultiButton>)}{(["WIN", "DRAW", "LOSS"] as const).map((value) => <MultiButton key={value} active={scope.results.includes(value)} onClick={() => patch({ results: toggle(scope.results, value) })}>{value === "WIN" ? "VICTORIA" : value === "DRAW" ? "EMPATE" : "DERROTA"}</MultiButton>)}</div>
