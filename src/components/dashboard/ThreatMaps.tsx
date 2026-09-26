@@ -3,6 +3,7 @@ import {
   DashboardGoalPoint,
   DashboardThreatPoint,
 } from "../../lib/dashboardAnalytics";
+import { orientThreatPointForAttackRight } from "../../lib/dashboardAnalysis";
 
 const OUTCOME_COLOR = {
   GOL: "bg-rose-500",
@@ -26,34 +27,43 @@ export function PitchThreatMap({
   side,
   onSelect,
   pointTitle,
+  orientToAttackRight = false,
+  compact = false,
 }: {
   points: DashboardThreatPoint[];
   side: "FOR" | "AGAINST";
   onSelect?: (point: DashboardThreatPoint) => void;
   pointTitle?: (point: DashboardThreatPoint) => string;
+  orientToAttackRight?: boolean;
+  compact?: boolean;
 }) {
   const visible = points.filter((point) => point.side === side);
   return (
-    <article className="rounded-3xl border border-slate-700 bg-slate-900 p-3 sm:p-4">
+    <article className={`rounded-3xl border border-slate-700 bg-slate-900 ${compact ? "p-2" : "p-3 sm:p-4"}`}>
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <p className="text-[10px] font-black tracking-[0.16em] text-cyan-300">ORIGEN</p>
-          <h3 className="font-black">{side === "FOR" ? "MAPA DE REMATES" : "MAPA DE AMENAZAS"}</h3>
+          <h3 className="font-black">{side === "FOR" ? "REMATES CDA →" : "AMENAZAS RIVAL →"}</h3>
         </div>
         <span className="text-2xl font-black text-slate-500">{visible.length}</span>
       </div>
       <div className="relative aspect-[2/1] w-full overflow-hidden rounded-2xl bg-gradient-to-br from-sky-800 to-blue-950" aria-label={side === "FOR" ? "Mapa de remates CDA" : "Mapa de amenazas recibidas"}>
         <FutsalCourtMarkings />
-        {visible.map((point) => (
+        {visible.map((point) => {
+          const display = orientToAttackRight ? orientThreatPointForAttackRight(point, side) : point;
+          return (
           <button type="button"
             key={`${point.matchId}:${point.eventId}`}
             onClick={() => onSelect?.(point)}
             aria-label={`${point.outcome} · abrir evento ${point.eventId}`}
             title={pointTitle?.(point) ?? `${point.outcome} · X ${Math.round(point.x * 100)} · Y ${Math.round(point.y * 100)}`}
             className={`absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/80 shadow focus:ring-4 focus:ring-white/50 ${OUTCOME_COLOR[point.outcome]}`}
-            style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%` }}
+            data-stored-x={point.x}
+            data-display-x={display.x}
+            style={{ left: `${display.x * 100}%`, top: `${display.y * 100}%` }}
           />
-        ))}
+          );
+        })}
       </div>
     </article>
   );

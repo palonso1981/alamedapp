@@ -246,6 +246,22 @@ export function derivePitchOriginZone(point: { x: number; y: number }): PitchOri
   return `Z${far ? lane + 3 : lane}` as PitchOriginZone;
 }
 
+/** Deriva cercanía desde la portería defendida por cada lado sin mutar coordenadas. */
+export function deriveThreatOriginZone(
+  point: { x: number; y: number },
+  side: "FOR" | "AGAINST",
+): PitchOriginZone {
+  return derivePitchOriginZone(side === "FOR" ? { x: 1 - point.x, y: point.y } : point);
+}
+
+/** Transformación exclusiva de presentación para comparar ambos lados atacando a derecha. */
+export function orientThreatPointForAttackRight<T extends { x: number; y: number }>(
+  point: T,
+  side: "FOR" | "AGAINST",
+): { x: number; y: number } {
+  return { x: side === "AGAINST" ? 1 - point.x : point.x, y: point.y };
+}
+
 export function per40(value: number, observedMinutes: number): number | null {
   return observedMinutes > 0 ? (value / observedMinutes) * 40 : null;
 }
@@ -307,7 +323,7 @@ function emptyOutcomes(): Record<ThreatOutcome, number> {
 function addOnCourtEvent(player: PlayerAnalysis, event: MatchEvent): void {
   if (event.type === "threat_recorded") {
     const onTarget = event.outcome === "GOL" || event.outcome === "PARADA";
-    const near = ["Z1", "Z2", "Z3"].includes(derivePitchOriginZone(event.origin));
+    const near = ["Z1", "Z2", "Z3"].includes(deriveThreatOriginZone(event.origin, event.side));
     if (event.side === "FOR") { player.onCourt.threatsFor += 1; if (onTarget) player.onCourt.threatsForOnTarget += 1; if (near) player.onCourt.threatsForNear += 1; }
     else { player.onCourt.threatsAgainst += 1; if (onTarget) player.onCourt.threatsAgainstOnTarget += 1; if (near) player.onCourt.threatsAgainstNear += 1; }
     if (event.outcome === "GOL") {
@@ -468,8 +484,8 @@ export function buildDashboardAnalysis(
     const threats = record.session.events.filter((event): event is ThreatRecordedEvent => event.type === "threat_recorded" && event.deletedAt === null && (period === "ALL" || event.period === period));
     const shotsOnTarget = threats.filter((event) => event.side === "FOR" && (event.outcome === "GOL" || event.outcome === "PARADA")).length;
     const threatsOnTarget = threats.filter((event) => event.side === "AGAINST" && (event.outcome === "GOL" || event.outcome === "PARADA")).length;
-    const shotsNear = threats.filter((event) => event.side === "FOR" && ["Z1", "Z2", "Z3"].includes(derivePitchOriginZone(event.origin))).length;
-    const threatsNear = threats.filter((event) => event.side === "AGAINST" && ["Z1", "Z2", "Z3"].includes(derivePitchOriginZone(event.origin))).length;
+    const shotsNear = threats.filter((event) => event.side === "FOR" && ["Z1", "Z2", "Z3"].includes(deriveThreatOriginZone(event.origin, event.side))).length;
+    const threatsNear = threats.filter((event) => event.side === "AGAINST" && ["Z1", "Z2", "Z3"].includes(deriveThreatOriginZone(event.origin, event.side))).length;
     const saves = one.threats.AGAINST.PARADA;
     const goals = one.threats.AGAINST.GOL;
     return { matchId: record.catalog.matchId, opponent: record.catalog.opponent, date: record.catalog.date, venue: record.catalog.venue, result: resultFor(record), threatsFor: one.threats.FOR.total, threatsAgainst: one.threats.AGAINST.total, goalsFor: one.goalsFor, goalsAgainst: one.goalsAgainst, shotsOnTarget, threatsOnTarget, shotsNear, threatsNear, savePercentage: saves + goals > 0 ? saves / (saves + goals) * 100 : null, pjForMinutes: 0, pjAgainstMinutes: 0 };
@@ -531,7 +547,7 @@ export function buildDashboardAnalysis(
         if (player) {
           player.ownThreats += 1;
           if (event.outcome === "GOL" || event.outcome === "PARADA") player.ownOnTarget += 1;
-          if (["Z1", "Z2", "Z3"].includes(derivePitchOriginZone(event.origin))) player.ownNear += 1;
+          if (["Z1", "Z2", "Z3"].includes(deriveThreatOriginZone(event.origin, event.side))) player.ownNear += 1;
           const trend = player.trend.find((item) => item.matchId === session.matchId);
           if (trend) trend.threats += 1;
           player.ownOutcomes[event.outcome] += 1;

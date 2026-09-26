@@ -4,6 +4,7 @@ import {
   ThreatOutcome,
   ThreatPhase,
   ThreatRecordedEvent,
+  ThreatSide,
 } from "../types";
 import {
   DashboardMatchRecord,
@@ -16,6 +17,7 @@ import {
   DashboardAnalysis,
   PitchOriginZone,
   PlayerAnalysis,
+  deriveThreatOriginZone,
   per40,
   ResultFilter,
   VenueFilter,
@@ -29,6 +31,7 @@ export type DashboardValueMode = "TOTALS" | "PER_MATCH" | "PER_40";
 export type DashboardArea = "SUMMARY" | "TEAM" | "PLAYERS" | "GOALKEEPERS" | "MAPS";
 export type DashboardPhaseFilter = ThreatPhase | "SET_PIECE";
 export type DashboardCompetition = CompetitionType | "UNSPECIFIED" | "ALL";
+export type DashboardSetPieceTraceability = "ALL_CLASSIFIED" | "LINKED_RESTART_ONLY";
 export type DashboardReferencePreset =
   | "SEASON"
   | "HOME"
@@ -58,6 +61,8 @@ export interface DashboardScopeV2 {
   originZones: PitchOriginZone[];
   targetZones: GoalZoneV1[];
   outcomes: ThreatOutcome[];
+  threatSides: ThreatSide[];
+  setPieceTraceability: DashboardSetPieceTraceability;
   outcomeGroup: "ALL" | "ON_TARGET";
   originDistance: "ALL" | "NEAR" | "FAR";
   competitiveContext: CompetitiveContext;
@@ -72,6 +77,7 @@ export interface DashboardViewState {
   referencePreset: DashboardReferencePreset;
   mode: DashboardValueMode;
   area: DashboardArea;
+  comparisonEnabled?: boolean;
 }
 
 export interface OutcomeDistributionItem {
@@ -134,6 +140,8 @@ export function emptyDashboardScope(
     originZones: [],
     targetZones: [],
     outcomes: [],
+    threatSides: [],
+    setPieceTraceability: "ALL_CLASSIFIED",
     outcomeGroup: "ALL",
     originDistance: "ALL",
     competitiveContext: "ALL",
@@ -202,6 +210,8 @@ function threatMatches(
   record: DashboardMatchRecord,
   scope: DashboardScopeV2,
 ): boolean {
+  if (scope.threatSides.length > 0 && !scope.threatSides.includes(event.side)) return false;
+  if (scope.setPieceTraceability === "LINKED_RESTART_ONLY" && !linkedRestart(record.session.events, event)) return false;
   if (!phaseMatches(scope.phases, effectiveThreatPhase(record.session.events, event))) return false;
   if (scope.outcomes.length > 0 && !scope.outcomes.includes(event.outcome)) return false;
   if (scope.outcomeGroup === "ON_TARGET" && event.outcome !== "GOL" && event.outcome !== "PARADA") return false;
@@ -230,9 +240,164 @@ export function defaultDashboardCompetition(records: readonly DashboardMatchReco
 }
 
 function originZone(event: ThreatRecordedEvent): PitchOriginZone {
-  const far = event.origin.x >= 0.25;
-  const lane = event.origin.y >= 2 / 3 ? 1 : event.origin.y <= 1 / 3 ? 3 : 2;
-  return `Z${far ? lane + 3 : lane}` as PitchOriginZone;
+  return deriveThreatOriginZone(event.origin, event.side);
+}
+
+export function normalizeDashboardCount(
+  value: number,
+  mode: DashboardValueMode,
+  samples: number,
+  observedMinutes: number,
+): number | null {
+  if (mode === "TOTALS") return value;
+  if (mode === "PER_MATCH") return samples > 0 ? value / samples : null;
+  return per40(value, observedMinutes);
+}
+
+export interface TeamThreatProfile {
+  side: ThreatSide;
+  total: number;
+  goals: number;
+  saves: number;
+  outside: number;
+  blocked: number;
+  onTarget: number;
+  near: number;
+  pendingReview: number;
+  conversionPercentage: number | null;
+  onTargetPercentage: number | null;
+  outsidePercentage: number | null;
+  goalkeeperSavePercentage: number | null;
+}
+
+export function teamThreatProfile(events: readonly MatchEvent[], side: ThreatSide): TeamThreatProfile {
+  const threats = events.filter((event): event is ThreatRecordedEvent => event.type === "threat_recorded" && event.deletedAt === null && event.side === side);
+  const count = (outcome: ThreatOutcome) => threats.filter((event) => event.outcome === outcome).length;
+  const goals = count("GOL");
+  const saves = count("PARADA");
+  const outside = count("FUERA");
+  const blocked = count("BLOQUEADO");
+  const total = threats.length;
+  const onTarget = goals + saves;
+  const rate = (numerator: number, denominator: number) => denominator > 0 ? numerator / denominator * 100 : null;
+  return {
+    side,
+    total,
+    goals,
+    saves,
+    outside,
+    blocked,
+    onTarget,
+    near: threats.filter((event) => ["Z1", "Z2", "Z3"].includes(deriveThreatOriginZone(event.origin, side))).length,
+    pendingReview: threats.filter((event) => event.pendingReview).length,
+    conversionPercentage: rate(goals, total),
+    onTargetPercentage: rate(onTarget, total),
+    outsidePercentage: rate(outside, total),
+    goalkeeperSavePercentage: rate(saves, onTarget),
+  };
+}
+
+export function normalizedPhaseValue(
+  analysis: DashboardAnalysis,
+  phase: ThreatPhase,
+  side: ThreatSide,
+  mode: DashboardValueMode,
+): number | null {
+  return normalizeDashboardCount(analysis.analytics.phases[phase][side], mode, analysis.samples, analysis.rates.observedMinutes);
+}
+
+export function phaseScaleMaximum(
+  analysis: DashboardAnalysis,
+  reference: DashboardAnalysis | undefined,
+  phases: readonly ThreatPhase[],
+  mode: DashboardValueMode,
+): number {
+  const values = phases.flatMap((phase) => [
+    normalizedPhaseValue(analysis, phase, "FOR", mode),
+    normalizedPhaseValue(analysis, phase, "AGAINST", mode),
+    reference ? normalizedPhaseValue(reference, phase, "FOR", mode) : null,
+    reference ? normalizedPhaseValue(reference, phase, "AGAINST", mode) : null,
+  ]).filter((value): value is number => value !== null);
+  return Math.max(1, ...values);
+}
+
+export interface SetPiecePerformance {
+  phase: ThreatPhase;
+  side: ThreatSide;
+  opportunities: number | null;
+  threats: number;
+  onTarget: number;
+  goals: number;
+  linkedThreats: number;
+  linkedOpportunities: number;
+  linkageCoverage: number | null;
+  threatYield: number | null;
+  onTargetPercentage: number | null;
+  goalPercentage: number | null;
+}
+
+export function setPiecePerformance(
+  records: readonly DashboardMatchRecord[],
+  phase: "SET_PIECE_CORNER" | "SET_PIECE_KICK_IN" | "SET_PIECE_FREE_KICK",
+  side: ThreatSide,
+): SetPiecePerformance {
+  const threats: Array<{ event: ThreatRecordedEvent; events: readonly MatchEvent[] }> = [];
+  const opportunityIds = new Set<string>();
+  for (const record of records) {
+    const active = record.session.events.filter((event) => event.deletedAt === null);
+    if (phase !== "SET_PIECE_FREE_KICK") {
+      const kind = phase === "SET_PIECE_CORNER" ? "CORNER" : "DANGEROUS_KICK_IN";
+      active.forEach((event) => { if (event.type === "restart_recorded" && event.side === side && event.restart === kind) opportunityIds.add(event.id); });
+    }
+    active.forEach((event) => {
+      if (event.type === "threat_recorded" && event.side === side && effectiveThreatPhase([...active], event) === phase) threats.push({ event, events: active });
+    });
+  }
+  const linked = threats.map(({ event, events }) => linkedRestart(events, event)).filter((event) => event !== null);
+  const linkedOpportunityIds = new Set(linked.map((event) => event.id));
+  const rate = (numerator: number, denominator: number) => denominator > 0 ? numerator / denominator * 100 : null;
+  const opportunities = phase === "SET_PIECE_FREE_KICK" ? null : opportunityIds.size;
+  const onTarget = threats.filter(({ event }) => event.outcome === "GOL" || event.outcome === "PARADA").length;
+  const goals = threats.filter(({ event }) => event.outcome === "GOL").length;
+  return {
+    phase,
+    side,
+    opportunities,
+    threats: threats.length,
+    onTarget,
+    goals,
+    linkedThreats: linked.length,
+    linkedOpportunities: linkedOpportunityIds.size,
+    linkageCoverage: rate(linked.length, threats.length),
+    threatYield: opportunities === null ? null : rate(linkedOpportunityIds.size, opportunities),
+    onTargetPercentage: rate(onTarget, threats.length),
+    goalPercentage: rate(goals, threats.length),
+  };
+}
+
+function rootThreat(events: readonly MatchEvent[], event: ThreatRecordedEvent): ThreatRecordedEvent {
+  const byId = new Map(events.filter((candidate): candidate is ThreatRecordedEvent => candidate.type === "threat_recorded").map((candidate) => [candidate.id, candidate]));
+  let current = event;
+  const visited = new Set<string>();
+  while (current.parentEventId && !visited.has(current.id)) {
+    visited.add(current.id);
+    const parent = byId.get(current.parentEventId);
+    if (!parent) break;
+    current = parent;
+  }
+  if (event.sequenceId) return byId.get(event.sequenceId) ?? current;
+  return current;
+}
+
+export function linkedRestart(events: readonly MatchEvent[], event: ThreatRecordedEvent) {
+  const root = rootThreat(events, event);
+  if (!root.restartEventId) return null;
+  const restart = events.find((candidate) => candidate.id === root.restartEventId);
+  if (!restart || restart.deletedAt !== null || restart.type !== "restart_recorded" || restart.side !== root.side) return null;
+  const phase = effectiveThreatPhase([...events], root);
+  if (restart.restart === "CORNER" && phase !== "SET_PIECE_CORNER") return null;
+  if (restart.restart === "DANGEROUS_KICK_IN" && phase !== "SET_PIECE_KICK_IN") return null;
+  return restart;
 }
 
 function eventMatches(
@@ -298,6 +463,8 @@ export function filterDashboardEventSelection(
 ): DashboardMatchRecord[] {
   const filtered = filterDashboardDataset(records, scope);
   const hasThreatFilter = scope.phases.length > 0
+    || scope.threatSides.length > 0
+    || scope.setPieceTraceability !== "ALL_CLASSIFIED"
     || scope.outcomes.length > 0
     || scope.outcomeGroup !== "ALL"
     || scope.originDistance !== "ALL"
@@ -498,6 +665,13 @@ export function outcomeDistribution(
 
 export type TeamMetricKey = "threatsFor" | "threatsAgainst" | "goalsFor" | "goalsAgainst" | "foulsFor" | "foulsAgainst" | "possessionLosses";
 
+export type TeamPlayerTableMetricKey =
+  | "matches" | "minutes" | "avgMinutes" | "goals" | "assists" | "threats" | "possessionLosses"
+  | "points" | "plusMinus" | "goalsFor" | "goalsAgainst" | "threatsFor" | "threatsAgainst" | "threatBalance"
+  | "onTargetFor" | "onTargetAgainst" | "onTargetBalance" | "nearFor" | "nearAgainst" | "nearBalance"
+  | "keyMinutes" | "keyPercentage" | "goldMinutes" | "goldPercentage"
+  | "foulsCommitted" | "foulsReceived" | "criticalCommitted" | "criticalReceived" | "yellowCards" | "redCards" | "score";
+
 export function teamMetricValue(
   analysis: DashboardAnalysis,
   metric: TeamMetricKey,
@@ -520,6 +694,70 @@ export function teamMetricValue(
             : metric === "foulsFor" ? "foulsFor40"
               : metric === "foulsAgainst" ? "foulsAgainst40" : "possessionLosses40"
   ];
+}
+
+/**
+ * Agregado cronológico del equipo para la tabla de jugadores. Nunca se deriva
+ * sumando o promediando filas individuales: los conteos salen de eventos y los
+ * tiempos de los intervalos del equipo ya acotados por el scope activo.
+ */
+export function teamPlayerTableMetricValue(
+  analysis: DashboardAnalysis,
+  metric: TeamPlayerTableMetricKey,
+  mode: DashboardValueMode,
+): number | null {
+  const matches = analysis.samples;
+  const observedMinutes = analysis.rates.observedMinutes;
+  const normalizeCount = (value: number) => mode === "TOTALS" ? value
+    : mode === "PER_MATCH" ? matches > 0 ? value / matches : null
+      : per40(value, observedMinutes);
+  const normalizeTime = (value: number) => mode === "TOTALS" ? value
+    : mode === "PER_MATCH" ? matches > 0 ? value / matches : null
+      : per40(value, observedMinutes);
+  const threatsFor = derivedThreatSummary(analysis.records.flatMap((record) => record.session.events), "FOR");
+  const threatsAgainst = derivedThreatSummary(analysis.records.flatMap((record) => record.session.events), "AGAINST");
+
+  if (metric === "matches") return analysis.analytics.matches;
+  if (metric === "minutes") return normalizeTime(observedMinutes);
+  if (metric === "avgMinutes") return matches > 0 ? observedMinutes / matches : null;
+  if (metric === "goals" || metric === "goalsFor") return normalizeCount(analysis.analytics.goalsFor);
+  if (metric === "goalsAgainst") return normalizeCount(analysis.analytics.goalsAgainst);
+  if (metric === "plusMinus") return normalizeCount(analysis.analytics.goalsFor - analysis.analytics.goalsAgainst);
+  if (metric === "assists") {
+    const assists = analysis.records.flatMap((record) => record.session.events).filter((event) =>
+      event.deletedAt === null
+      && event.type === "threat_recorded"
+      && event.side === "FOR"
+      && event.outcome === "GOL"
+      && event.assist?.status === "PLAYER"
+    ).length;
+    return normalizeCount(assists);
+  }
+  if (metric === "threats" || metric === "threatsFor") return normalizeCount(threatsFor.total);
+  if (metric === "threatsAgainst") return normalizeCount(threatsAgainst.total);
+  if (metric === "threatBalance") return normalizeCount(threatsFor.total - threatsAgainst.total);
+  if (metric === "onTargetFor") return normalizeCount(threatsFor.onTarget);
+  if (metric === "onTargetAgainst") return normalizeCount(threatsAgainst.onTarget);
+  if (metric === "onTargetBalance") return normalizeCount(threatsFor.onTarget - threatsAgainst.onTarget);
+  if (metric === "nearFor") return normalizeCount(threatsFor.near);
+  if (metric === "nearAgainst") return normalizeCount(threatsAgainst.near);
+  if (metric === "nearBalance") return normalizeCount(threatsFor.near - threatsAgainst.near);
+  if (metric === "possessionLosses") return normalizeCount(analysis.possessionLosses);
+  if (metric === "foulsCommitted") return normalizeCount(analysis.analytics.discipline.for.fouls);
+  if (metric === "foulsReceived") return normalizeCount(analysis.analytics.discipline.against.fouls);
+  if (metric === "criticalCommitted") return normalizeCount(analysis.criticalFouls.for);
+  if (metric === "criticalReceived") return normalizeCount(analysis.criticalFouls.against);
+  if (metric === "yellowCards") return normalizeCount(analysis.analytics.discipline.for.yellowCards);
+  if (metric === "redCards") return normalizeCount(analysis.analytics.discipline.for.redCards);
+  if (metric === "keyMinutes") return normalizeTime(analysis.teamKeyMinutes);
+  if (metric === "goldMinutes") return normalizeTime(analysis.teamGoldMinutes);
+  if (metric === "keyPercentage") return observedMinutes > 0 ? analysis.teamKeyMinutes / observedMinutes * 100 : null;
+  if (metric === "goldPercentage") return observedMinutes > 0 ? analysis.teamGoldMinutes / observedMinutes * 100 : null;
+  if (metric === "points") {
+    const points = analysis.trends.reduce((sum, trend) => sum + (trend.result === "WIN" ? 3 : trend.result === "DRAW" ? 1 : 0), 0);
+    return mode === "TOTALS" ? points : mode === "PER_MATCH" ? matches > 0 ? points / matches : null : per40(points, observedMinutes);
+  }
+  return null;
 }
 
 export type PairedMetricId = "GOALS" | "THREATS" | "ON_TARGET" | "NEAR";
@@ -658,7 +896,7 @@ export function stableSortByMetric<T>(
     .map(({ item }) => item);
 }
 
-const LIST_KEYS = ["matchIds", "venues", "results", "rivals", "phases", "playerIds", "goalkeeperIds", "originZones", "targetZones", "outcomes"] as const;
+const LIST_KEYS = ["matchIds", "venues", "results", "rivals", "phases", "playerIds", "goalkeeperIds", "originZones", "targetZones", "outcomes", "threatSides"] as const;
 
 export function scopeToSearchParams(scope: DashboardScopeV2, prefix: "a" | "r"): URLSearchParams {
   const params = new URLSearchParams();
@@ -673,6 +911,7 @@ export function scopeToSearchParams(scope: DashboardScopeV2, prefix: "a" | "r"):
   if (scope.competitiveContext !== "ALL") params.set(`${prefix}Context`, scope.competitiveContext);
   if (scope.playingState !== "ALL") params.set(`${prefix}PJState`, scope.playingState);
   if (scope.scoreState !== "ALL") params.set(`${prefix}ScoreState`, scope.scoreState);
+  if (scope.setPieceTraceability !== "ALL_CLASSIFIED") params.set(`${prefix}Traceability`, scope.setPieceTraceability);
   for (const key of LIST_KEYS) if (scope[key].length > 0) params.set(`${prefix}${key}`, scope[key].join("~"));
   return params;
 }
@@ -698,7 +937,10 @@ export function scopeFromSearchParams(
     competitiveContext: params.get(`${prefix}Context`) === "KEY" ? "KEY" : params.get(`${prefix}Context`) === "GOLD" ? "GOLD" : fallback.competitiveContext,
     playingState: params.get(`${prefix}PJState`) === "PJ_CDA" ? "PJ_CDA" : params.get(`${prefix}PJState`) === "PJ_RIVAL" ? "PJ_RIVAL" : fallback.playingState,
     scoreState: params.get(`${prefix}ScoreState`) === "LEADING" ? "LEADING" : params.get(`${prefix}ScoreState`) === "DRAWING" ? "DRAWING" : params.get(`${prefix}ScoreState`) === "TRAILING" ? "TRAILING" : fallback.scoreState,
-    matchIds: read<string>("matchIds"),
+    setPieceTraceability: params.get(`${prefix}Traceability`) === "LINKED_RESTART_ONLY" ? "LINKED_RESTART_ONLY" : fallback.setPieceTraceability,
+    matchIds: params.has(`${prefix}matchIds`)
+      ? read<string>("matchIds")
+      : [params.get(`${prefix}Match`), params.get(`${prefix}MatchId`)].filter((value): value is string => Boolean(value)),
     venues: read<Exclude<VenueFilter, "ALL">>("venues"),
     results: read<Exclude<ResultFilter, "ALL">>("results"),
     rivals: read<string>("rivals"),
@@ -708,11 +950,12 @@ export function scopeFromSearchParams(
     originZones: read<PitchOriginZone>("originZones"),
     targetZones: read<GoalZoneV1>("targetZones"),
     outcomes: read<ThreatOutcome>("outcomes"),
+    threatSides: read<ThreatSide>("threatSides"),
   };
 }
 
 export function hasDashboardScopeSearchParams(params: URLSearchParams, prefix: "a" | "r"): boolean {
-  const scalarKeys = ["Club", "Team", "Season", "Competition", "Period", "Archived", "OutcomeGroup", "Distance", "Context", "PJState", "ScoreState"];
+  const scalarKeys = ["Club", "Team", "Season", "Competition", "Period", "Archived", "OutcomeGroup", "Distance", "Context", "PJState", "ScoreState", "Traceability"];
   return [...scalarKeys, ...LIST_KEYS].some((key) => params.has(`${prefix}${key}`));
 }
 
@@ -729,5 +972,11 @@ export function mergeDashboardSearchParams(
   params.set("mode", view.mode);
   params.set("area", view.area);
   params.set("reference", view.referencePreset);
+  if (view.comparisonEnabled === false) params.set("compare", "off");
+  else params.delete("compare");
   return params.toString();
+}
+
+export function comparisonEnabledFromSearchParams(params: URLSearchParams): boolean {
+  return params.get("compare") !== "off";
 }
