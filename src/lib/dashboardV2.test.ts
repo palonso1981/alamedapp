@@ -11,6 +11,7 @@ import { dashboardMapPointTitle, resolveDashboardMapPoint } from "./dashboardTra
 import { revisionEventHref, safeDashboardReturnTo } from "./dashboardNavigation";
 import { adaptiveChartLayout, filterSearchableMatches, searchableMatchLabel } from "./dashboardSelectors";
 import { withCurrentPlayerIdentity } from "./dashboardIdentity";
+import { COMPARISON_BAR_MAX_PERCENT, comparisonBarPercentage, comparisonBarValueStyle } from "./dashboardBarLayout";
 import { createMasterPlayer } from "./rosterDomain";
 
 test("returnTo acepta solo rutas Dashboard internas y conserva la identidad del evento", () => {
@@ -70,6 +71,7 @@ import {
   stableSortByMetric,
   teamMetricValue,
   teamPairedMetricValue,
+  teamPlayerTableMetricValue,
 } from "./dashboardV2";
 
 test("% Clave/Oro usa minutos cronológicos del equipo y N/D sin denominador", () => {
@@ -236,6 +238,63 @@ test("modos usan denominadores compatibles y N/D sin minutos", () => {
   const player = analysis.players[0];
   assert.equal(playerMetricValue(player, "goals", "PER_MATCH"), player.goals / player.matches);
   assert.equal(playerMetricValue(player, "points", "PER_40"), null);
+});
+
+test("EQUIPO agrega partidos, goles y balance sin promediar jugadores", () => {
+  const records = [pointsRecord("team-a", 1, 0), pointsRecord("team-b", 0, 1)];
+  const analysis = buildDashboardV2(records, { ...baseScope(), matchIds: records.map((record) => record.catalog.matchId) });
+  assert.equal(teamPlayerTableMetricValue(analysis, "matches", "TOTALS"), 2);
+  assert.equal(teamPlayerTableMetricValue(analysis, "goals", "TOTALS"), 1);
+  assert.equal(teamPlayerTableMetricValue(analysis, "goalsFor", "TOTALS"), 1);
+  assert.equal(teamPlayerTableMetricValue(analysis, "goalsAgainst", "TOTALS"), 1);
+  assert.equal(teamPlayerTableMetricValue(analysis, "plusMinus", "TOTALS"), 0);
+  assert.equal(teamPlayerTableMetricValue(analysis, "goals", "PER_MATCH"), .5);
+  assert.equal(teamPlayerTableMetricValue(analysis, "goals", "PER_40"), analysis.rates.goalsFor40);
+  assert.equal(teamPlayerTableMetricValue(analysis, "yellowCards", "TOTALS"), analysis.analytics.discipline.for.yellowCards);
+  assert.equal(teamPlayerTableMetricValue(analysis, "redCards", "TOTALS"), analysis.analytics.discipline.for.redCards);
+  assert.notEqual(teamPlayerTableMetricValue(analysis, "goals", "TOTALS"), squadAverage(analysis.players, (player) => player.goals).value);
+});
+
+test("EQUIPO usa un único reloj cronológico pese a sustituciones y reparto de porteros", () => {
+  const record = buildDashboardFixture()[17];
+  const analysis = buildDashboardV2([record], { ...baseScope(), matchIds: [record.catalog.matchId] });
+  const playerMinutes = analysis.players.reduce((sum, player) => sum + player.minutes, 0);
+  const goalkeeperMinutes = analysis.goalkeepers.reduce((sum, goalkeeper) => sum + goalkeeper.minutes, 0);
+  assert.equal(teamPlayerTableMetricValue(analysis, "minutes", "TOTALS"), analysis.rates.observedMinutes);
+  assert.ok(playerMinutes > analysis.rates.observedMinutes);
+  assert.ok(goalkeeperMinutes >= analysis.rates.observedMinutes);
+  assert.equal(teamPlayerTableMetricValue(analysis, "minutes", "PER_MATCH"), analysis.rates.observedMinutes / analysis.samples);
+  assert.equal(teamPlayerTableMetricValue(analysis, "minutes", "PER_40"), 40);
+});
+
+test("EQUIPO calcula minutos ganando, empatando y perdiendo desde intervalos del scope", () => {
+  const record = competitiveFortyMinuteRecord();
+  for (const scoreState of ["LEADING", "DRAWING", "TRAILING"] as const) {
+    const analysis = buildDashboardV2([record], { ...baseScope(), matchIds: [record.catalog.matchId], scoreState });
+    const expected = deriveCompetitiveMinutes(record.session, "ALL", "ALL", [], "ALL", scoreState).observed;
+    assert.equal(teamPlayerTableMetricValue(analysis, "minutes", "TOTALS"), expected);
+    assert.ok(analysis.players.reduce((sum, player) => sum + player.minutes, 0) >= expected);
+  }
+});
+
+test("EQUIPO conserva filtros combinados y deriva ratios desde numerador y denominador agregados", () => {
+  const scope = { ...baseScope(), period: 2 as const, venues: ["AWAY" as const], phases: ["SET_PIECE_CORNER" as const], outcomeGroup: "ON_TARGET" as const };
+  const analysis = buildDashboardV2(buildDashboardFixture(), scope);
+  assert.equal(teamPlayerTableMetricValue(analysis, "threats", "TOTALS"), analysis.analytics.threats.FOR.total);
+  assert.equal(teamPlayerTableMetricValue(analysis, "keyPercentage", "TOTALS"), analysis.rates.observedMinutes > 0 ? analysis.teamKeyMinutes / analysis.rates.observedMinutes * 100 : null);
+  assert.equal(teamPlayerTableMetricValue(analysis, "goldPercentage", "PER_40"), analysis.rates.observedMinutes > 0 ? analysis.teamGoldMinutes / analysis.rates.observedMinutes * 100 : null);
+  assert.equal(teamPlayerTableMetricValue(analysis, "onTargetBalance", "TOTALS"), teamPairedMetricValue(analysis, "ON_TARGET", "TOTALS").difference);
+});
+
+test("valores de barras quedan fuera junto al extremo con escalado seguro para barras cortas y largas", () => {
+  const short = comparisonBarPercentage(1, 100);
+  const long = comparisonBarPercentage(100, 100);
+  assert.ok(short > 0 && short < long);
+  assert.equal(long, COMPARISON_BAR_MAX_PERCENT);
+  assert.deepEqual(comparisonBarValueStyle("left", short), { right: `calc(${short}% + 0.35rem)` });
+  assert.deepEqual(comparisonBarValueStyle("right", long), { left: `calc(${long}% + 0.35rem)` });
+  assert.equal(comparisonBarPercentage(null, 100), 0);
+  assert.equal(comparisonBarPercentage(200, 100), COMPARISON_BAR_MAX_PERCENT);
 });
 
 test("distribución conserva cantidades y porcentajes suma 100", () => {
