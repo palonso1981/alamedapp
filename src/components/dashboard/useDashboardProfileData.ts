@@ -6,7 +6,7 @@ import { DashboardMatchRecord } from "../../lib/dashboardAnalytics";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "../../lib/dashboardFixture";
 import { listMatchCatalog, matchCatalogClubId, visibleMatchCatalog } from "../../lib/matchCatalog";
 import { loadMatchSession } from "../../lib/matchPersistence";
-import { buildDashboardV2, DashboardArea, DashboardReferencePreset, DashboardScopeV2, DashboardValueMode, defaultDashboardCompetition, emptyDashboardScope, hasDashboardScopeSearchParams, matchCompetition, mergeDashboardSearchParams, referenceScopeForPreset, scopeFromSearchParams } from "../../lib/dashboardV2";
+import { buildDashboardV2, comparisonEnabledFromSearchParams, DashboardArea, DashboardReferencePreset, DashboardScopeV2, DashboardValueMode, defaultDashboardCompetition, emptyDashboardScope, hasDashboardScopeSearchParams, matchCompetition, mergeDashboardSearchParams, referenceScopeForPreset, scopeFromSearchParams } from "../../lib/dashboardV2";
 import { replayMatch } from "../../lib/matchEngine";
 import { withCurrentPlayerIdentity } from "../../lib/dashboardIdentity";
 import { useTeamStore } from "../../store/useTeamStore";
@@ -34,6 +34,7 @@ export function useDashboardProfileData(pathname: string, area: DashboardArea = 
   const [referenceScope, setReferenceScope] = useState<DashboardScopeV2>(() => emptyDashboardScope());
   const [referencePreset, setReferencePreset] = useState<DashboardReferencePreset>("SEASON");
   const [mode, setMode] = useState<DashboardValueMode>("TOTALS");
+  const [comparisonEnabled, setComparisonEnabled] = useState(true);
   const [ready, setReady] = useState(false);
 
   useEffect(() => ensureRegistry(), [ensureRegistry]);
@@ -54,6 +55,7 @@ export function useDashboardProfileData(pathname: string, area: DashboardArea = 
     setReferencePreset(preset);
     setReferenceScope(hasDashboardScopeSearchParams(params, "r") ? scopeFromSearchParams(params, "r", referenceScopeForPreset(parsedScope, preset)) : referenceScopeForPreset(parsedScope, preset));
     setMode((params.get("mode") as DashboardValueMode) ?? "TOTALS");
+    setComparisonEnabled(comparisonEnabledFromSearchParams(params));
     setReady(true);
   }, [currentClubId, ensureTeam, fixture, ready, registryReady, searchParams]);
 
@@ -88,10 +90,10 @@ export function useDashboardProfileData(pathname: string, area: DashboardArea = 
 
   useEffect(() => {
     if (!ready) return;
-    const query = mergeDashboardSearchParams({ analysis: scope, reference: referenceScope, referencePreset, mode, area }, new URLSearchParams(searchParams.toString()));
+    const query = mergeDashboardSearchParams({ analysis: scope, reference: referenceScope, referencePreset, mode, area, comparisonEnabled }, new URLSearchParams(searchParams.toString()));
     if (query !== searchParams.toString()) router.replace(`${pathname}?${query}`, { scroll: false });
-  }, [area, mode, pathname, ready, referencePreset, referenceScope, router, scope, searchParams]);
+  }, [area, comparisonEnabled, mode, pathname, ready, referencePreset, referenceScope, router, scope, searchParams]);
 
-  const query = mergeDashboardSearchParams({ analysis: scope, reference: referenceScope, referencePreset, mode, area }, new URLSearchParams(fixture ? "fixture=1" : ""));
-  return { analysis, clubs, currentClubId, fixture, matches, mode, query, ready, records: resolvedRecords, reference, referenceScope, referencePreset, rivals, scope, seasons, setCurrentClub, setMode, setReferencePreset: changeReferencePreset, setReferenceScope, setScope, teams, workspace, refresh: () => setRecords(fixture ? buildDashboardFixture() : localRecords()) };
+  const query = mergeDashboardSearchParams({ analysis: scope, reference: referenceScope, referencePreset, mode, area, comparisonEnabled }, new URLSearchParams(fixture ? "fixture=1" : ""));
+  return { analysis, clubs, comparisonEnabled, currentClubId, fixture, matches, mode, query, ready, records: resolvedRecords, reference, referenceScope, referencePreset, rivals, scope, seasons, setComparisonEnabled, setCurrentClub, setMode, setReferencePreset: changeReferencePreset, setReferenceScope, setScope, teams, workspace, refresh: () => setRecords(fixture ? buildDashboardFixture() : localRecords()) };
 }

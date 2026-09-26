@@ -7,6 +7,19 @@ export interface SearchableMatch extends MatchCatalogEntry {
   scoreLabel?: string;
 }
 
+export function toggleMatchSelection(values: readonly string[], matchId: string): string[] {
+  return values.includes(matchId) ? values.filter((value) => value !== matchId) : [...values, matchId];
+}
+
+export function matchSelectionLabel(matches: readonly SearchableMatch[], values: readonly string[], allLabel = "Todos los partidos"): string {
+  if (values.length === 0) return allLabel;
+  if (values.length === 1) {
+    const selected = matches.find((match) => match.matchId === values[0]);
+    return selected ? searchableMatchLabel(selected) : values[0];
+  }
+  return `${values.length} partidos seleccionados`;
+}
+
 export function normalizeDashboardSearch(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es").trim().replace(/\s+/g, " ");
 }

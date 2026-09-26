@@ -9,8 +9,9 @@ import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEA
 import { compareMetricValues, METRIC_DEFINITIONS } from "./dashboardMetricDefinitions";
 import { dashboardMapPointTitle, resolveDashboardMapPoint } from "./dashboardTrace";
 import { revisionEventHref, safeDashboardReturnTo } from "./dashboardNavigation";
-import { adaptiveChartLayout, filterSearchableMatches, searchableMatchLabel } from "./dashboardSelectors";
+import { adaptiveChartLayout, filterSearchableMatches, matchSelectionLabel, searchableMatchLabel, toggleMatchSelection } from "./dashboardSelectors";
 import { withCurrentPlayerIdentity } from "./dashboardIdentity";
+import { COMPARISON_BAR_MAX_PERCENT, comparisonBarPercentage, comparisonBarValueStyle } from "./dashboardBarLayout";
 import { createMasterPlayer } from "./rosterDomain";
 
 test("returnTo acepta solo rutas Dashboard internas y conserva la identidad del evento", () => {
@@ -55,6 +56,7 @@ import {
   buildDashboardV2,
   buildPlayerScores,
   chronologicalParticipationPercentage,
+  comparisonEnabledFromSearchParams,
   defaultDashboardCompetition,
   derivedThreatSummary,
   emptyDashboardScope,
@@ -70,6 +72,7 @@ import {
   stableSortByMetric,
   teamMetricValue,
   teamPairedMetricValue,
+  teamPlayerTableMetricValue,
 } from "./dashboardV2";
 
 test("% Clave/Oro usa minutos cronológicos del equipo y N/D sin denominador", () => {
@@ -185,6 +188,52 @@ test("scope y referencia viajan separados por URL y sobreviven reload", () => {
   assert.equal(params.get("area"), "PLAYERS");
 });
 
+test("multiselección conserva uno o varios partidos en DashboardScopeV2 y en URL", () => {
+  const records = buildDashboardFixture();
+  const selected = [records[0].catalog.matchId, records[17].catalog.matchId];
+  const scope = { ...baseScope(), competition: "ALL" as const, matchIds: selected };
+  const filtered = filterDashboardDataset(records, scope);
+  assert.deepEqual(filtered.map((record) => record.catalog.matchId).sort(), [...selected].sort());
+  const query = mergeDashboardSearchParams({ analysis: scope, reference: scope, referencePreset: "SEASON", mode: "TOTALS", area: "SUMMARY", comparisonEnabled: false });
+  const params = new URLSearchParams(query);
+  assert.deepEqual(scopeFromSearchParams(params, "a", baseScope()).matchIds, selected);
+  assert.equal(comparisonEnabledFromSearchParams(params), false);
+  assert.equal(comparisonEnabledFromSearchParams(new URLSearchParams()), true);
+});
+
+test("selector múltiple marca, desmarca, limpia y resume la selección", () => {
+  const records = buildDashboardFixture().slice(0, 2);
+  const matches = records.map((record) => ({ ...record.catalog }));
+  const first = records[0].catalog.matchId;
+  const second = records[1].catalog.matchId;
+  assert.deepEqual(toggleMatchSelection([], first), [first]);
+  assert.deepEqual(toggleMatchSelection([first], second), [first, second]);
+  assert.deepEqual(toggleMatchSelection([first, second], first), [second]);
+  assert.equal(matchSelectionLabel(matches, [], "Todos"), "Todos");
+  assert.match(matchSelectionLabel(matches, [first]), new RegExp(records[0].catalog.opponent));
+  assert.equal(matchSelectionLabel(matches, [first, second]), "2 partidos seleccionados");
+});
+
+test("multiselección combina libremente competición, sede, periodo y estado del marcador", () => {
+  const records = buildDashboardFixture();
+  const home = records.find((record) => record.catalog.venue === "HOME" && record.session.preparation?.competitionType === "LEAGUE")!;
+  const away = records.find((record) => record.catalog.venue === "AWAY" && record.session.preparation?.competitionType === "FRIENDLY")!;
+  const selected = [home.catalog.matchId, away.catalog.matchId];
+  const mixed = buildDashboardV2(records, { ...baseScope(), competition: "ALL", matchIds: selected });
+  assert.equal(mixed.samples, 2);
+  assert.equal(teamPlayerTableMetricValue(mixed, "matches", "TOTALS"), 2);
+  assert.equal(teamPlayerTableMetricValue(mixed, "goals", "PER_MATCH"), mixed.analytics.goalsFor / 2);
+  assert.equal(teamPlayerTableMetricValue(mixed, "goals", "PER_40"), mixed.rates.goalsFor40);
+  const awayP2 = filterDashboardDataset(records, { ...baseScope(), competition: "ALL", matchIds: selected, venues: ["AWAY"], period: 2, scoreState: "DRAWING" });
+  assert.ok(awayP2.every((record) => record.catalog.matchId === away.catalog.matchId));
+  assert.ok(awayP2.flatMap((record) => record.session.events).every((event) => event.period === 2));
+});
+
+test("una URL legacy de partido único sigue hidratando matchIds", () => {
+  assert.deepEqual(scopeFromSearchParams(new URLSearchParams("aMatch=legacy-one"), "a", baseScope()).matchIds, ["legacy-one"]);
+  assert.deepEqual(scopeFromSearchParams(new URLSearchParams("aMatchId=legacy-two"), "a", baseScope()).matchIds, ["legacy-two"]);
+});
+
 test("una URL parcial de referencia se reconoce sin exigir rClub", () => {
   const params = new URLSearchParams("fixture=1&reference=CUSTOM&aScoreState=LEADING&rScoreState=TRAILING");
   assert.equal(hasDashboardScopeSearchParams(params, "r"), true);
@@ -236,6 +285,63 @@ test("modos usan denominadores compatibles y N/D sin minutos", () => {
   const player = analysis.players[0];
   assert.equal(playerMetricValue(player, "goals", "PER_MATCH"), player.goals / player.matches);
   assert.equal(playerMetricValue(player, "points", "PER_40"), null);
+});
+
+test("EQUIPO agrega partidos, goles y balance sin promediar jugadores", () => {
+  const records = [pointsRecord("team-a", 1, 0), pointsRecord("team-b", 0, 1)];
+  const analysis = buildDashboardV2(records, { ...baseScope(), matchIds: records.map((record) => record.catalog.matchId) });
+  assert.equal(teamPlayerTableMetricValue(analysis, "matches", "TOTALS"), 2);
+  assert.equal(teamPlayerTableMetricValue(analysis, "goals", "TOTALS"), 1);
+  assert.equal(teamPlayerTableMetricValue(analysis, "goalsFor", "TOTALS"), 1);
+  assert.equal(teamPlayerTableMetricValue(analysis, "goalsAgainst", "TOTALS"), 1);
+  assert.equal(teamPlayerTableMetricValue(analysis, "plusMinus", "TOTALS"), 0);
+  assert.equal(teamPlayerTableMetricValue(analysis, "goals", "PER_MATCH"), .5);
+  assert.equal(teamPlayerTableMetricValue(analysis, "goals", "PER_40"), analysis.rates.goalsFor40);
+  assert.equal(teamPlayerTableMetricValue(analysis, "yellowCards", "TOTALS"), analysis.analytics.discipline.for.yellowCards);
+  assert.equal(teamPlayerTableMetricValue(analysis, "redCards", "TOTALS"), analysis.analytics.discipline.for.redCards);
+  assert.notEqual(teamPlayerTableMetricValue(analysis, "goals", "TOTALS"), squadAverage(analysis.players, (player) => player.goals).value);
+});
+
+test("EQUIPO usa un único reloj cronológico pese a sustituciones y reparto de porteros", () => {
+  const record = buildDashboardFixture()[17];
+  const analysis = buildDashboardV2([record], { ...baseScope(), matchIds: [record.catalog.matchId] });
+  const playerMinutes = analysis.players.reduce((sum, player) => sum + player.minutes, 0);
+  const goalkeeperMinutes = analysis.goalkeepers.reduce((sum, goalkeeper) => sum + goalkeeper.minutes, 0);
+  assert.equal(teamPlayerTableMetricValue(analysis, "minutes", "TOTALS"), analysis.rates.observedMinutes);
+  assert.ok(playerMinutes > analysis.rates.observedMinutes);
+  assert.ok(goalkeeperMinutes >= analysis.rates.observedMinutes);
+  assert.equal(teamPlayerTableMetricValue(analysis, "minutes", "PER_MATCH"), analysis.rates.observedMinutes / analysis.samples);
+  assert.equal(teamPlayerTableMetricValue(analysis, "minutes", "PER_40"), 40);
+});
+
+test("EQUIPO calcula minutos ganando, empatando y perdiendo desde intervalos del scope", () => {
+  const record = competitiveFortyMinuteRecord();
+  for (const scoreState of ["LEADING", "DRAWING", "TRAILING"] as const) {
+    const analysis = buildDashboardV2([record], { ...baseScope(), matchIds: [record.catalog.matchId], scoreState });
+    const expected = deriveCompetitiveMinutes(record.session, "ALL", "ALL", [], "ALL", scoreState).observed;
+    assert.equal(teamPlayerTableMetricValue(analysis, "minutes", "TOTALS"), expected);
+    assert.ok(analysis.players.reduce((sum, player) => sum + player.minutes, 0) >= expected);
+  }
+});
+
+test("EQUIPO conserva filtros combinados y deriva ratios desde numerador y denominador agregados", () => {
+  const scope = { ...baseScope(), period: 2 as const, venues: ["AWAY" as const], phases: ["SET_PIECE_CORNER" as const], outcomeGroup: "ON_TARGET" as const };
+  const analysis = buildDashboardV2(buildDashboardFixture(), scope);
+  assert.equal(teamPlayerTableMetricValue(analysis, "threats", "TOTALS"), analysis.analytics.threats.FOR.total);
+  assert.equal(teamPlayerTableMetricValue(analysis, "keyPercentage", "TOTALS"), analysis.rates.observedMinutes > 0 ? analysis.teamKeyMinutes / analysis.rates.observedMinutes * 100 : null);
+  assert.equal(teamPlayerTableMetricValue(analysis, "goldPercentage", "PER_40"), analysis.rates.observedMinutes > 0 ? analysis.teamGoldMinutes / analysis.rates.observedMinutes * 100 : null);
+  assert.equal(teamPlayerTableMetricValue(analysis, "onTargetBalance", "TOTALS"), teamPairedMetricValue(analysis, "ON_TARGET", "TOTALS").difference);
+});
+
+test("valores de barras quedan fuera junto al extremo con escalado seguro para barras cortas y largas", () => {
+  const short = comparisonBarPercentage(1, 100);
+  const long = comparisonBarPercentage(100, 100);
+  assert.ok(short > 0 && short < long);
+  assert.equal(long, COMPARISON_BAR_MAX_PERCENT);
+  assert.deepEqual(comparisonBarValueStyle("left", short), { right: `calc(${short}% + 0.35rem)` });
+  assert.deepEqual(comparisonBarValueStyle("right", long), { left: `calc(${long}% + 0.35rem)` });
+  assert.equal(comparisonBarPercentage(null, 100), 0);
+  assert.equal(comparisonBarPercentage(200, 100), COMPARISON_BAR_MAX_PERCENT);
 });
 
 test("distribución conserva cantidades y porcentajes suma 100", () => {
