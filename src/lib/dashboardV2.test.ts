@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { MatchEvent } from "../types";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
-import { PitchOriginZone } from "./dashboardAnalysis";
+import { deriveThreatOriginZone, orientThreatPointForAttackRight, PitchOriginZone } from "./dashboardAnalysis";
 import { competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, derivePlayingStateIntervals, deriveScoreStateIntervals, isCompetitiveMoment } from "./dashboardCompetitiveContext";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "./dashboardFixture";
 import { compareMetricValues, METRIC_DEFINITIONS } from "./dashboardMetricDefinitions";
@@ -77,7 +77,7 @@ test("Dashboard resuelve el nombre maestro actual por playerId sin cambiar dorsa
   assert.equal(buildDashboardV2(resolved, baseScope()).players.filter((player) => player.playerId === historical.id).length, 1);
 });
 import { formatFutsalPosition } from "./positionFormat";
-import { createGameStateEvent, createLineupInitializedEvent, createLiveThreatEvent, createPossessionLostEvent, createSubstitutionEvent, editEvent, replayMatch } from "./matchEngine";
+import { createGameStateEvent, createLineupInitializedEvent, createLiveThreatEvent, createPossessionLostEvent, createRestartEvent, createSubstitutionEvent, editEvent, replayMatch } from "./matchEngine";
 import {
   buildDashboardV2,
   buildPlayerScores,
@@ -91,14 +91,19 @@ import {
   mergeDashboardSearchParams,
   hasDashboardScopeSearchParams,
   outcomeDistribution,
+  normalizeDashboardCount,
+  normalizedPhaseValue,
+  phaseScaleMaximum,
   playerMetricValue,
   referenceScopeForPreset,
   scopeFromSearchParams,
   squadAverage,
   stableSortByMetric,
+  setPiecePerformance,
   teamMetricValue,
   teamPairedMetricValue,
   teamPlayerTableMetricValue,
+  teamThreatProfile,
 } from "./dashboardV2";
 
 test("% Clave/Oro usa minutos cronológicos del equipo y N/D sin denominador", () => {
@@ -486,7 +491,7 @@ test("A PUERTA y CERCANAS son derivaciones objetivas e intersectables", () => {
   const source = buildDashboardFixture()[0];
   const events: MatchEvent[] = source.session.events.filter((event) => event.type !== "threat_recorded");
   const outcomes = ["GOL", "GOL", "GOL", "PARADA", "PARADA", "PARADA", "PARADA", "PARADA", "FUERA", "FUERA"] as const;
-  outcomes.forEach((outcome, index) => events.push(createLiveThreatEvent({ id: `metric-${index}`, matchId: source.catalog.matchId, position: { period: 1, minute: index + 1, order: 1 }, side: "FOR", playerId: "fx-p-4", origin: index < 6 ? { x: .1, y: (index % 3 + .5) / 3 } : { x: .7, y: .5 }, outcome, phase: "POSITIONAL", assist: outcome === "GOL" ? { status: "NONE" } : undefined, now: index + 100 })));
+  outcomes.forEach((outcome, index) => events.push(createLiveThreatEvent({ id: `metric-${index}`, matchId: source.catalog.matchId, position: { period: 1, minute: index + 1, order: 1 }, side: "FOR", playerId: "fx-p-4", origin: index < 6 ? { x: .9, y: (index % 3 + .5) / 3 } : { x: .7, y: .5 }, outcome, phase: "POSITIONAL", assist: outcome === "GOL" ? { status: "NONE" } : undefined, now: index + 100 })));
   const record = { ...source, session: { ...source.session, events } };
   const all = buildDashboardV2([record], baseScope());
   assert.equal(all.analytics.threats.FOR.total, 10);
@@ -886,4 +891,82 @@ test("pérdidas se agregan en total, por partido y por 40 sin entrar en SCORE AL
   );
   assert.equal(average.value, 4);
   assert.equal(average.validValues, 3);
+});
+
+test("CERCANAS usa la portería correcta por lado sin mutar coordenadas", () => {
+  const right = { x: .9, y: .5 };
+  const left = { x: .1, y: .5 };
+  const snapshots = structuredClone({ right, left });
+  assert.ok(["Z1", "Z2", "Z3"].includes(deriveThreatOriginZone(right, "FOR")));
+  assert.ok(!["Z1", "Z2", "Z3"].includes(deriveThreatOriginZone(left, "FOR")));
+  assert.ok(["Z1", "Z2", "Z3"].includes(deriveThreatOriginZone(left, "AGAINST")));
+  assert.ok(!["Z1", "Z2", "Z3"].includes(deriveThreatOriginZone(right, "AGAINST")));
+  assert.deepEqual({ right, left }, snapshots);
+  assert.deepEqual(orientThreatPointForAttackRight(right, "FOR"), right);
+  assert.deepEqual(orientThreatPointForAttackRight(left, "AGAINST"), right);
+  assert.deepEqual({ right, left }, snapshots);
+});
+
+test("perfil CDA/rival agrega GOL PARADA FUERA BLOQUEADO y mantiene porcentajes entre modos", () => {
+  const source = buildDashboardFixture()[0];
+  const outcomes = ["GOL", "PARADA", "FUERA", "BLOQUEADO"] as const;
+  const events = outcomes.map((outcome, index) => ({
+    ...createLiveThreatEvent({ id: `profile-${index}`, matchId: source.catalog.matchId, position: { period: 1, minute: index + 1, order: 1 }, side: "FOR", playerId: "fx-p-4", origin: { x: .9, y: .5 }, outcome: outcome === "BLOQUEADO" ? "FUERA" : outcome, phase: "POSITIONAL", assist: outcome === "GOL" ? { status: "NONE" } : undefined, now: index + 1 }),
+    outcome,
+    source: outcome === "BLOQUEADO" ? "legacy_import" as const : "live" as const,
+    pendingReview: index === 3,
+  })) as MatchEvent[];
+  const profile = teamThreatProfile(events, "FOR");
+  assert.deepEqual({ total: profile.total, goals: profile.goals, saves: profile.saves, outside: profile.outside, blocked: profile.blocked, pending: profile.pendingReview }, { total: 4, goals: 1, saves: 1, outside: 1, blocked: 1, pending: 1 });
+  assert.equal(profile.onTargetPercentage, 50);
+  assert.equal(profile.conversionPercentage, 25);
+  assert.equal(profile.outsidePercentage, 25);
+  assert.equal(profile.goalkeeperSavePercentage, 50);
+  assert.equal(normalizeDashboardCount(4, "TOTALS", 2, 80), 4);
+  assert.equal(normalizeDashboardCount(4, "PER_MATCH", 2, 80), 2);
+  assert.equal(normalizeDashboardCount(4, "PER_40", 2, 80), 2);
+  assert.equal(teamThreatProfile(events, "FOR").conversionPercentage, 25);
+});
+
+test("FASES comparten máximo y referencia usa el mismo modo activo sin incluir goles", () => {
+  const analysis = buildDashboardV2(buildDashboardFixture(), baseScope());
+  const reference = buildDashboardV2(buildDashboardFixture().slice(0, 5), baseScope());
+  const phases = ["POSITIONAL", "TRANSITION", "SET_PIECE_CORNER"] as const;
+  for (const mode of ["TOTALS", "PER_MATCH", "PER_40"] as const) {
+    const maximum = phaseScaleMaximum(analysis, reference, phases, mode);
+    const all = phases.flatMap((phase) => [normalizedPhaseValue(analysis, phase, "FOR", mode), normalizedPhaseValue(analysis, phase, "AGAINST", mode), normalizedPhaseValue(reference, phase, "FOR", mode), normalizedPhaseValue(reference, phase, "AGAINST", mode)]).filter((value): value is number => value !== null);
+    assert.equal(maximum, Math.max(1, ...all));
+  }
+});
+
+test("ABP separa clasificadas y vínculos causales, hereda segunda jugada y no infiere por proximidad", () => {
+  const source = buildDashboardFixture()[0];
+  const matchId = "abp-trace";
+  const corner = createRestartEvent({ id: "restart-corner", matchId, position: { period: 1, minute: 2, order: 1 }, side: "FOR", restart: "CORNER", spatialSide: "TOP", now: 1 });
+  const linked = createLiveThreatEvent({ id: "linked", matchId, position: { period: 1, minute: 2, order: 2 }, side: "FOR", playerId: "fx-p-4", origin: { x: .8, y: .2 }, outcome: "PARADA", phase: "SET_PIECE_CORNER", restartEventId: corner.id, now: 2 });
+  const child = createLiveThreatEvent({ id: "child", matchId, position: { period: 1, minute: 2, order: 3 }, side: "FOR", playerId: "fx-p-4", origin: { x: .9, y: .5 }, outcome: "GOL", phase: "TRANSITION", parentEventId: linked.id, sequenceId: linked.id, now: 3, assist: { status: "NONE" } });
+  const unlinked = createLiveThreatEvent({ id: "unlinked", matchId, position: { period: 1, minute: 3, order: 1 }, side: "FOR", playerId: "fx-p-4", origin: { x: .8, y: .8 }, outcome: "FUERA", phase: "SET_PIECE_CORNER", now: 4 });
+  const nearby = createRestartEvent({ id: "nearby-only", matchId, position: { period: 1, minute: 3, order: 0 }, side: "FOR", restart: "CORNER", spatialSide: "BOTTOM", now: 4 });
+  const record: DashboardMatchRecord = { catalog: { ...source.catalog, matchId }, session: { ...source.session, matchId, events: [corner, linked, child, nearby, unlinked] } };
+  const stats = setPiecePerformance([record], "SET_PIECE_CORNER", "FOR");
+  assert.equal(stats.opportunities, 2);
+  assert.equal(stats.threats, 3);
+  assert.equal(stats.onTarget, 2);
+  assert.equal(stats.goals, 1);
+  assert.equal(stats.linkedThreats, 2);
+  assert.equal(stats.linkedOpportunities, 1);
+  assert.equal(stats.threatYield, 50);
+  assert.equal(stats.linkageCoverage, 2 / 3 * 100);
+  assert.equal(setPiecePerformance([record], "SET_PIECE_FREE_KICK", "FOR").opportunities, null);
+});
+
+test("scope serializa lado y trazabilidad, conserva URLs antiguas y filtra VIDEO por el mismo conjunto", () => {
+  const scope = { ...baseScope(), threatSides: ["AGAINST" as const], phases: ["SET_PIECE_CORNER" as const], setPieceTraceability: "LINKED_RESTART_ONLY" as const };
+  const query = mergeDashboardSearchParams({ analysis: scope, reference: baseScope(), referencePreset: "SEASON", mode: "TOTALS", area: "MAPS" });
+  const hydrated = scopeFromSearchParams(new URLSearchParams(query), "a", baseScope());
+  assert.deepEqual(hydrated.threatSides, ["AGAINST"]);
+  assert.equal(hydrated.setPieceTraceability, "LINKED_RESTART_ONLY");
+  const legacy = scopeFromSearchParams(new URLSearchParams("aCompetition=LEAGUE"), "a", baseScope());
+  assert.deepEqual(legacy.threatSides, []);
+  assert.equal(legacy.setPieceTraceability, "ALL_CLASSIFIED");
 });
