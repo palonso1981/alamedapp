@@ -109,6 +109,18 @@ test("Biblioteca respeta también resultados y zonas avanzadas sin ampliar el co
   assert.ok(zoned.every((item) => item.source === "EVENT" && item.event.type === "threat_recorded"));
 });
 
+test("Dashboard → VIDEO conserva el lado de amenaza sin ampliar el conjunto", () => {
+  const records = libraryRecords();
+  const first = records[0];
+  const base = emptyDashboardScope(first.catalog.clubId ?? "", first.catalog.teamId ?? "", first.catalog.seasonId ?? "");
+  base.matchIds = [first.catalog.matchId];
+  for (const side of ["FOR", "AGAINST"] as const) {
+    const items = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT" }, { dashboardScope: { ...base, threatSides: [side] } });
+    assert.ok(items.length > 0);
+    assert.ok(items.every((item) => item.source === "EVENT" && item.event.type === "threat_recorded" && item.event.side === side));
+  }
+});
+
 test("reel navega circularmente, avanza al final y conserva vídeos distintos", () => {
   const items = buildVideoLibraryItems(libraryRecords(), EMPTY_VIDEO_LIBRARY_FILTERS, { includeClips: true });
   assert.equal(nextReelIndex(items, items.length - 1, 1), 0);

@@ -1,5 +1,5 @@
 import { DashboardAnalysis } from "../../lib/dashboardAnalysis";
-import { DashboardValueMode, homogeneousComparisonMode, outcomeDistribution, TeamMetricKey, teamMetricValue, teamPairedMetricValue } from "../../lib/dashboardV2";
+import { DashboardValueMode, homogeneousComparisonMode, normalizeDashboardCount, outcomeDistribution, TeamMetricKey, teamMetricValue, teamPairedMetricValue } from "../../lib/dashboardV2";
 import { PAIRED_METRIC_DEFINITIONS } from "../../lib/dashboardMetricDefinitions";
 import { ThreatOutcomeStats } from "../../lib/dashboardAnalytics";
 import { ThreatSide } from "../../types";
@@ -7,8 +7,8 @@ import { comparisonBarPercentage, comparisonBarValueStyle } from "../../lib/dash
 
 const format = (value: number | null, suffix = "") => value === null ? "N/D" : `${Number.isInteger(value) ? value : value.toFixed(1).replace(".", ",")}${suffix}`;
 
-export function FacedMetricRow({ label, own, rival, ownReference, rivalReference, ownGoals, rivalGoals, semantics = "neutral", showReference = true }: { label: string; own: number | null; rival: number | null; ownReference: number | null; rivalReference: number | null; ownGoals?: number; rivalGoals?: number; semantics?: "higher" | "lower" | "neutral"; showReference?: boolean }) {
-  const max = Math.max(1, own ?? 0, rival ?? 0, ownReference ?? 0, rivalReference ?? 0, ownGoals ?? 0, rivalGoals ?? 0);
+export function FacedMetricRow({ label, own, rival, ownReference, rivalReference, ownGoals, rivalGoals, semantics = "neutral", showReference = true, scaleMax }: { label: string; own: number | null; rival: number | null; ownReference: number | null; rivalReference: number | null; ownGoals?: number; rivalGoals?: number; semantics?: "higher" | "lower" | "neutral"; showReference?: boolean; scaleMax?: number }) {
+  const max = scaleMax ?? Math.max(1, own ?? 0, rival ?? 0, ownReference ?? 0, rivalReference ?? 0);
   const ownWidth = comparisonBarPercentage(own, max);
   const rivalWidth = comparisonBarPercentage(rival, max);
   const ownReferencePosition = comparisonBarPercentage(ownReference, max);
@@ -42,12 +42,12 @@ export function TeamComparison({ analysis, reference, mode, comparisonEnabled = 
 
 const colors: Record<string, string> = { GOL: "bg-rose-500", PARADA: "bg-emerald-400", FUERA: "bg-amber-300", BLOQUEADO: "bg-slate-500" };
 
-export function OutcomeDistribution({ side, stats, reference }: { side: ThreatSide; stats: ThreatOutcomeStats; reference?: ThreatOutcomeStats }) {
+export function OutcomeDistribution({ side, stats, reference, mode = "TOTALS", samples = 1, observedMinutes = 40, referenceSamples = 1, referenceObservedMinutes = 40, pendingReview = 0 }: { side: ThreatSide; stats: ThreatOutcomeStats; reference?: ThreatOutcomeStats; mode?: DashboardValueMode; samples?: number; observedMinutes?: number; referenceSamples?: number; referenceObservedMinutes?: number; pendingReview?: number }) {
   const items = outcomeDistribution(stats);
   const referenceItems = new Map(reference ? outcomeDistribution(reference).map((item) => [item.outcome, item]) : []);
   return <article className="rounded-3xl border border-slate-700 bg-slate-900 p-4">
-    <div className="flex items-end justify-between"><div><span className="text-[9px] font-black tracking-[.16em] text-slate-500">{side === "FOR" ? "REMATES" : "AMENAZAS"}</span><h3 className="text-lg font-black">{side === "FOR" ? "CDA" : "RECIBIDAS"}</h3></div><strong className="text-4xl">{stats.total}</strong></div>
+    <div className="flex items-end justify-between"><div><span className="text-[9px] font-black tracking-[.16em] text-slate-500">{side === "FOR" ? "REMATES" : "AMENAZAS"}</span><h3 className="text-lg font-black">{side === "FOR" ? "CDA" : "RIVAL"}</h3></div><div className="text-right"><strong className="text-4xl">{format(normalizeDashboardCount(stats.total, mode, samples, observedMinutes))}</strong>{pendingReview > 0 && <span className="block text-[9px] text-amber-300">? {pendingReview} por revisar</span>}</div></div>
     <div className="mt-4 flex h-4 overflow-hidden rounded-full bg-slate-950">{items.map((item) => <span key={item.outcome} className={colors[item.outcome]} style={{ width: `${item.percentage ?? 0}%` }} title={`${item.outcome} ${format(item.percentage, "%")}`} />)}</div>
-    <div className="mt-3 grid grid-cols-3 gap-2">{items.map((item) => { const ref = referenceItems.get(item.outcome)?.percentage ?? null; const difference = item.percentage === null || ref === null ? null : item.percentage - ref; return <div key={item.outcome} className="rounded-xl bg-slate-950 p-2 text-center"><strong className="block text-xl">{item.count}</strong><span className="block text-[9px] font-black">{item.outcome} · {format(item.percentage, "%")}</span>{reference && <span className="text-[8px] text-amber-200">MEDIA {format(ref, "%")} · Δ {format(difference, " pp")}</span>}</div>; })}</div>
+    <div className={`mt-3 grid gap-2 ${items.length === 4 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3"}`}>{items.map((item) => { const refItem = referenceItems.get(item.outcome); const ref = refItem?.percentage ?? null; const difference = item.percentage === null || ref === null ? null : item.percentage - ref; return <div key={item.outcome} className="rounded-xl bg-slate-950 p-2 text-center"><strong className="block text-xl">{format(normalizeDashboardCount(item.count, mode, samples, observedMinutes))}</strong><span className="block text-[9px] font-black">{item.outcome} · {format(item.percentage, "%")}</span>{reference && <span className="text-[8px] text-amber-200">REF {format(ref, "%")} · Δ {format(difference, " pp")}</span>}{reference && refItem && <span className="sr-only">Referencia normalizada {format(normalizeDashboardCount(refItem.count, mode, referenceSamples, referenceObservedMinutes))}</span>}</div>; })}</div>
   </article>;
 }
