@@ -17,6 +17,9 @@ import {
 import {
   loadMatchRecord,
   LocalStorageAdapter,
+  armDevQuotaFailureOnce,
+  devPersistenceFaultAvailable,
+  disarmDevQuotaFailure,
   MATCH_UNDO_HISTORY_LIMIT,
   matchStorageKey,
   saveMatchRecord,
@@ -1829,6 +1832,64 @@ test("Cumbres: historial acotado mantiene undo y elimina crecimiento cuadrático
   assert.equal(saveMatchRecord(legacySession, emptyMatchSyncState(), legacyStorage, 5_001).ok, true);
   const migrated = loadMatchRecord(legacySession.matchId, legacyStorage);
   assert.equal(migrated?.session.past.length, MATCH_UNDO_HISTORY_LIMIT);
+});
+
+test("Cumbres DEV: el simulador falla una sola escritura y es imposible armarlo en PROD", () => {
+  const dev = { NEXT_PUBLIC_APP_ENV: "dev", NEXT_PUBLIC_FIREBASE_PROJECT_ID: "cdalameda-dev" };
+  const prod = { NEXT_PUBLIC_APP_ENV: "prod", NEXT_PUBLIC_FIREBASE_PROJECT_ID: "cd-alameda-prod" };
+  assert.equal(devPersistenceFaultAvailable(dev), true);
+  assert.equal(devPersistenceFaultAvailable(prod), false);
+  const previousEnvironment = process.env.NEXT_PUBLIC_APP_ENV;
+  const previousProject = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+  try {
+    process.env.NEXT_PUBLIC_APP_ENV = "prod";
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID = "cd-alameda-prod";
+    assert.equal(armDevQuotaFailureOnce(), false);
+
+    process.env.NEXT_PUBLIC_APP_ENV = "dev";
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID = "cdalameda-dev";
+    assert.equal(armDevQuotaFailureOnce(), true);
+    const storage = new MemoryStorage();
+    const session = createSession("dev-controlled-quota");
+    const failed = saveMatchRecord(session, emptyMatchSyncState(), storage, 6_000);
+    assert.equal(failed.ok, false);
+    assert.equal(failed.ok ? null : failed.diagnostic?.name, "QuotaExceededError");
+    assert.equal(saveMatchRecord(session, emptyMatchSyncState(), storage, 6_001).ok, true);
+  } finally {
+    if (previousEnvironment === undefined) delete process.env.NEXT_PUBLIC_APP_ENV;
+    else process.env.NEXT_PUBLIC_APP_ENV = previousEnvironment;
+    if (previousProject === undefined) delete process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+    else process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID = previousProject;
+    disarmDevQuotaFailure();
+  }
+});
+
+test("Cumbres: 150 acciones persisten, reabren y sincronizan completas sin duplicados", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 7_000, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, { isOnline: () => true });
+  const session = sessionWithSyntheticHistory("cumbres-long-match", 150, MATCH_UNDO_HISTORY_LIMIT);
+  assert.equal(local.save(session).ok, true);
+  assert.equal(local.load(session.matchId)?.events.length, session.events.length);
+  assert.equal(local.load(session.matchId)?.past.length, MATCH_UNDO_HISTORY_LIMIT);
+
+  const reopened = new LocalMatchRepository({ storage, now: () => 7_001, idFactory: idFactory() });
+  assert.equal(reopened.load(session.matchId)?.events.length, session.events.length);
+  assert.equal(new Set(reopened.load(session.matchId)?.events.map((event) => event.id)).size, session.events.length);
+  const reopenedCoordinator = new MatchSyncCoordinator(reopened, remote, { isOnline: () => true });
+  await reopenedCoordinator.syncMatch(session.matchId);
+  assert.equal(reopened.getSummary(session.matchId).pending, 0);
+  assert.equal(reopened.getSyncState(session.matchId).outbox.length, 0);
+  for (const event of session.events) {
+    const snapshot = await remote.read({
+      id: `read-${event.id}`, matchId: session.matchId, entityType: "EVENT", entityId: event.id,
+      kind: "UPSERT", payload: event, baseRevision: 0, clientUpdatedAt: 7_002,
+      attempts: 0, status: "PENDING", nextAttemptAt: 0,
+    });
+    assert.equal(snapshot.exists, true);
+  }
+  assert.equal(coordinator === reopenedCoordinator, false);
 });
 
 test("Cumbres: QuotaExceeded conserva sesión y outbox exactos en memoria, bloquea sync y reintenta sin duplicar", async () => {

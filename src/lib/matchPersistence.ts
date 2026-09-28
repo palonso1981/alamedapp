@@ -95,6 +95,47 @@ export interface MatchStorageFailureDiagnostic {
   estimatedBytes: number;
 }
 
+interface DevPersistenceFaultEnvironment {
+  NEXT_PUBLIC_APP_ENV?: string;
+  NEXT_PUBLIC_FIREBASE_PROJECT_ID?: string;
+}
+
+let devQuotaFailureArmed = false;
+
+function compiledDevPersistenceFaultEnvironment(): DevPersistenceFaultEnvironment {
+  return {
+    NEXT_PUBLIC_APP_ENV: process.env.NEXT_PUBLIC_APP_ENV,
+    NEXT_PUBLIC_FIREBASE_PROJECT_ID: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  };
+}
+
+/** Herramienta deliberadamente limitada a DEV + cdalameda-dev. En PROD no se
+ * puede armar aunque alguien invoque la función desde la consola. */
+export function devPersistenceFaultAvailable(
+  environment: DevPersistenceFaultEnvironment = compiledDevPersistenceFaultEnvironment(),
+): boolean {
+  return environment.NEXT_PUBLIC_APP_ENV === "dev" &&
+    environment.NEXT_PUBLIC_FIREBASE_PROJECT_ID === "cdalameda-dev";
+}
+
+export function armDevQuotaFailureOnce(): boolean {
+  if (!devPersistenceFaultAvailable()) return false;
+  devQuotaFailureArmed = true;
+  return true;
+}
+
+export function disarmDevQuotaFailure(): void {
+  devQuotaFailureArmed = false;
+}
+
+function consumeDevQuotaFailure(): void {
+  if (!devQuotaFailureArmed || !devPersistenceFaultAvailable()) return;
+  devQuotaFailureArmed = false;
+  const error = new Error("DEV controlled QuotaExceededError (one write only).");
+  error.name = "QuotaExceededError";
+  throw error;
+}
+
 function storageFailure(
   error: unknown,
   attemptedAt: number,
@@ -727,6 +768,7 @@ export function saveMatchRecord(
   }
   const estimatedBytes = new TextEncoder().encode(serialized).byteLength;
   try {
+    consumeDevQuotaFailure();
     storage.setItem(matchStorageKey(session.matchId), serialized);
     return { ok: true, savedAt: now };
   } catch (error) {

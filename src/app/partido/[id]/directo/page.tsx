@@ -55,6 +55,10 @@ import { useCaptureLease } from "../../../../hooks/useCaptureLease";
 import { downloadMatchRecoveryBundle } from "../../../../lib/recoveryBundle";
 import { browserMatchRepository } from "../../../../lib/sync/localMatchRepository";
 import {
+  armDevQuotaFailureOnce,
+  devPersistenceFaultAvailable,
+} from "../../../../lib/matchPersistence";
+import {
   INFERIORITY_SLOT_ID,
   CDA_CLUB_ID,
   Player,
@@ -160,6 +164,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const [benchMode, setBenchMode] = useState<"CLOSED" | "BROWSE" | "CHANGE_OUT" | "CHANGE_IN">("CLOSED");
   const [attackDirection, setAttackDirection] = useState<AttackDirection>("RIGHT");
   const [orientationReady, setOrientationReady] = useState(false);
+  const [devQuotaFailureArmed, setDevQuotaFailureArmed] = useState(false);
 
   useEffect(() => {
     const savedSide = window.localStorage.getItem(CLOCK_SIDE_STORAGE_KEY);
@@ -612,6 +617,17 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             {session.persistenceStatus === "saved" ? "●" : session.persistenceStatus === "error" ? "!" : "○"}
           </span>
           <SyncStatusBadge matchId={matchId} matchFinished={session.matchFinished} />
+          {devPersistenceFaultAvailable() && (
+            <button
+              type="button"
+              onClick={() => setDevQuotaFailureArmed(armDevQuotaFailureOnce())}
+              disabled={devQuotaFailureArmed || memoryOnly}
+              className="min-h-10 rounded-lg border border-fuchsia-400/60 bg-fuchsia-950 px-2 text-[10px] font-black text-fuchsia-100 disabled:opacity-50"
+              title="Solo DEV: la siguiente escritura local fallará una vez"
+            >
+              {devQuotaFailureArmed ? "DEV · FALLO ARMADO" : "DEV · SIMULAR CUOTA"}
+            </button>
+          )}
           <button type="button" onClick={() => { setDisciplineFocus(null); setHistoryOpen(true); }} className="min-h-10 rounded-lg bg-slate-950 px-2 text-xs font-black text-cyan-200" aria-label={`Abrir historial completo, ${activeEventCount} eventos`}>≡ {activeEventCount}{pendingEventCount > 0 ? ` · ?${pendingEventCount}` : ""}</button>
           {(matchId === "prueba" || matchId === "prueba-porteria") && (
             <button type="button" onClick={() => {
