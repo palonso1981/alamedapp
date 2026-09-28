@@ -52,6 +52,8 @@ import {
   useMatchStore,
 } from "../../../../store/useMatchStore";
 import { useCaptureLease } from "../../../../hooks/useCaptureLease";
+import { downloadMatchRecoveryBundle } from "../../../../lib/recoveryBundle";
+import { browserMatchRepository } from "../../../../lib/sync/localMatchRepository";
 import {
   INFERIORITY_SLOT_ID,
   CDA_CLUB_ID,
@@ -136,6 +138,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   );
   const undo = useMatchStore((state) => state.undo);
   const redo = useMatchStore((state) => state.redo);
+  const retryPersistence = useMatchStore((state) => state.retryPersistence);
   const clearError = useMatchStore((state) => state.clearError);
   const resetDemo = useMatchStore((state) => state.resetDemo);
 
@@ -315,10 +318,13 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const functionalGoalkeeperId = replay.lineupValidation.goalkeeper.status === "PLAYER"
     ? replay.lineupValidation.goalkeeper.playerId
     : undefined;
-  const captureBlocked = lineupBlocked || periodClosed || !captureControl.canCapture;
+  const memoryOnly = session.persistenceStatus === "error";
+  const captureBlocked = memoryOnly || lineupBlocked || periodClosed || !captureControl.canCapture;
   const blockedAction = () => {
     setFeedback(
-      !captureControl.canCapture
+      memoryOnly
+        ? "⛔ Cambios solo en memoria. Reintenta o exporta antes de continuar."
+        : !captureControl.canCapture
         ? "⚠ No tienes el control de captura"
         : periodClosed
           ? "■ Periodo cerrado"
@@ -483,7 +489,17 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           if (captureBlocked) return blockedAction();
           setInteraction(IDLE_LIVE_INTERACTION);
           finishCurrentPeriod(matchId);
-          setFeedback(session.period === 1 ? "✓ Primera parte finalizada" : "✓ Partido finalizado");
+          const updated = useMatchStore.getState().matches[matchId];
+          if (updated?.persistenceStatus === "error") {
+            setFeedback(null);
+            return;
+          }
+          const summary = browserMatchRepository.getSummary(matchId);
+          setFeedback(session.period === 1
+            ? "■ Primera parte guardada en este dispositivo · pendiente de nube"
+            : summary.pending + summary.syncing + summary.errors + summary.conflicts > 0
+              ? "■ Partido finalizado en este dispositivo · pendiente de sincronizar"
+              : "✓ Partido finalizado y sincronizado");
         }}
         onStartSecondPeriod={() => {
           if (!captureControl.canCapture) return blockedAction();
@@ -595,7 +611,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           >
             {session.persistenceStatus === "saved" ? "●" : session.persistenceStatus === "error" ? "!" : "○"}
           </span>
-          <SyncStatusBadge matchId={matchId} />
+          <SyncStatusBadge matchId={matchId} matchFinished={session.matchFinished} />
           <button type="button" onClick={() => { setDisciplineFocus(null); setHistoryOpen(true); }} className="min-h-10 rounded-lg bg-slate-950 px-2 text-xs font-black text-cyan-200" aria-label={`Abrir historial completo, ${activeEventCount} eventos`}>≡ {activeEventCount}{pendingEventCount > 0 ? ` · ?${pendingEventCount}` : ""}</button>
           {(matchId === "prueba" || matchId === "prueba-porteria") && (
             <button type="button" onClick={() => {
@@ -700,7 +716,27 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
 
       <LineupFirewallAlert validation={replay.lineupValidation} players={session.players} />
 
-      {session.lastError && (
+      {memoryOnly && (() => {
+        const failure = browserMatchRepository.getVolatileFailure(matchId)?.diagnostic;
+        return <div className="fixed inset-0 z-[160] grid place-items-center overflow-y-auto bg-red-950/95 p-4" role="alertdialog" aria-modal="true" aria-label="Fallo crítico de guardado local">
+          <section className="w-full max-w-2xl rounded-3xl border-2 border-red-300 bg-slate-950 p-6 text-center shadow-2xl">
+            <p className="text-5xl" aria-hidden="true">⛔</p>
+            <h2 className="mt-4 text-2xl font-black text-red-100">SOLO EN MEMORIA</h2>
+            <p className="mt-4 text-lg font-black leading-relaxed text-white">LOS ÚLTIMOS CAMBIOS NO ESTÁN GUARDADOS EN ESTE DISPOSITIVO. NO CIERRES NI RECARGUES.</p>
+            <p className="mt-3 text-sm text-red-200">La captura queda bloqueada hasta guardar de nuevo. Exporta una copia antes de abandonar esta pantalla.</p>
+            {failure && <p className="mt-4 rounded-xl bg-red-950 p-3 font-mono text-xs text-red-100">{failure.name} · {failure.kind} · {Math.ceil(failure.estimatedBytes / 1024)} KiB<br />{failure.message}</p>}
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button type="button" onClick={() => {
+                const ok = retryPersistence(matchId);
+                setFeedback(ok ? "✓ Guardado recuperado · sincronización pendiente" : null);
+              }} className="min-h-14 rounded-2xl bg-white px-4 text-sm font-black text-red-900">REINTENTAR GUARDADO</button>
+              <button type="button" onClick={() => downloadMatchRecoveryBundle(matchId)} className="min-h-14 rounded-2xl border-2 border-amber-300 bg-amber-950 px-4 text-sm font-black text-amber-100">EXPORTAR RECUPERACIÓN</button>
+            </div>
+          </section>
+        </div>;
+      })()}
+
+      {session.lastError && !memoryOnly && (
         <div
           role="alert"
           className="mx-auto mb-4 flex max-w-7xl items-center justify-between rounded-xl border border-red-500/50 bg-red-950/70 px-4 py-3 text-sm text-red-100"

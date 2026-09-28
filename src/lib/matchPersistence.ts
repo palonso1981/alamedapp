@@ -21,6 +21,12 @@ import {
 } from "./sync/syncTypes";
 
 export const MATCH_LOCAL_STORAGE_VERSION = 3 as const;
+/**
+ * Undo conserva una ventana útil, no una matriz casi cuadrática de cronologías.
+ * Diez pasos cubren correcciones inmediatas durante Directo y mantienen el
+ * tamaño persistido lineal respecto al número total de eventos.
+ */
+export const MATCH_UNDO_HISTORY_LIMIT = 10;
 const PREVIOUS_MATCH_LOCAL_STORAGE_VERSION = 2 as const;
 const LEGACY_MATCH_LOCAL_STORAGE_VERSION = 1 as const;
 const STORAGE_PREFIX = "alamedapp:match:v1:";
@@ -74,7 +80,37 @@ export interface PersistedMatchRecord {
 
 export type SaveMatchResult =
   | { ok: true; savedAt: number }
-  | { ok: false; unavailable: boolean; message: string };
+  | {
+      ok: false;
+      unavailable: boolean;
+      message: string;
+      diagnostic?: MatchStorageFailureDiagnostic;
+    };
+
+export interface MatchStorageFailureDiagnostic {
+  name: string;
+  message: string;
+  kind: "UNAVAILABLE" | "QUOTA" | "SECURITY" | "SERIALIZATION" | "UNKNOWN";
+  attemptedAt: number;
+  estimatedBytes: number;
+}
+
+function storageFailure(
+  error: unknown,
+  attemptedAt: number,
+  estimatedBytes: number,
+  fallbackKind: MatchStorageFailureDiagnostic["kind"],
+): MatchStorageFailureDiagnostic {
+  const name = error instanceof Error ? error.name : "UnknownError";
+  const message = error instanceof Error ? error.message : String(error ?? "Error desconocido");
+  const lower = `${name} ${message}`.toLowerCase();
+  const kind = lower.includes("quota") || lower.includes("exceeded")
+    ? "QUOTA"
+    : lower.includes("security") || lower.includes("denied")
+      ? "SECURITY"
+      : fallbackKind;
+  return { name, message, kind, attemptedAt, estimatedBytes };
+}
 
 export function matchStorageKey(matchId: string): string {
   return `${STORAGE_PREFIX}${encodeURIComponent(matchId)}`;
@@ -447,10 +483,14 @@ function migratePersistedSession(value: unknown): unknown {
     videoEventOverrides: Array.isArray(value.videoEventOverrides) ? value.videoEventOverrides : [],
     events: migrateChronology(value.events, value.matchId),
     past: Array.isArray(value.past)
-      ? value.past.map((events) => migrateChronology(events, value.matchId))
+      ? value.past
+          .map((events) => migrateChronology(events, value.matchId))
+          .slice(-MATCH_UNDO_HISTORY_LIMIT)
       : value.past,
     future: Array.isArray(value.future)
-      ? value.future.map((events) => migrateChronology(events, value.matchId))
+      ? value.future
+          .map((events) => migrateChronology(events, value.matchId))
+          .slice(0, MATCH_UNDO_HISTORY_LIMIT)
       : value.future,
   };
 }
@@ -634,6 +674,13 @@ export function saveMatchRecord(
       ok: false,
       unavailable: true,
       message: "El almacenamiento local no está disponible.",
+      diagnostic: {
+        name: "StorageUnavailableError",
+        message: "El almacenamiento local no está disponible.",
+        kind: "UNAVAILABLE",
+        attemptedAt: now,
+        estimatedBytes: 0,
+      },
     };
   }
 
@@ -667,14 +714,27 @@ export function saveMatchRecord(
     sync,
   };
 
+  let serialized: string;
   try {
-    storage.setItem(matchStorageKey(session.matchId), JSON.stringify(envelope));
+    serialized = JSON.stringify(envelope);
+  } catch (error) {
+    return {
+      ok: false,
+      unavailable: false,
+      message: "No se pudo preparar el guardado del partido en el dispositivo.",
+      diagnostic: storageFailure(error, now, 0, "SERIALIZATION"),
+    };
+  }
+  const estimatedBytes = new TextEncoder().encode(serialized).byteLength;
+  try {
+    storage.setItem(matchStorageKey(session.matchId), serialized);
     return { ok: true, savedAt: now };
-  } catch {
+  } catch (error) {
     return {
       ok: false,
       unavailable: false,
       message: "No se pudo guardar el partido en el dispositivo.",
+      diagnostic: storageFailure(error, now, estimatedBytes, "UNKNOWN"),
     };
   }
 }

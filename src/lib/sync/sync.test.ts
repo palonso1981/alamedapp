@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -16,9 +17,12 @@ import {
 import {
   loadMatchRecord,
   LocalStorageAdapter,
+  MATCH_UNDO_HISTORY_LIMIT,
   matchStorageKey,
+  saveMatchRecord,
   saveMatchSession,
 } from "../matchPersistence";
+import { createMatchRecoveryBundle } from "../recoveryBundle";
 import { createSession } from "../../store/useMatchStore";
 import {
   LocalMatchRepository,
@@ -31,7 +35,7 @@ import {
   RemoteMatchRepository,
 } from "./remoteMatchRepository";
 import { MatchSyncCoordinator } from "./syncCoordinator";
-import { hasUnreconciledMatchSyncState, matchTombstoneAlreadyApplied, migrateMatchSyncState, syncEntityKey } from "./syncTypes";
+import { emptyMatchSyncState, hasUnreconciledMatchSyncState, matchTombstoneAlreadyApplied, migrateMatchSyncState, syncEntityKey } from "./syncTypes";
 import {
   buildLocalVideoResolutionPayload,
   hasVideoOnlyMatchConflict,
@@ -48,7 +52,7 @@ import { listMatchCatalog, visibleMatchCatalog } from "../matchCatalog";
 import { remoteEnvelopePayload, remoteMatchSession } from "../access/accessRemoteHydration";
 
 class MemoryStorage implements LocalStorageAdapter {
-  private readonly values = new Map<string, string>();
+  protected readonly values = new Map<string, string>();
 
   getItem(key: string): string | null {
     return this.values.get(key) ?? null;
@@ -56,6 +60,23 @@ class MemoryStorage implements LocalStorageAdapter {
 
   setItem(key: string, value: string): void {
     this.values.set(key, value);
+  }
+
+  removeItem(key: string): void {
+    this.values.delete(key);
+  }
+}
+
+class QuotaStorage extends MemoryStorage {
+  fail = false;
+
+  override setItem(key: string, value: string): void {
+    if (this.fail) {
+      const error = new Error("The quota has been exceeded.");
+      error.name = "QuotaExceededError";
+      throw error;
+    }
+    super.setItem(key, value);
   }
 }
 
@@ -1764,4 +1785,156 @@ test("RC2: takeover durante offline convierte la captura anterior en conflicto s
   assert.equal(after.conflicts.length, before.length);
   assert.equal(local.claimNextOperation(matchId), null);
   resetRuntimeCaptureContextsForTests();
+});
+
+function sessionWithSyntheticHistory(matchId: string, count: number, historyLimit: number) {
+  const base = createSession(matchId);
+  const events = [...base.events];
+  const snapshots: typeof base.past = [];
+  for (let index = 0; index < count; index += 1) {
+    snapshots.push([...events]);
+    events.push(createFoulEvent({
+      id: `${matchId}-event-${index + 1}`,
+      matchId,
+      position: { period: index < count / 2 ? 1 : 2, minute: index % 21, order: index + 2 },
+      side: index % 2 === 0 ? "FOR" : "AGAINST",
+      playerId: index % 3 === 0 ? "p1" : null,
+      now: 1_000 + index,
+    }));
+  }
+  return { ...base, events, past: snapshots.slice(-historyLimit), future: [] };
+}
+
+function serializedBytes(eventCount: number, historyLimit: number): number {
+  const storage = new MemoryStorage();
+  const session = sessionWithSyntheticHistory(`size-${eventCount}-${historyLimit}`, eventCount, historyLimit);
+  const result = saveMatchRecord(session, emptyMatchSyncState(), storage, 5_000);
+  assert.equal(result.ok, true);
+  return new TextEncoder().encode(storage.getItem(matchStorageKey(session.matchId)) ?? "").byteLength;
+}
+
+test("Cumbres: historial acotado mantiene undo y elimina crecimiento cuadrático a 50/100/150 eventos", () => {
+  const sizes = [50, 100, 150].map((count) => ({
+    count,
+    before: serializedBytes(count, 100),
+    after: serializedBytes(count, MATCH_UNDO_HISTORY_LIMIT),
+  }));
+  assert.ok(sizes.every(({ after, before }) => after < before));
+  assert.ok(sizes[2].after < sizes[2].before / 4);
+  assert.ok(sizes[2].after / sizes[1].after < 1.8);
+  assert.equal(sessionWithSyntheticHistory("undo-window", 150, MATCH_UNDO_HISTORY_LIMIT).past.length, MATCH_UNDO_HISTORY_LIMIT);
+
+  const legacyStorage = new MemoryStorage();
+  const legacySession = sessionWithSyntheticHistory("legacy-undo-window", 150, 100);
+  assert.equal(saveMatchRecord(legacySession, emptyMatchSyncState(), legacyStorage, 5_001).ok, true);
+  const migrated = loadMatchRecord(legacySession.matchId, legacyStorage);
+  assert.equal(migrated?.session.past.length, MATCH_UNDO_HISTORY_LIMIT);
+});
+
+test("Cumbres: QuotaExceeded conserva sesión y outbox exactos en memoria, bloquea sync y reintenta sin duplicar", async () => {
+  const storage = new QuotaStorage();
+  let now = 100;
+  const local = new LocalMatchRepository({ storage, now: () => now, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, { isOnline: () => true });
+  const synthetic = sessionWithSyntheticHistory("cumbres-quota", 67, MATCH_UNDO_HISTORY_LIMIT);
+  const session = { ...synthetic, period: 2, minute: 13, periodMinutes: { 1: 20, 2: 13 }, closedPeriods: [1] };
+  assert.equal(local.save(session).ok, true);
+  await coordinator.syncMatch(session.matchId);
+  assert.equal(local.getSummary(session.matchId).pending, 0);
+
+  const foul = createFoulEvent({
+    id: "cumbres-event-69", matchId: session.matchId,
+    position: { period: 2, minute: 13, order: 5 }, side: "FOR", playerId: "p1", now: 200,
+  });
+  assert.equal(session.events.length, 68);
+  const changed = { ...session, events: [...session.events, foul] };
+  storage.fail = true;
+  now = 201;
+  const failed = local.save(changed);
+  assert.equal(failed.ok, false);
+  assert.equal(failed.ok ? null : failed.diagnostic?.name, "QuotaExceededError");
+  assert.equal(local.hasVolatileFailure(session.matchId), true);
+  assert.equal(local.load(session.matchId)?.events.some((event) => event.id === foul.id), true);
+  const operationIds = local.getSyncState(session.matchId).outbox.map((operation) => operation.id);
+  assert.ok(operationIds.length > 0);
+  assert.equal(local.claimNextOperation(session.matchId), null);
+
+  const laterFoul = createFoulEvent({
+    id: "cumbres-event-70", matchId: session.matchId,
+    position: { period: 2, minute: 14, order: 1 }, side: "AGAINST", playerId: null, now: 202,
+  });
+  const blockedCapture = local.save({ ...changed, events: [...changed.events, laterFoul] });
+  assert.equal(blockedCapture.ok, false);
+  assert.equal(local.load(session.matchId)?.events.some((event) => event.id === laterFoul.id), false);
+  const blockedFinish = local.save({
+    ...changed,
+    minute: 20,
+    periodMinutes: { 1: 20, 2: 20 },
+    closedPeriods: [1, 2],
+    matchFinished: true,
+  });
+  assert.equal(blockedFinish.ok, false);
+  assert.equal(local.load(session.matchId)?.matchFinished, false);
+  assert.deepEqual(local.getSyncState(session.matchId).outbox.map((operation) => operation.id), operationIds);
+
+  const recovery = createMatchRecoveryBundle(
+    session.matchId,
+    storage,
+    202,
+    local.getVolatileFailure(session.matchId),
+  );
+  assert.equal(recovery.durability, "MEMORY_ONLY");
+  assert.equal(recovery.session.events.some((event) => event.id === foul.id), true);
+  assert.deepEqual(recovery.sync.outbox.map((operation) => operation.id), operationIds);
+  assert.equal(recovery.storageFailure?.kind, "QUOTA");
+
+  storage.fail = false;
+  now = 203;
+  const retried = local.retryVolatileSave(session.matchId);
+  assert.equal(retried.ok, true);
+  assert.equal(local.hasVolatileFailure(session.matchId), false);
+  assert.deepEqual(local.getSyncState(session.matchId).outbox.map((operation) => operation.id), operationIds);
+  await coordinator.syncMatch(session.matchId);
+  assert.equal(local.getSummary(session.matchId).pending, 0);
+  assert.equal(local.getSyncState(session.matchId).outbox.length, 0);
+  const snapshot = await remote.read({
+    id: "read", matchId: session.matchId, entityType: "EVENT", entityId: foul.id,
+    kind: "UPSERT", payload: foul, baseRevision: 0, clientUpdatedAt: 204,
+    attempts: 0, status: "PENDING", nextAttemptAt: 0,
+  });
+  assert.equal(snapshot.exists, true);
+  assert.equal(snapshot.revision, 1);
+});
+
+test("Cumbres: finalizar con almacenamiento roto conserva el cierre solo en recovery y no altera durable", () => {
+  const storage = new QuotaStorage();
+  const local = new LocalMatchRepository({ storage, now: () => 300, idFactory: idFactory() });
+  const session = createSession("cumbres-finish");
+  assert.equal(local.save(session).ok, true);
+  storage.fail = true;
+  const finished = {
+    ...session,
+    period: 2,
+    minute: 20,
+    periodMinutes: { 1: 20, 2: 20 },
+    closedPeriods: [1, 2],
+    matchFinished: true,
+  };
+  assert.equal(local.save(finished).ok, false);
+  assert.equal(local.getVolatileFailure(session.matchId)?.record.session.matchFinished, true);
+  assert.equal(loadMatchRecord(session.matchId, storage)?.session.matchFinished, false);
+  assert.equal(local.claimNextOperation(session.matchId), null);
+});
+
+test("Cumbres UX: memoria crítica bloquea captura, ofrece retry/recovery y NUBE no puede quedar verde", () => {
+  const directo = readFileSync("src/app/partido/[id]/directo/page.tsx", "utf8");
+  const badge = readFileSync("src/components/match/SyncStatusBadge.tsx", "utf8");
+  assert.match(directo, /memoryOnly \|\| lineupBlocked/);
+  assert.match(directo, /LOS ÚLTIMOS CAMBIOS NO ESTÁN GUARDADOS EN ESTE DISPOSITIVO/);
+  assert.match(directo, /REINTENTAR GUARDADO/);
+  assert.match(directo, /EXPORTAR RECUPERACIÓN/);
+  assert.match(badge, /memoryOnly[\s\S]*SOLO EN MEMORIA/);
+  assert.match(badge, /FINALIZADO Y SINCRONIZADO/);
+  assert.match(badge, /FINALIZADO LOCAL · PENDIENTE/);
 });

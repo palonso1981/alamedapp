@@ -26,6 +26,7 @@ import {
   softDeleteEvent as softDeleteChronologyEvent,
 } from "../lib/matchEngine";
 import { browserMatchRepository } from "../lib/sync/localMatchRepository";
+import { MATCH_UNDO_HISTORY_LIMIT } from "../lib/matchPersistence";
 import {
   CardColor,
   DefensiveThreatDetailV2,
@@ -50,7 +51,7 @@ import {
   StaffMember,
 } from "../types";
 
-const HISTORY_LIMIT = 100;
+export const HISTORY_LIMIT = MATCH_UNDO_HISTORY_LIMIT;
 
 export const DEMO_PLAYERS: Player[] = [
   { id: "p1", name: "Mario", number: 10, dominantFoot: "RIGHT" },
@@ -258,6 +259,7 @@ interface MatchState {
   ) => void;
   undo: (matchId: string) => void;
   redo: (matchId: string) => void;
+  retryPersistence: (matchId: string) => boolean;
   clearError: (matchId: string) => void;
   resetDemo: (matchId: string) => void;
   setVideoSegments: (matchId: string, segments: MatchVideoSegment[]) => void;
@@ -327,7 +329,7 @@ function persistSession(session: MatchSession): MatchSession {
   return {
     ...session,
     persistenceStatus: "error",
-    lastError: result.message,
+    lastError: "LOS ÚLTIMOS CAMBIOS NO ESTÁN GUARDADOS EN ESTE DISPOSITIVO. NO CIERRES NI RECARGUES.",
   };
 }
 
@@ -354,7 +356,9 @@ function updateAndPersistSession(
   updater: (session: MatchSession) => MatchSession,
 ): Pick<MatchState, "matches"> {
   return updateSession(state, matchId, (session) =>
-    persistSession(updater(session)),
+    session.persistenceStatus === "error"
+      ? session
+      : persistSession(updater(session)),
   );
 }
 
@@ -1240,12 +1244,26 @@ export const useMatchStore = create<MatchState>((set) => ({
       }),
     ),
 
-  clearError: (matchId) =>
+  retryPersistence: (matchId) => {
+    const result = browserMatchRepository.retryVolatileSave(matchId);
     set((state) =>
       updateSession(state, matchId, (session) => ({
         ...session,
-        lastError: null,
+        persistenceStatus: result.ok ? "saved" : "error",
+        lastSavedAt: result.ok ? result.savedAt : session.lastSavedAt,
+        lastError: result.ok
+          ? null
+          : "LOS ÚLTIMOS CAMBIOS NO ESTÁN GUARDADOS EN ESTE DISPOSITIVO. NO CIERRES NI RECARGUES.",
       })),
+    );
+    return result.ok;
+  },
+
+  clearError: (matchId) =>
+    set((state) =>
+      updateSession(state, matchId, (session) => session.persistenceStatus === "error"
+        ? session
+        : { ...session, lastError: null }),
     ),
 
   setVideoSegments: (matchId, segments) =>

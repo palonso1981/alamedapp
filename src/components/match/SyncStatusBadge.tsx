@@ -6,16 +6,18 @@ import { useMatchSync } from "../../hooks/useMatchSync";
 import { useAccess } from "../access/AccessProvider";
 import { downloadMatchRecoveryBundle } from "../../lib/recoveryBundle";
 
-export function SyncStatusBadge({ matchId }: { matchId: string }) {
+export function SyncStatusBadge({ matchId, matchFinished = false }: { matchId: string; matchFinished?: boolean }) {
   const { refresh: refreshAccess } = useAccess();
-  const { summary, config, eligible, online, retry, retryPermissionAfterAccessValidation, reconcileIdentical, resolveLocalVideo, retryableErrors, terminalPermissionErrors, captureConflicts, recoveryAvailable, localVideoResolutionAvailable } = useMatchSync(matchId);
+  const { summary, config, eligible, online, retry, retryPermissionAfterAccessValidation, reconcileIdentical, resolveLocalVideo, retryableErrors, terminalPermissionErrors, captureConflicts, recoveryAvailable, localVideoResolutionAvailable, memoryOnly, storageFailure } = useMatchSync(matchId);
   const [open, setOpen] = useState(false);
   const [rechecking, setRechecking] = useState(false);
   const [resolvingVideo, setResolvingVideo] = useState(false);
   const [recheckMessage, setRecheckMessage] = useState("");
   const [validatingAccess, setValidatingAccess] = useState(false);
 
-  const state = !eligible
+  const state = memoryOnly
+    ? { label: "⛔ SOLO EN MEMORIA", description: "Cambios no guardados en este dispositivo", tone: "bg-red-700 text-white" }
+    : !eligible
     ? { label: "○", description: "Solo local", tone: "bg-slate-900 text-slate-400" }
     : summary.conflicts > 0
       ? {
@@ -32,8 +34,12 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
           : summary.pending > 0
             ? { label: `● ${summary.pending}`, description: `${summary.pending} operaciones pendientes`, tone: "bg-amber-950 text-amber-300" }
             : config.configured && summary.lastSyncedAt
-              ? { label: "☁✓", description: "Sincronizado", tone: "bg-emerald-950 text-emerald-300" }
+              ? { label: matchFinished ? "☁✓ FINALIZADO Y SINCRONIZADO" : "☁✓", description: matchFinished ? "Partido finalizado y sincronizado" : "Sincronizado", tone: "bg-emerald-950 text-emerald-300" }
               : { label: "○", description: "Solo dispositivo", tone: "bg-slate-900 text-slate-400" };
+
+  if (!memoryOnly && matchFinished && (summary.pending > 0 || summary.syncing > 0 || summary.errors > 0 || summary.conflicts > 0)) {
+    state.label = "■ FINALIZADO LOCAL · PENDIENTE";
+  }
 
   return (
     <div className="relative">
@@ -51,7 +57,9 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
         <div className="absolute right-0 top-12 z-50 w-64 rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs text-slate-200 shadow-2xl">
           <p className="font-black">NUBE</p>
           <p className="mt-1 text-slate-400">
-            {!eligible
+            {memoryOnly
+              ? "LOS ÚLTIMOS CAMBIOS ESTÁN SOLO EN MEMORIA. NO CIERRES NI RECARGUES."
+              : !eligible
               ? "Los partidos demo permanecen solo en este dispositivo."
               : !config.configured
                 ? "Firebase no está configurado. Todo sigue seguro localmente."
@@ -67,6 +75,11 @@ export function SyncStatusBadge({ matchId }: { matchId: string }) {
                       : `${summary.pending + summary.errors} operaciones guardadas pendientes de envío.`
                     : "No hay operaciones locales pendientes."}
           </p>
+          {memoryOnly && storageFailure && (
+            <p className="mt-2 rounded-lg bg-red-950 p-2 text-[10px] text-red-100">
+              {storageFailure.name} · {storageFailure.kind} · {Math.ceil(storageFailure.estimatedBytes / 1024)} KiB
+            </p>
+          )}
           {summary.lastSyncedAt && (
             <p className="mt-2 text-[10px] text-slate-500">
               Último sync: {new Date(summary.lastSyncedAt).toLocaleTimeString()}

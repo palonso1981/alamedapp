@@ -10,6 +10,7 @@ import {
   browserMatchRepository,
   isRemoteSyncEligibleMatch,
 } from "../lib/sync/localMatchRepository";
+import { MatchStorageFailureDiagnostic } from "../lib/matchPersistence";
 import { MatchSyncCoordinator } from "../lib/sync/syncCoordinator";
 import {
   RemoteApplyResult,
@@ -84,6 +85,8 @@ export interface MatchSyncView {
   captureConflicts: number;
   recoveryAvailable: boolean;
   localVideoResolutionAvailable: boolean;
+  memoryOnly: boolean;
+  storageFailure: MatchStorageFailureDiagnostic | null;
   retry: () => void;
   retryPermissionAfterAccessValidation: () => void;
   reconcileIdentical: () => Promise<{ reconciled: number; protected: number; unchanged: number }>;
@@ -95,10 +98,11 @@ export function useMatchSync(matchId: string): MatchSyncView {
   const eligible = isRemoteSyncEligibleMatch(matchId);
   const [summary, setSummary] = useState<MatchSyncSummary>(EMPTY_SUMMARY);
   const [online, setOnline] = useState(true);
-  const [diagnostics, setDiagnostics] = useState({ retryableErrors: 0, terminalPermissionErrors: 0, captureConflicts: 0, recoveryAvailable: false, localVideoResolutionAvailable: false });
+  const [diagnostics, setDiagnostics] = useState<{ retryableErrors: number; terminalPermissionErrors: number; captureConflicts: number; recoveryAvailable: boolean; localVideoResolutionAvailable: boolean; memoryOnly: boolean; storageFailure: MatchStorageFailureDiagnostic | null }>({ retryableErrors: 0, terminalPermissionErrors: 0, captureConflicts: 0, recoveryAvailable: false, localVideoResolutionAvailable: false, memoryOnly: false, storageFailure: null });
 
   const refresh = useCallback(() => {
     const state = browserMatchRepository.getSyncState(matchId);
+    const volatile = browserMatchRepository.getVolatileFailure(matchId);
     setSummary(browserMatchRepository.getSummary(matchId));
     setDiagnostics({
       retryableErrors: state.outbox.filter((operation) => operation.status === "ERROR" && blocksAccessChange(operation)).length,
@@ -107,8 +111,10 @@ export function useMatchSync(matchId: string): MatchSyncView {
         typeof conflict.remotePayload === "object" && conflict.remotePayload !== null &&
         "kind" in conflict.remotePayload && conflict.remotePayload.kind === "CAPTURE_LEASE_MISMATCH",
       ).length,
-      recoveryAvailable: hasUnreconciledMatchSyncState(state),
+      recoveryAvailable: Boolean(volatile) || hasUnreconciledMatchSyncState(state),
       localVideoResolutionAvailable: hasVideoOnlyMatchConflict(state),
+      memoryOnly: Boolean(volatile),
+      storageFailure: volatile?.diagnostic ?? null,
     });
   }, [matchId]);
 
