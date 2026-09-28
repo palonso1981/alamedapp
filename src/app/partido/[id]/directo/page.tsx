@@ -744,6 +744,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             <div className="mt-6 grid gap-3 sm:grid-cols-2">
               <button type="button" onClick={() => {
                 const ok = retryPersistence(matchId);
+                if (ok) setDevQuotaFailureArmed(false);
                 setFeedback(ok ? "✓ Guardado recuperado · sincronización pendiente" : null);
               }} className="min-h-14 rounded-2xl bg-white px-4 text-sm font-black text-red-900">REINTENTAR GUARDADO</button>
               <button type="button" onClick={() => downloadMatchRecoveryBundle(matchId)} className="min-h-14 rounded-2xl border-2 border-amber-300 bg-amber-950 px-4 text-sm font-black text-amber-100">EXPORTAR RECUPERACIÓN</button>
