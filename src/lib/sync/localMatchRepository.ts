@@ -2,6 +2,9 @@ import {
   browserMatchStorage,
   loadMatchRecord,
   LocalStorageAdapter,
+  MATCH_LOCAL_STORAGE_VERSION,
+  MatchStorageFailureDiagnostic,
+  PersistedMatchRecord,
   SaveMatchResult,
   saveMatchRecord,
 } from "../matchPersistence";
@@ -40,6 +43,11 @@ export interface LocalMatchRepositoryOptions {
 export type LocalMatchSaveResult =
   | (Extract<SaveMatchResult, { ok: true }> & { pending: number })
   | Extract<SaveMatchResult, { ok: false }>;
+
+export interface VolatileMatchRecovery {
+  record: PersistedMatchRecord;
+  diagnostic: MatchStorageFailureDiagnostic;
+}
 
 export function isRemoteSyncEligibleMatch(matchId: string): boolean {
   return !LOCAL_ONLY_MATCH_IDS.has(matchId);
@@ -218,6 +226,9 @@ function buildNextSyncState(
 export class LocalMatchRepository {
   private readonly listeners = new Map<string, Set<() => void>>();
   private readonly inFlightOperationIds = new Set<string>();
+  /** Último estado completo que no pudo hacerse durable. Nunca se compacta ni
+   * regenera al reintentar, por lo que conserva operationId y payload exactos. */
+  private readonly volatileFailures = new Map<string, VolatileMatchRecovery>();
   private readonly storageOverride: LocalStorageAdapter | null | undefined;
   private readonly now: () => number;
   private readonly idFactory: () => string;
@@ -246,7 +257,21 @@ export class LocalMatchRepository {
   }
 
   load(matchId: string): MatchSession | null {
-    return loadMatchRecord(matchId, this.storage())?.session ?? null;
+    return this.volatileFailures.get(matchId)?.record.session ??
+      loadMatchRecord(matchId, this.storage())?.session ?? null;
+  }
+
+  getVolatileFailure(matchId: string): VolatileMatchRecovery | null {
+    return this.volatileFailures.get(matchId) ?? null;
+  }
+
+  hasVolatileFailure(matchId: string): boolean {
+    return this.volatileFailures.has(matchId);
+  }
+
+  getRecoveryRecord(matchId: string): PersistedMatchRecord | null {
+    return this.volatileFailures.get(matchId)?.record ??
+      loadMatchRecord(matchId, this.storage());
   }
 
   /**
@@ -255,6 +280,7 @@ export class LocalMatchRepository {
    * cualquier outbox o conflicto conserva íntegramente el trabajo offline.
    */
   hydrateRemote(session: MatchSession, knownRemoteRevisions: Record<string, number>): boolean {
+    if (this.volatileFailures.has(session.matchId)) return true;
     const storage = this.storage();
     const existing = loadMatchRecord(session.matchId, storage);
     if (existing && (existing.sync.outbox.length > 0 || existing.sync.conflicts.length > 0)) {
@@ -270,7 +296,8 @@ export class LocalMatchRepository {
   }
 
   getSyncState(matchId: string): PersistedMatchSyncState {
-    const sync = loadMatchRecord(matchId, this.storage())?.sync ?? emptyMatchSyncState();
+    const sync = this.volatileFailures.get(matchId)?.record.sync ??
+      loadMatchRecord(matchId, this.storage())?.sync ?? emptyMatchSyncState();
     return this.withLiveInFlightState(sync);
   }
 
@@ -360,6 +387,15 @@ export class LocalMatchRepository {
       }
     }
     const storage = this.storage();
+    const volatile = this.volatileFailures.get(session.matchId);
+    if (volatile) {
+      return {
+        ok: false,
+        unavailable: false,
+        message: "Hay cambios solo en memoria. Reintenta el guardado antes de continuar.",
+        diagnostic: volatile.diagnostic,
+      };
+    }
     const previousRecord = loadMatchRecord(session.matchId, storage);
     const now = this.now();
     let sync = this.withLiveInFlightState(previousRecord?.sync ?? emptyMatchSyncState());
@@ -376,13 +412,60 @@ export class LocalMatchRepository {
     if (result.ok) {
       updateMatchCatalog(session, storage);
       this.notify(session.matchId);
+    } else if (result.diagnostic && !(result.unavailable && typeof window === "undefined")) {
+      this.volatileFailures.set(session.matchId, {
+        record: {
+          session,
+          sync,
+          storageVersion: MATCH_LOCAL_STORAGE_VERSION,
+          savedAt: now,
+        },
+        diagnostic: result.diagnostic,
+      });
+      // El estado de NUBE debe conocer el fallo aunque localStorage no pueda
+      // escribirlo; de lo contrario seguiría mostrando un falso verde.
+      this.notify(session.matchId);
     }
     return result.ok
       ? { ...result, pending: summarizeSyncState(sync).pending }
       : result;
   }
 
+  retryVolatileSave(matchId: string): LocalMatchSaveResult {
+    const volatile = this.volatileFailures.get(matchId);
+    if (!volatile) {
+      const record = loadMatchRecord(matchId, this.storage());
+      if (!record) {
+        return { ok: false, unavailable: true, message: "No existe una copia recuperable del partido." };
+      }
+      return { ok: true, savedAt: record.savedAt, pending: summarizeSyncState(record.sync).pending };
+    }
+    const now = this.now();
+    const result = saveMatchRecord(
+      volatile.record.session,
+      volatile.record.sync,
+      this.storage(),
+      now,
+    );
+    if (!result.ok) {
+      if (result.diagnostic) {
+        this.volatileFailures.set(matchId, { ...volatile, diagnostic: result.diagnostic });
+      }
+      this.notify(matchId);
+      return result;
+    }
+    this.volatileFailures.delete(matchId);
+    updateMatchCatalog(volatile.record.session, this.storage());
+    this.notify(matchId);
+    return {
+      ...result,
+      pending: summarizeSyncState(volatile.record.sync).pending,
+    };
+  }
+
   claimNextOperation(matchId: string): MatchSyncOperation | null {
+    // Nunca sincronizar una mutación que todavía no es durable localmente.
+    if (this.volatileFailures.has(matchId)) return null;
     const storage = this.storage();
     const record = loadMatchRecord(matchId, storage);
     if (!record) return null;
