@@ -7,6 +7,8 @@ import { shiftVideoSecond } from "../../lib/videoLab";
 type YTPlayer = {
   destroy?: () => void;
   getCurrentTime?: () => number;
+  loadVideoById?: (options: { videoId: string; startSeconds: number }) => void;
+  cueVideoById?: (options: { videoId: string; startSeconds: number }) => void;
   seekTo?: (seconds: number, allowSeekAhead: boolean) => void;
   setPlaybackRate?: (rate: number) => void;
   playVideo?: () => void;
@@ -37,12 +39,14 @@ interface Props {
   actionDisabled?: boolean;
   autoPlay?: boolean;
   onPlayingChange?: (playing: boolean) => void;
+  onAutoplayBlocked?: () => void;
+  presentation?: "LAB" | "REEL";
 }
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
 
 export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(function YouTubeLabPlayer(
-  { videoId, initialSecond = 0, onTimeChange, onActionHere, actionDisabled = false, autoPlay = false, onPlayingChange },
+  { videoId, initialSecond = 0, onTimeChange, onActionHere, actionDisabled = false, autoPlay = false, onPlayingChange, onAutoplayBlocked, presentation = "LAB" },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -50,6 +54,12 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
   const currentSecondRef = useRef(initialSecond);
   const [currentSecond, setCurrentSecond] = useState(initialSecond);
   const [speed, setSpeed] = useState(1);
+  const desiredVideoRef = useRef({ videoId, initialSecond, autoPlay });
+  const onPlayingChangeRef = useRef(onPlayingChange);
+  const onAutoplayBlockedRef = useRef(onAutoplayBlocked);
+  desiredVideoRef.current = { videoId, initialSecond, autoPlay };
+  onPlayingChangeRef.current = onPlayingChange;
+  onAutoplayBlockedRef.current = onAutoplayBlocked;
   const readCurrentSecond = useCallback(() => {
     const value = playerRef.current?.getCurrentTime?.();
     return Number.isFinite(value) ? Math.max(0, Number(value)) : currentSecondRef.current;
@@ -67,15 +77,22 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
     const create = () => {
       if (disposed || !hostRef.current || !window.YT?.Player) return;
       playerRef.current?.destroy?.();
+      const desired = desiredVideoRef.current;
       playerRef.current = new window.YT.Player(hostRef.current, {
-        videoId,
-        playerVars: { autoplay: autoPlay ? 1 : 0, start: Math.max(0, Math.round(initialSecond)), playsinline: 1, rel: 0 },
+        videoId: desired.videoId,
+        playerVars: { autoplay: desired.autoPlay ? 1 : 0, start: Math.max(0, Math.round(desired.initialSecond)), playsinline: 1, rel: 0 },
         events: {
-          onReady: (event: YTPlayerEvent) => { if (autoPlay) event.target.playVideo?.(); },
-          onStateChange: (event: YTPlayerEvent) => {
-            if (event.data === 1) onPlayingChange?.(true);
-            if (event.data === 0 || event.data === 2) onPlayingChange?.(false);
+          onReady: (event: YTPlayerEvent) => {
+            const latest = desiredVideoRef.current;
+            const options = { videoId: latest.videoId, startSeconds: Math.max(0, Math.round(latest.initialSecond)) };
+            if (latest.autoPlay) event.target.loadVideoById?.(options);
+            else event.target.cueVideoById?.(options);
           },
+          onStateChange: (event: YTPlayerEvent) => {
+            if (event.data === 1) onPlayingChangeRef.current?.(true);
+            if (event.data === 0 || event.data === 2) onPlayingChangeRef.current?.(false);
+          },
+          onAutoplayBlocked: () => onAutoplayBlockedRef.current?.(),
         },
       });
     };
@@ -95,7 +112,16 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
       playerRef.current?.destroy?.();
       playerRef.current = null;
     };
-  }, [autoPlay, initialSecond, onPlayingChange, videoId]);
+  }, []);
+
+  useEffect(() => {
+    const second = Math.max(0, Math.round(initialSecond));
+    currentSecondRef.current = second;
+    setCurrentSecond(second);
+    const options = { videoId, startSeconds: second };
+    if (desiredVideoRef.current.autoPlay) playerRef.current?.loadVideoById?.(options);
+    else playerRef.current?.cueVideoById?.(options);
+  }, [initialSecond, videoId]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -118,9 +144,9 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
   };
 
   return (
-    <div className="space-y-3">
-      <div className="aspect-video overflow-hidden rounded-2xl bg-black"><div ref={hostRef} className="h-full w-full" /></div>
-      <div className="flex flex-wrap items-center gap-2">
+    <div className={presentation === "REEL" ? "h-full min-h-0" : "space-y-3"}>
+      <div className={presentation === "REEL" ? "h-full min-h-0 overflow-hidden bg-black" : "aspect-video overflow-hidden rounded-2xl bg-black"}><div ref={hostRef} className="h-full w-full" /></div>
+      {presentation === "LAB" && <><div className="flex flex-wrap items-center gap-2">
         {([-5, -1, 1, 5] as const).map((delta) => (
           <button key={delta} type="button" onClick={() => shift(delta)} className="min-h-11 min-w-14 rounded-xl bg-slate-700 px-3 font-black active:scale-95">
             {delta > 0 ? `+${delta}` : delta}
@@ -133,7 +159,7 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
         {SPEEDS.map((value) => (
           <button key={value} type="button" onClick={() => { playerRef.current?.setPlaybackRate?.(value); setSpeed(value); }} className={`min-h-10 rounded-lg px-3 text-xs font-black ${speed === value ? "bg-cyan-400 text-slate-950" : "bg-slate-800 text-slate-300"}`}>{value}×</button>
         ))}
-      </div>
+      </div></>}
     </div>
   );
 });

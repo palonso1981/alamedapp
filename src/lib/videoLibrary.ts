@@ -162,6 +162,23 @@ export function shouldAdvanceReel(item: VideoLibraryItem | undefined, currentSec
   return Boolean(playing && item && currentSecond >= item.endSecond);
 }
 
+export type ReelCutCompletion =
+  | { kind: "WAIT" }
+  | { kind: "NEXT"; index: number }
+  | { kind: "FINISHED" };
+
+export function reelCutCompletion(
+  items: readonly VideoLibraryItem[],
+  current: number,
+  currentSecond: number,
+  playing: boolean,
+): ReelCutCompletion {
+  const item = items[current];
+  if (!shouldAdvanceReel(item, currentSecond, playing)) return { kind: "WAIT" };
+  if (current >= items.length - 1) return { kind: "FINISHED" };
+  return { kind: "NEXT", index: current + 1 };
+}
+
 export type VideoLibraryKeyboardAction = "TOGGLE_PLAYBACK" | "PREVIOUS" | "NEXT";
 
 export function videoLibraryKeyboardAction(code: string, editableTarget: boolean): VideoLibraryKeyboardAction | null {

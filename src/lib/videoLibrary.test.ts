@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildDashboardFixture } from "./dashboardFixture";
 import { emptyDashboardScope } from "./dashboardV2";
-import { buildVideoLibraryItems, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, shouldAdvanceReel, videoLibraryKeyboardAction } from "./videoLibrary";
+import { buildVideoLibraryItems, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, reelCutCompletion, shouldAdvanceReel, videoLibraryKeyboardAction } from "./videoLibrary";
 import { MatchVideoAnalysisClip } from "../types";
 
 function libraryRecords() {
@@ -117,6 +117,33 @@ test("reel navega circularmente, avanza al final y conserva vídeos distintos", 
   assert.equal(shouldAdvanceReel(items[0], items[0].endSecond, true), true);
   assert.equal(shouldAdvanceReel(items[0], items[0].endSecond, false), false);
   assert.equal(new Set(items.map((item) => item.videoId)).size, 2);
+});
+
+test("reel automático recorre diez cortes y se detiene al final sin hacer loop", () => {
+  const base = buildVideoLibraryItems(libraryRecords(), EMPTY_VIDEO_LIBRARY_FILTERS, { includeClips: true });
+  assert.ok(base.length > 0);
+  const items = Array.from({ length: 12 }, (_, index) => ({
+    ...base[index % base.length],
+    key: `${base[index % base.length].key}:${index}`,
+    videoId: index % 2 === 0 ? "AAAAAAAAAAA" : "BBBBBBBBBBB",
+    startSecond: 10 + index * 5,
+    endSecond: 14 + index * 5,
+    verified: index % 2 === 0,
+  }));
+  for (let index = 0; index < items.length - 1; index += 1) {
+    assert.deepEqual(reelCutCompletion(items, index, items[index].endSecond, true), { kind: "NEXT", index: index + 1 });
+  }
+  assert.deepEqual(reelCutCompletion(items, items.length - 1, items.at(-1)!.endSecond, true), { kind: "FINISHED" });
+  assert.deepEqual(reelCutCompletion(items, 0, items[0].endSecond - 1, true), { kind: "WAIT" });
+  assert.deepEqual(reelCutCompletion(items, 0, items[0].endSecond, false), { kind: "WAIT" });
+  assert.equal(new Set(items.map((item) => item.videoId)).size, 2);
+  assert.ok(items.some((item) => item.verified) && items.some((item) => !item.verified));
+});
+
+test("reel de un único corte termina sin seleccionar de nuevo el primero", () => {
+  const [item] = buildVideoLibraryItems(libraryRecords(), EMPTY_VIDEO_LIBRARY_FILTERS, { includeClips: true });
+  assert.ok(item);
+  assert.deepEqual(reelCutCompletion([item], 0, item.endSecond, true), { kind: "FINISHED" });
 });
 
 test("teclado reserva espacio para reproducción y flechas para navegación, salvo en controles editables", () => {
