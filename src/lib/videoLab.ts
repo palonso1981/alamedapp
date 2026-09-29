@@ -21,6 +21,17 @@ import {
 
 export const VIDEO_CLIP_SUGGESTED_CATEGORIES = ["OFENSIVO", "DEFENSIVO", "ESTRATEGIA", "RIVAL", "INDIVIDUAL"] as const;
 
+export interface VideoLabEventActionState {
+  visible: boolean;
+  enabled: boolean;
+}
+
+/** Mantiene accesible la acción de creación para quien puede escribir y solo
+ * exige una referencia cronológica antes de abrir el editor existente. */
+export function videoLabEventActionState(canWrite: boolean, referenceEventId?: string): VideoLabEventActionState {
+  return { visible: canWrite, enabled: canWrite && Boolean(referenceEventId) };
+}
+
 export function hasVideoLabAvailable(session: MatchSession | null | undefined): boolean {
   return Boolean(session?.videoSegments?.some((segment) => segment.provider === "YOUTUBE" && segment.videoId.trim().length > 0));
 }

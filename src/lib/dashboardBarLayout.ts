@@ -1,5 +1,9 @@
 export const COMPARISON_BAR_MAX_PERCENT = 82;
 
+export function comparisonBarScaleMaximum(values: readonly (number | null | undefined)[]): number {
+  return Math.max(1, ...values.filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value) && value > 0));
+}
+
 /** Reserva espacio exterior para que el valor pueda acompañar al extremo de la
  * barra incluso cuando esta representa el máximo de la comparación. */
 export function comparisonBarPercentage(value: number | null, maximum: number): number {

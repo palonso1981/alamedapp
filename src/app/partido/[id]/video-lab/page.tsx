@@ -18,6 +18,7 @@ import {
   currentVideoLabRow,
   nextVideoLabRow,
   persistVideoLabVerification,
+  videoLabEventActionState,
   videoLabSeekSecond,
 } from "../../../../lib/videoLab";
 import { useMatchStore } from "../../../../store/useMatchStore";
@@ -54,6 +55,7 @@ export default function VideoLabPage() {
   const segmentRows = rows.filter((row) => row.syncSegmentId === segmentId);
   const activeRow = currentVideoLabRow(rows, segmentId, currentSecond);
   const selectedRow = rows.find((row) => row.event.id === selectedEventId) ?? activeRow;
+  const eventAction = videoLabEventActionState(canWrite, selectedRow?.event.id);
 
   useEffect(() => {
     const row = activeRow ? rowRefs.current[activeRow.event.id] : null;
@@ -135,7 +137,8 @@ export default function VideoLabPage() {
                   <button type="button" onClick={goNext} className="min-h-12 rounded-xl bg-slate-700 px-3 text-sm font-black">SIGUIENTE →</button>
                   {!followVideo && <button type="button" onClick={() => setFollowVideo(true)} className="col-span-2 min-h-12 rounded-xl bg-cyan-400 px-3 text-sm font-black text-slate-950 sm:col-span-1">◎ SEGUIR VÍDEO</button>}
                 </div>
-                {canWrite && selectedRow && <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" onClick={() => setComposer(composer === "EVENT" ? null : "EVENT")} className="min-h-12 rounded-xl bg-cyan-400 px-3 text-sm font-black text-slate-950">+ EVENTO</button><button type="button" onClick={() => setComposer(composer === "CLIP" ? null : "CLIP")} className="min-h-12 rounded-xl bg-violet-400 px-3 text-sm font-black text-slate-950">+ CLIP</button></div>}
+                {eventAction.visible && <div className={`mt-2 grid gap-2 ${selectedRow ? "grid-cols-2" : "grid-cols-1"}`}><button type="button" disabled={!eventAction.enabled} aria-describedby={!eventAction.enabled ? "video-lab-event-hint" : undefined} onClick={() => setComposer(composer === "EVENT" ? null : "EVENT")} className="min-h-12 rounded-xl bg-cyan-400 px-3 text-sm font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">+ EVENTO</button>{selectedRow && <button type="button" onClick={() => setComposer(composer === "CLIP" ? null : "CLIP")} className="min-h-12 rounded-xl bg-violet-400 px-3 text-sm font-black text-slate-950">+ CLIP</button>}</div>}
+                {eventAction.visible && !eventAction.enabled && <p id="video-lab-event-hint" className="mt-2 text-[10px] font-bold text-cyan-200">Selecciona una jugada de la cronología para insertar el nuevo evento después de ella.</p>}
                 {composer === "EVENT" && selectedRow && <div className="mt-3"><VideoSportsEventComposer session={session} referenceEventId={selectedRow.event.id} segment={segment} videoSecond={readPlayerSecond()} onSave={(event, override) => { addVideoLabEvent(matchId, event, override); setSelectedEventId(event.id); setComposer(null); }} onCancel={() => setComposer(null)}/></div>}
                 {composer === "CLIP" && <div className="mt-3"><VideoClipComposer session={session} segment={segment} currentSecond={readPlayerSecond} onSave={(clip) => { upsertVideoAnalysisClip(matchId, clip); setComposer(null); }} onCancel={() => setComposer(null)}/></div>}
                 {editingClip && segment?.id === editingClip.segmentId && <div className="mt-3"><VideoClipComposer session={session} segment={segment} initialClip={editingClip} currentSecond={readPlayerSecond} onSave={(clip) => { upsertVideoAnalysisClip(matchId, clip); setEditingClipId(null); }} onCancel={() => setEditingClipId(null)}/></div>}

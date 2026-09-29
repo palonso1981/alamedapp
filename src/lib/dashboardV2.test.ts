@@ -11,7 +11,7 @@ import { dashboardMapPointTitle, resolveDashboardMapPoint } from "./dashboardTra
 import { revisionEventHref, safeDashboardReturnTo } from "./dashboardNavigation";
 import { adaptiveChartLayout, filterSearchableMatches, matchSelectionLabel, searchableMatchLabel, toggleMatchSelection } from "./dashboardSelectors";
 import { withCurrentPlayerIdentity } from "./dashboardIdentity";
-import { COMPARISON_BAR_MAX_PERCENT, comparisonBarPercentage, comparisonBarValueStyle } from "./dashboardBarLayout";
+import { COMPARISON_BAR_MAX_PERCENT, comparisonBarPercentage, comparisonBarScaleMaximum, comparisonBarValueStyle } from "./dashboardBarLayout";
 import { createMasterPlayer } from "./rosterDomain";
 
 test("returnTo acepta solo rutas Dashboard internas y conserva la identidad del evento", () => {
@@ -373,6 +373,14 @@ test("valores de barras quedan fuera junto al extremo con escalado seguro para b
   assert.deepEqual(comparisonBarValueStyle("right", long), { left: `calc(${long}% + 0.35rem)` });
   assert.equal(comparisonBarPercentage(null, 100), 0);
   assert.equal(comparisonBarPercentage(200, 100), COMPARISON_BAR_MAX_PERCENT);
+});
+
+test("BALANCES ATAQUE / DEFENSA usa una escala común proporcional para remates, goles y faltas", () => {
+  const scaleMax = comparisonBarScaleMaximum([7, 26, 4, 8, 1, 1, null]);
+  assert.equal(scaleMax, 26);
+  assert.equal(comparisonBarPercentage(26, scaleMax), COMPARISON_BAR_MAX_PERCENT);
+  assert.ok(comparisonBarPercentage(8, scaleMax) < comparisonBarPercentage(26, scaleMax));
+  assert.ok(comparisonBarPercentage(1, scaleMax) < comparisonBarPercentage(4, scaleMax));
 });
 
 test("distribución conserva cantidades y porcentajes suma 100", () => {

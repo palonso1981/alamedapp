@@ -3,7 +3,7 @@ import { DashboardValueMode, homogeneousComparisonMode, normalizeDashboardCount,
 import { PAIRED_METRIC_DEFINITIONS } from "../../lib/dashboardMetricDefinitions";
 import { ThreatOutcomeStats } from "../../lib/dashboardAnalytics";
 import { ThreatSide } from "../../types";
-import { comparisonBarPercentage, comparisonBarValueStyle } from "../../lib/dashboardBarLayout";
+import { comparisonBarPercentage, comparisonBarScaleMaximum, comparisonBarValueStyle } from "../../lib/dashboardBarLayout";
 
 const format = (value: number | null, suffix = "") => value === null ? "N/D" : `${Number.isInteger(value) ? value : value.toFixed(1).replace(".", ",")}${suffix}`;
 
@@ -31,11 +31,15 @@ export function FacedMetricRow({ label, own, rival, ownReference, rivalReference
 export function TeamComparison({ analysis, reference, mode, comparisonEnabled = true }: { analysis: DashboardAnalysis; reference: DashboardAnalysis; mode: DashboardValueMode; comparisonEnabled?: boolean }) {
   const comparisonMode = homogeneousComparisonMode(analysis.samples, reference.samples, mode);
   const pair = (own: TeamMetricKey, rival: TeamMetricKey) => ({ own: teamMetricValue(analysis, own, comparisonMode), rival: teamMetricValue(analysis, rival, comparisonMode), ownReference: comparisonEnabled ? teamMetricValue(reference, own, comparisonMode) : null, rivalReference: comparisonEnabled ? teamMetricValue(reference, rival, comparisonMode) : null });
+  const rows = [
+    { label: "REMATES", values: pair("threatsFor", "threatsAgainst"), semantics: "higher" as const },
+    { label: "GOLES", values: pair("goalsFor", "goalsAgainst"), semantics: "higher" as const },
+    { label: "FALTAS", values: pair("foulsFor", "foulsAgainst"), semantics: "neutral" as const },
+  ];
+  const scaleMax = comparisonBarScaleMaximum(rows.flatMap(({ values }) => [values.own, values.rival, values.ownReference, values.rivalReference]));
   return <article className="space-y-4 rounded-3xl border border-slate-700 bg-slate-900 p-4">
     <div className="flex justify-between text-[9px] font-black"><span className="text-cyan-300">CDA</span><span className="text-slate-500">{comparisonMode === "TOTALS" ? "VALOR DE PARTIDO" : comparisonMode === "PER_MATCH" ? "POR PARTIDO" : "POR 40"}{comparisonEnabled ? " · MARCA = REFERENCIA" : ""}</span><span className="text-rose-300">RIVAL</span></div>
-    <FacedMetricRow label="REMATES" {...pair("threatsFor", "threatsAgainst")} semantics="higher" showReference={comparisonEnabled} />
-    <FacedMetricRow label="GOLES" {...pair("goalsFor", "goalsAgainst")} semantics="higher" showReference={comparisonEnabled} />
-    <FacedMetricRow label="FALTAS" {...pair("foulsFor", "foulsAgainst")} semantics="neutral" showReference={comparisonEnabled} />
+    {rows.map(({ label, values, semantics }) => <FacedMetricRow key={label} label={label} {...values} semantics={semantics} showReference={comparisonEnabled} scaleMax={scaleMax} />)}
     <div className="grid gap-2 border-t border-slate-800 pt-3 sm:grid-cols-2">{PAIRED_METRIC_DEFINITIONS.map((definition) => { const value = teamPairedMetricValue(analysis, definition.id, mode); return <div key={definition.id} title={definition.tooltip} className="rounded-xl bg-slate-950 p-3"><span className="text-[9px] font-black text-slate-500">{definition.label}</span><strong className="mt-1 block text-xl">{format(value.left)}–{format(value.right)} <small className={value.difference !== null && value.difference >= 0 ? "text-emerald-300" : "text-rose-300"}>· {value.difference !== null && value.difference > 0 ? "+" : ""}{format(value.difference)}</small></strong><span className="text-[8px] text-slate-500">{definition.differenceLabel}</span></div>; })}</div>
   </article>;
 }

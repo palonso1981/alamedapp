@@ -23,6 +23,7 @@ import {
   shiftVideoSecond,
   videoClipTagSuggestions,
   verifyVideoLabEvent,
+  videoLabEventActionState,
   videoLabSeekSecond,
 } from "./videoLab";
 import { loadMatchSession, LocalStorageAdapter, saveMatchSession } from "./matchPersistence";
@@ -226,6 +227,12 @@ test("+ EVENTO crea provenance VIDEO tras la sustitución y VERIFIED sin mutar c
   assert.equal(result.onCourtPlayerIds.includes("p2"), false);
   assert.deepEqual(result.override, { matchId: "video-lab", eventId: "video-event", segmentId: "first", syncSegmentId: "first:P1", videoSecond: 117, status: "VERIFIED", timeSource: "manual", createdAt: 99, updatedAt: 99 });
   assert.equal(result.event.observedAt, undefined);
+});
+
+test("+ EVENTO permanece visible para ADMIN/EDITOR y se habilita al seleccionar referencia", () => {
+  assert.deepEqual(videoLabEventActionState(true), { visible: true, enabled: false });
+  assert.deepEqual(videoLabEventActionState(true, "p1-shot"), { visible: true, enabled: true });
+  assert.deepEqual(videoLabEventActionState(false, "p1-shot"), { visible: false, enabled: false });
 });
 
 test("clips proponen -3/+6, admiten vacío, varios jugadores y etiquetas reutilizables", () => {
