@@ -9,7 +9,7 @@ import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEA
 import { compareMetricValues, METRIC_DEFINITIONS } from "./dashboardMetricDefinitions";
 import { dashboardMapPointTitle, resolveDashboardMapPoint } from "./dashboardTrace";
 import { revisionEventHref, safeDashboardReturnTo } from "./dashboardNavigation";
-import { adaptiveChartLayout, filterSearchableMatches, searchableMatchLabel } from "./dashboardSelectors";
+import { adaptiveChartLayout, filterSearchableMatches, matchSelectionLabel, searchableMatchLabel, toggleMatchSelection } from "./dashboardSelectors";
 import { withCurrentPlayerIdentity } from "./dashboardIdentity";
 import { createMasterPlayer } from "./rosterDomain";
 
@@ -24,6 +24,32 @@ test("returnTo acepta solo rutas Dashboard internas y conserva la identidad del 
   assert.equal(url.searchParams.get("eventId"), "e1");
   assert.equal(url.searchParams.get("returnTo"), returnTo);
   assert.equal(url.searchParams.get("fixture"), "1");
+});
+
+test("selector múltiple conserva checkboxes y resume uno o varios partidos", () => {
+  const records = buildDashboardFixture().slice(0, 2);
+  const matches = records.map((record) => ({ ...record.catalog }));
+  const first = records[0].catalog.matchId;
+  const second = records[1].catalog.matchId;
+  assert.deepEqual(toggleMatchSelection([], first), [first]);
+  assert.deepEqual(toggleMatchSelection([first], second), [first, second]);
+  assert.deepEqual(toggleMatchSelection([first, second], first), [second]);
+  assert.equal(matchSelectionLabel(matches, [], "Todos"), "Todos");
+  assert.match(matchSelectionLabel(matches, [first]), new RegExp(records[0].catalog.opponent));
+  assert.equal(matchSelectionLabel(matches, [first, second]), "2 partidos seleccionados");
+});
+
+test("la selección múltiple permanece al combinar el resto de filtros", () => {
+  const records = buildDashboardFixture();
+  const home = records.find((record) => record.catalog.venue === "HOME")!;
+  const away = records.find((record) => record.catalog.venue === "AWAY")!;
+  const matchIds = [home.catalog.matchId, away.catalog.matchId];
+  const selected = filterDashboardDataset(records, { ...baseScope(), competition: "ALL", matchIds });
+  assert.deepEqual(selected.map((record) => record.catalog.matchId).sort(), [...matchIds].sort());
+  const filtered = filterDashboardDataset(records, { ...baseScope(), competition: "ALL", matchIds, venues: ["AWAY"], period: 2 });
+  assert.ok(filtered.length > 0);
+  assert.ok(filtered.every((record) => record.catalog.matchId === away.catalog.matchId));
+  assert.ok(filtered.flatMap((record) => record.session.events).every((event) => event.period === 2));
 });
 
 test("Dashboard resuelve el nombre maestro actual por playerId sin cambiar dorsal ni estadísticas históricas", () => {

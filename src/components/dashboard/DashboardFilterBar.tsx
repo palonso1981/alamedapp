@@ -9,6 +9,7 @@ import {
 } from "../../lib/dashboardV2";
 import { Season, TeamProfile, ThreatOutcome } from "../../types";
 import { SearchableMatchCombobox } from "./SearchableMatchCombobox";
+import { MultiMatchCombobox } from "./MultiMatchCombobox";
 import { SearchableMatch } from "../../lib/dashboardSelectors";
 
 const PHASES: Array<[DashboardPhaseFilter, string]> = [
@@ -82,8 +83,8 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
         {!fixture && seasons.filter((season) => season.teamId === scope.teamId).map((season) => <option key={season.seasonId} value={season.seasonId}>{season.label}</option>)}
         {fixture && <option value={scope.seasonId}>2026-27</option>}
       </select>
-      <select aria-label="Competición" value={scope.competition} onChange={(event) => patch({ competition: event.target.value as DashboardScopeV2["competition"], matchIds: [] })} className="min-h-10 min-w-32 rounded-xl bg-indigo-950 px-3 text-xs font-black text-indigo-100"><option value="LEAGUE">Liga</option><option value="CUP">Copa</option><option value="FRIENDLY">Amistoso</option><option value="OTHER">Otra</option><option value="ALL">Todas</option><option value="UNSPECIFIED">Sin clasificar</option></select>
-      <SearchableMatchCombobox matches={matches} value={scope.matchIds.length === 1 ? scope.matchIds[0] : ""} onChange={(matchId) => { const selected = matches.find((match) => match.matchId === matchId); patch({ matchIds: matchId ? [matchId] : [], competition: selected?.competitionType ?? scope.competition }); }}/>
+      <select aria-label="Competición" value={scope.competition} onChange={(event) => patch({ competition: event.target.value as DashboardScopeV2["competition"] })} className="min-h-10 min-w-32 rounded-xl bg-indigo-950 px-3 text-xs font-black text-indigo-100"><option value="LEAGUE">Liga</option><option value="CUP">Copa</option><option value="FRIENDLY">Amistoso</option><option value="OTHER">Otra</option><option value="ALL">Todas</option><option value="UNSPECIFIED">Sin clasificar</option></select>
+      <MultiMatchCombobox matches={matches} values={scope.matchIds} onChange={(matchIds) => patch({ matchIds })}/>
       <select aria-label="Portero funcional" value={scope.goalkeeperIds.length === 1 ? scope.goalkeeperIds[0] : "ALL"} onChange={(event) => patch({ goalkeeperIds: event.target.value === "ALL" ? [] : [event.target.value] })} className="min-h-10 min-w-40 rounded-xl bg-sky-950 px-3 text-xs font-black text-sky-100"><option value="ALL">Todos los porteros</option>{goalkeepers.map((keeper) => <option key={keeper.playerId} value={keeper.playerId}>🥅 {keeper.name}</option>)}</select>
       {(["ALL", 1, 2] as const).map((period) => <MultiButton key={period} active={scope.period === period} onClick={() => patch({ period })}>{period === "ALL" ? "TODO" : `P${period}`}</MultiButton>)}
       {onRefresh && <button type="button" onClick={onRefresh} className="grid min-h-10 min-w-10 place-items-center rounded-xl border border-slate-700 text-lg" aria-label="Actualizar datos">↻</button>}
