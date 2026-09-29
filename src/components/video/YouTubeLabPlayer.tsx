@@ -3,6 +3,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { formatVideoTimestamp } from "../../lib/videoIndex";
 import { shiftVideoSecond } from "../../lib/videoLab";
+import { shouldCorrectReelStart } from "../../lib/videoLibrary";
 
 type YTPlayer = {
   destroy?: () => void;
@@ -55,6 +56,7 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
   const [currentSecond, setCurrentSecond] = useState(initialSecond);
   const [speed, setSpeed] = useState(1);
   const desiredVideoRef = useRef({ videoId, initialSecond, autoPlay });
+  const pendingStartRef = useRef(Math.max(0, Math.round(initialSecond)));
   const onPlayingChangeRef = useRef(onPlayingChange);
   const onAutoplayBlockedRef = useRef(onAutoplayBlocked);
   desiredVideoRef.current = { videoId, initialSecond, autoPlay };
@@ -84,12 +86,20 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
         events: {
           onReady: (event: YTPlayerEvent) => {
             const latest = desiredVideoRef.current;
-            const options = { videoId: latest.videoId, startSeconds: Math.max(0, Math.round(latest.initialSecond)) };
+            const startSeconds = Math.max(0, Math.round(latest.initialSecond));
+            pendingStartRef.current = startSeconds;
+            const options = { videoId: latest.videoId, startSeconds };
             if (latest.autoPlay) event.target.loadVideoById?.(options);
             else event.target.cueVideoById?.(options);
           },
           onStateChange: (event: YTPlayerEvent) => {
-            if (event.data === 1) onPlayingChangeRef.current?.(true);
+            if (event.data === 1) {
+              const pendingStart = pendingStartRef.current;
+              const actualSecond = Number(event.target.getCurrentTime?.());
+              if (shouldCorrectReelStart(actualSecond, pendingStart)) event.target.seekTo?.(pendingStart, true);
+              pendingStartRef.current = Number.NaN;
+              onPlayingChangeRef.current?.(true);
+            }
             if (event.data === 0 || event.data === 2) onPlayingChangeRef.current?.(false);
           },
           onAutoplayBlocked: () => onAutoplayBlockedRef.current?.(),
@@ -116,6 +126,7 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
 
   useEffect(() => {
     const second = Math.max(0, Math.round(initialSecond));
+    pendingStartRef.current = second;
     currentSecondRef.current = second;
     setCurrentSecond(second);
     const options = { videoId, startSeconds: second };

@@ -132,9 +132,7 @@ function VideoLibraryContent() {
   useEffect(() => {
     if (!active) return;
     lastCompletedCutRef.current = null;
-    const timer = window.setTimeout(() => { playerRef.current?.seekTo(active.startSecond); if (reel || autoPlaySelection) playerRef.current?.play(); }, 150);
-    return () => window.clearTimeout(timer);
-  }, [active, autoPlaySelection, reel]);
+  }, [active]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -217,6 +215,10 @@ function VideoLibraryContent() {
     setAutoPlaySelection(true);
     setAutoplayBlocked(false);
     lastCompletedCutRef.current = null;
+    if (selected === 0 && items[0]) {
+      playerRef.current?.seekTo(items[0].startSecond);
+      playerRef.current?.play();
+    }
   };
   const openEdit = (clip: MatchVideoAnalysisClip) => { ensureMatch(clip.matchId); setEditing(clip); setReel(false); };
   const editingRecord = editing ? visibleRecords.find((record) => record.catalog.matchId === editing.matchId) : undefined;

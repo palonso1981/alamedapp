@@ -179,6 +179,12 @@ export function reelCutCompletion(
   return { kind: "NEXT", index: current + 1 };
 }
 
+export function shouldCorrectReelStart(currentSecond: number, startSecond: number, toleranceSeconds = 1.5): boolean {
+  return Number.isFinite(currentSecond)
+    && Number.isFinite(startSecond)
+    && Math.abs(currentSecond - startSecond) > Math.max(0, toleranceSeconds);
+}
+
 export type VideoLibraryKeyboardAction = "TOGGLE_PLAYBACK" | "PREVIOUS" | "NEXT";
 
 export function videoLibraryKeyboardAction(code: string, editableTarget: boolean): VideoLibraryKeyboardAction | null {

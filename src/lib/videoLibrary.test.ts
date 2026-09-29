@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildDashboardFixture } from "./dashboardFixture";
 import { emptyDashboardScope } from "./dashboardV2";
-import { buildVideoLibraryItems, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, reelCutCompletion, shouldAdvanceReel, videoLibraryKeyboardAction } from "./videoLibrary";
+import { buildVideoLibraryItems, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, reelCutCompletion, shouldAdvanceReel, shouldCorrectReelStart, videoLibraryKeyboardAction } from "./videoLibrary";
 import { MatchVideoAnalysisClip } from "../types";
 
 function libraryRecords() {
@@ -144,6 +144,13 @@ test("reel de un único corte termina sin seleccionar de nuevo el primero", () =
   const [item] = buildVideoLibraryItems(libraryRecords(), EMPTY_VIDEO_LIBRARY_FILTERS, { includeClips: true });
   assert.ok(item);
   assert.deepEqual(reelCutCompletion([item], 0, item.endSecond, true), { kind: "FINISHED" });
+});
+
+test("el siguiente corte corrige un arranque transitorio en 00:00 sin reubicar una reproducción ya correcta", () => {
+  assert.equal(shouldCorrectReelStart(0, 426), true);
+  assert.equal(shouldCorrectReelStart(426, 426), false);
+  assert.equal(shouldCorrectReelStart(427, 426), false);
+  assert.equal(shouldCorrectReelStart(430, 426), true);
 });
 
 test("teclado reserva espacio para reproducción y flechas para navegación, salvo en controles editables", () => {
