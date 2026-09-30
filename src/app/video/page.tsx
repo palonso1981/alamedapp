@@ -17,19 +17,24 @@ import { listMatchCatalog } from "../../lib/matchCatalog";
 import { loadMatchSession } from "../../lib/matchPersistence";
 import { buildVideoLabSyncSegments, VIDEO_CLIP_SUGGESTED_CATEGORIES, videoClipTagSuggestions } from "../../lib/videoLab";
 import { formatVideoTimestamp } from "../../lib/videoIndex";
-import { activeVideoLibraryRecords, buildVideoLibraryItems, canonicalVideoRival, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, reelCutCompletion, removeVideoTag, renameVideoTag, videoLibraryFiltersFromSearchParams, videoLibraryFiltersToSearchParams, videoLibraryKeyboardAction, VideoLibraryFilters, VideoLibraryItem, VideoLibrarySourceFilter, videoTagUsage } from "../../lib/videoLibrary";
-import { VIDEO_REVIEWABLE_EVENT_TYPES } from "../../lib/videoReview";
+import { activeVideoLibraryRecords, buildVideoLibraryItems, canonicalVideoRival, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, reelCutCompletion, removeVideoTag, renameVideoTag, videoLibraryFiltersFromSearchParams, videoLibraryFiltersToSearchParams, videoLibraryKeyboardAction, VideoLibraryEventKind, VideoLibraryFilters, VideoLibraryItem, VideoLibrarySourceFilter, videoTagUsage } from "../../lib/videoLibrary";
 import { useMatchStore } from "../../store/useMatchStore";
 import { useTeamStore } from "../../store/useTeamStore";
-import { MatchEvent, MatchVideoAnalysisClip, ThreatOutcome } from "../../types";
+import { MatchVideoAnalysisClip, ThreatOutcome } from "../../types";
 
-const EVENT_LABELS: Record<(typeof VIDEO_REVIEWABLE_EVENT_TYPES)[number], string> = {
-  threat_recorded: "AMENAZAS / REMATES",
-  possession_lost: "PÉRDIDAS",
-  restart_recorded: "REINICIOS",
-  foul_recorded: "FALTAS",
-  card_recorded: "TARJETAS",
-};
+const EVENT_FILTERS: Array<[VideoLibraryEventKind, string]> = [
+  ["SHOTS", "REMATES"],
+  ["THREATS", "AMENAZAS"],
+  ["LOSSES", "PÉRDIDAS"],
+  ["SET_PIECES", "ABP"],
+  ["SET_PIECE_CORNER", "ABP · CÓRNER"],
+  ["SET_PIECE_FREE_KICK", "ABP · FALTA / LIBRE DIRECTO"],
+  ["SET_PIECE_KICK_IN", "ABP · BANDA"],
+  ["SET_PIECE_PENALTY", "ABP · PENALTI"],
+  ["SET_PIECE_DOUBLE_PENALTY", "ABP · DOBLE PENALTI"],
+  ["FOULS", "FALTAS"],
+  ["CARDS", "TARJETAS"],
+];
 const OUTCOME_LABELS: Record<ThreatOutcome, string> = { GOL: "GOL", PARADA: "PARADA", FUERA: "FUERA", BLOQUEADO: "BLOQUEADO · LEGACY" };
 
 const SOURCE_FILTERS: Array<[VideoLibrarySourceFilter, string]> = [
@@ -181,7 +186,7 @@ function VideoLibraryContent() {
   }), [visibleRecords]);
   const playerOptions = useMemo(() => players.map((player) => option(player.id, `#${player.number} ${player.name}`)), [players]);
   const goalkeeperOptions = useMemo(() => goalkeeperIds.map((playerId) => option(playerId, players.find((player) => player.id === playerId)?.name ?? playerId)), [goalkeeperIds, players]);
-  const activeFilterCount = Object.entries(filters).reduce((total, [key, value]) => total + (key === "source" || key === "verifiedOnly" ? 0 : Array.isArray(value) && value.length > 0 ? 1 : 0), 0) + (filters.verifiedOnly ? 1 : 0);
+  const activeFilterCount = Object.entries(filters).reduce((total, [key, value]) => total + (key === "source" || key === "side" || key === "verifiedOnly" ? 0 : Array.isArray(value) && value.length > 0 ? 1 : 0), 0) + (filters.verifiedOnly ? 1 : 0) + (filters.side === "ALL" ? 0 : 1);
 
   const onTimeChange = (second: number) => {
     if (!active || lastCompletedCutRef.current === active.key) return;
@@ -242,7 +247,7 @@ function VideoLibraryContent() {
   const selectSource = (source: VideoLibrarySourceFilter) => setFilters((current) => ({
     ...current,
     source,
-    ...(source === "CLIP" ? { eventKinds: [], phases: [], outcomes: [], goalkeeperIds: [], originZones: [], targetZones: [] } : {}),
+    ...(source === "CLIP" ? { side: "ALL" as const, eventKinds: [], phases: [], outcomes: [], goalkeeperIds: [], originZones: [], targetZones: [] } : {}),
     ...(source === "EVENT" ? { themes: [], tags: [] } : {}),
   }));
   const clearFilters = () => setFilters({ ...EMPTY_VIDEO_LIBRARY_FILTERS, source: defaultSource });
@@ -289,13 +294,16 @@ function VideoLibraryContent() {
         <CompactMultiSelect label="JUGADORES" allLabel="TODOS LOS JUGADORES" values={filters.playerIds} options={playerOptions} onChange={(values) => updateFilter("playerIds", values)}/>
         <CompactMultiSelect label="PARTIDOS" allLabel="TODOS LOS PARTIDOS" values={filters.matchIds} options={matchOptions} onChange={(values) => updateFilter("matchIds", values)}/>
         <CompactMultiSelect label="RIVALES" allLabel="TODOS LOS RIVALES" values={filters.rivals} options={rivals.map(([value, label]) => option(value, label))} onChange={(values) => updateFilter("rivals", values)}/>
-        <CompactMultiSelect label="EVENTOS" allLabel="TODOS LOS EVENTOS" values={filters.eventKinds} options={VIDEO_REVIEWABLE_EVENT_TYPES.map((value) => option(value, EVENT_LABELS[value]))} onChange={(values) => updateFilter("eventKinds", values as MatchEvent["type"][])}/>
+        <CompactMultiSelect label="EVENTOS" allLabel="TODOS LOS EVENTOS" values={filters.eventKinds} options={EVENT_FILTERS.map(([value, label]) => option(value, label))} onChange={(values) => updateFilter("eventKinds", values as VideoLibraryEventKind[])}/>
         <CompactMultiSelect label="FASES" allLabel="TODAS LAS FASES" values={filters.phases} options={DASHBOARD_PHASES.map((value) => option(value, phaseLabel(value)))} onChange={(values) => updateFilter("phases", values as VideoLibraryFilters["phases"])}/>
         <CompactMultiSelect label="RESULTADO" allLabel="TODOS LOS RESULTADOS" values={filters.outcomes} options={outcomes.map((value) => option(value, OUTCOME_LABELS[value]))} onChange={(values) => updateFilter("outcomes", values as VideoLibraryFilters["outcomes"])}/>
         <CompactMultiSelect label="ETIQUETAS" allLabel="TODAS LAS ETIQUETAS" values={filters.tags} options={tags.map((value) => option(value))} onChange={(values) => updateFilter("tags", values)}/>
         <CompactMultiSelect label="TEMÁTICA" allLabel="TODAS LAS TEMÁTICAS" values={filters.themes} options={categories.map((value) => option(value))} onChange={(values) => updateFilter("themes", values)}/>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div role="group" aria-label="Lado del evento" className="flex min-h-11 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 p-1">
+          {(["ALL", "FOR", "AGAINST"] as const).map((side) => <button key={side} type="button" aria-pressed={filters.side === side} onClick={() => updateFilter("side", side)} className={`min-h-9 rounded-lg px-3 text-[10px] font-black ${filters.side === side ? side === "FOR" ? "bg-cyan-400 text-slate-950" : side === "AGAINST" ? "bg-rose-400 text-slate-950" : "bg-slate-600 text-white" : "text-slate-400"}`}>{side === "ALL" ? "TODOS" : side === "FOR" ? "CDA" : "RIVAL"}</button>)}
+        </div>
         <button type="button" role="switch" aria-checked={filters.verifiedOnly} onClick={() => updateFilter("verifiedOnly", !filters.verifiedOnly)} className={`min-h-11 rounded-xl px-4 text-xs font-black ${filters.verifiedOnly ? "bg-emerald-400 text-slate-950" : "bg-slate-800"}`}>SOLO VERIFICADOS · {filters.verifiedOnly ? "ON" : "OFF"}</button>
         <button type="button" onClick={clearFilters} className="min-h-11 rounded-xl border border-slate-700 px-4 text-xs font-black text-slate-300">LIMPIAR FILTROS</button>
         {canWrite && tags.length > 0 && <button type="button" onClick={() => setManageTags((current) => !current)} className="min-h-11 rounded-xl bg-violet-950 px-4 text-xs font-black text-violet-200">GESTIONAR ETIQUETAS</button>}

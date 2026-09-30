@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildDashboardFixture } from "./dashboardFixture";
 import { emptyDashboardScope } from "./dashboardV2";
-import { activeVideoLibraryRecords, buildVideoLibraryItems, canonicalVideoRival, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, reelCutCompletion, removeVideoTag, renameVideoTag, shouldAdvanceReel, shouldCorrectReelStart, videoLibraryFiltersFromSearchParams, videoLibraryFiltersToSearchParams, videoLibraryKeyboardAction, videoTagUsage } from "./videoLibrary";
+import { activeVideoLibraryRecords, buildVideoLibraryItems, canonicalVideoRival, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, matchesVideoEventKind, nextReelIndex, reelCutCompletion, removeVideoTag, renameVideoTag, shouldAdvanceReel, shouldCloseVideoFilterMenu, shouldCorrectReelStart, videoLibraryFiltersFromSearchParams, videoLibraryFiltersToSearchParams, videoLibraryKeyboardAction, videoTagUsage } from "./videoLibrary";
 import { MatchVideoAnalysisClip } from "../types";
 
 function libraryRecords() {
@@ -48,7 +48,7 @@ test("Biblioteca combina jugador, evento, categoría, etiqueta, rival, partido, 
   assert.deepEqual(clips.map((item) => item.key), [`CLIP:${records[0].catalog.matchId}:${clip.id}`]);
   const event = records[0].session.events.find((item) => item.type === "possession_lost" && records[0].session.videoEventOverrides?.some((override) => override.eventId === item.id));
   if (event?.type === "possession_lost") {
-    const events = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, playerIds: [event.playerId], eventKinds: ["possession_lost"], verifiedOnly: true }, { includeClips: true });
+    const events = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, playerIds: [event.playerId], eventKinds: ["LOSSES"], verifiedOnly: true }, { includeClips: true });
     assert.ok(events.length > 0);
     assert.ok(events.every((item) => item.source === "EVENT" && item.event.type === "possession_lost"));
   }
@@ -68,7 +68,7 @@ test("los ocho filtros principales son multiselección OR dentro y AND entre dim
     playerIds: first.playerIds,
     matchIds: [first.matchId],
     rivals: [canonicalVideoRival(first.opponent)],
-    eventKinds: ["threat_recorded" as const, "foul_recorded" as const],
+    eventKinds: ["SHOTS" as const, "THREATS" as const, "FOULS" as const],
     phases: [firstPhase],
     outcomes: [firstOutcome],
   };
@@ -92,6 +92,61 @@ test("los ocho filtros principales son multiselección OR dentro y AND entre dim
     `CLIP:${records[0].catalog.matchId}:${clipA.id}`,
     `CLIP:${records[1].catalog.matchId}:${clipB.id}`,
   ]));
+});
+
+test("REMATES y AMENAZAS son filtros independientes basados en side canónico", () => {
+  const records = libraryRecords();
+  const shots = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT", eventKinds: ["SHOTS"] });
+  const threats = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT", eventKinds: ["THREATS"] });
+  assert.ok(shots.length > 0);
+  assert.ok(threats.length > 0);
+  assert.ok(shots.every((item) => item.source === "EVENT" && item.event.type === "threat_recorded" && item.event.side === "FOR"));
+  assert.ok(threats.every((item) => item.source === "EVENT" && item.event.type === "threat_recorded" && item.event.side === "AGAINST"));
+  assert.equal(shots.some((item) => threats.some((candidate) => candidate.key === item.key)), false);
+});
+
+test("selector TODOS/CDA/RIVAL combina el lado con resultado y otros eventos laterales", () => {
+  const records = libraryRecords();
+  const allGoals = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT", outcomes: ["GOL"] });
+  assert.ok(allGoals.some((item) => item.source === "EVENT" && item.event.type === "threat_recorded" && item.event.side === "FOR"));
+  assert.ok(allGoals.some((item) => item.source === "EVENT" && item.event.type === "threat_recorded" && item.event.side === "AGAINST"));
+  for (const side of ["FOR", "AGAINST"] as const) {
+    const goals = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT", side, outcomes: ["GOL"] });
+    assert.ok(goals.length > 0);
+    assert.ok(goals.every((item) => item.source === "EVENT" && "side" in item.event && item.event.side === side && item.event.type === "threat_recorded" && item.event.outcome === "GOL"));
+    const cards = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT", side, eventKinds: ["CARDS"] });
+    assert.ok(cards.every((item) => item.source === "EVENT" && item.event.type === "card_recorded" && item.event.side === side));
+  }
+});
+
+test("ABP agrupa solo taxonomía canónica y permite córner, falta, banda, penalti y doble penalti", () => {
+  const records = libraryRecords();
+  const all = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT" });
+  const kinds = ["SET_PIECES", "SET_PIECE_CORNER", "SET_PIECE_FREE_KICK", "SET_PIECE_KICK_IN", "SET_PIECE_PENALTY", "SET_PIECE_DOUBLE_PENALTY"] as const;
+  const setPieces = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT", eventKinds: ["SET_PIECES"] });
+  assert.ok(setPieces.length > 0);
+  assert.ok(setPieces.every((item) => item.source === "EVENT" && matchesVideoEventKind(item.event, "SET_PIECES")));
+  for (const kind of kinds.slice(1)) {
+    const expected = all.filter((item) => item.source === "EVENT" && matchesVideoEventKind(item.event, kind));
+    const filtered = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT", eventKinds: [kind] });
+    assert.deepEqual(filtered.map((item) => item.key), expected.map((item) => item.key), kind);
+  }
+  assert.equal(setPieces.some((item) => item.source === "EVENT" && ["possession_lost", "card_recorded"].includes(item.event.type)), false);
+});
+
+test("el reel conserva exactamente el conjunto filtrado por lado y semántica", () => {
+  const items = buildVideoLibraryItems(libraryRecords(), { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT", side: "AGAINST", eventKinds: ["THREATS"], outcomes: ["PARADA"] });
+  assert.ok(items.length > 0);
+  assert.ok(items.every((item) => item.source === "EVENT" && item.event.type === "threat_recorded" && item.event.side === "AGAINST" && item.event.outcome === "PARADA"));
+  items.slice(0, -1).forEach((item, index) => assert.deepEqual(reelCutCompletion(items, index, item.endSecond, true), { kind: "NEXT", index: index + 1 }));
+});
+
+test("menús de filtros permanecen abiertos al seleccionar y cierran fuera, con otro menú o ESC", () => {
+  assert.equal(shouldCloseVideoFilterMenu("OPTION_SELECTED"), false);
+  assert.equal(shouldCloseVideoFilterMenu("HEADER_TOGGLE"), false);
+  assert.equal(shouldCloseVideoFilterMenu("OUTSIDE_POINTER"), true);
+  assert.equal(shouldCloseVideoFilterMenu("OTHER_MENU_OPENED"), true);
+  assert.equal(shouldCloseVideoFilterMenu("ESCAPE"), true);
 });
 
 test("rival agrupa variantes equivalentes y VERIFIED no oculta AUTO cuando está desactivado", () => {
@@ -172,7 +227,8 @@ test("estado de filtros persiste multiselección y limpia filtros legacy al reab
   const filters = {
     ...EMPTY_VIDEO_LIBRARY_FILTERS,
     source: "CLIP" as const,
-    playerIds: ["p1", "p2"], matchIds: ["m1", "m2"], rivals: ["rival a"], eventKinds: ["card_recorded" as const],
+    side: "FOR" as const,
+    playerIds: ["p1", "p2"], matchIds: ["m1", "m2"], rivals: ["rival a"], eventKinds: ["CARDS" as const],
     phases: ["TRANSITION" as const], outcomes: ["GOL" as const], tags: ["ABP"], themes: ["ESTRATEGIA"], seasonIds: ["s1"],
     periods: [1, 2], venues: ["HOME" as const], competitions: ["LEAGUE" as const], matchdays: [3], goalkeeperIds: ["g1"],
     originZones: ["Z2" as const], targetZones: ["CENTER_LOW" as const], dominantFeet: ["LEFT" as const], verifiedOnly: true,

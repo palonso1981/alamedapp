@@ -6,17 +6,31 @@ import { GOAL_FRAME } from "./goalTarget";
 import { deriveGoalZoneV1, GoalZoneV1 } from "./spatialZones";
 import { isVideoReviewableEvent } from "./videoReview";
 import { resolveEventVideoPosition } from "./videoIndex";
-import { DominantFoot, MatchEvent, MatchVenue, MatchVideoAnalysisClip, ThreatOutcome, ThreatPhase } from "../types";
+import { DominantFoot, MatchEvent, MatchVenue, MatchVideoAnalysisClip, ThreatOutcome, ThreatPhase, ThreatSide } from "../types";
 
 export type VideoLibrarySource = "EVENT" | "CLIP";
 export type VideoLibrarySourceFilter = "ALL" | VideoLibrarySource;
+export type VideoLibrarySideFilter = "ALL" | ThreatSide;
+export type VideoLibraryEventKind =
+  | "SHOTS"
+  | "THREATS"
+  | "LOSSES"
+  | "SET_PIECES"
+  | "SET_PIECE_CORNER"
+  | "SET_PIECE_FREE_KICK"
+  | "SET_PIECE_KICK_IN"
+  | "SET_PIECE_PENALTY"
+  | "SET_PIECE_DOUBLE_PENALTY"
+  | "FOULS"
+  | "CARDS";
 
 export interface VideoLibraryFilters {
   source: VideoLibrarySourceFilter;
+  side: VideoLibrarySideFilter;
   playerIds: string[];
   matchIds: string[];
   rivals: string[];
-  eventKinds: MatchEvent["type"][];
+  eventKinds: VideoLibraryEventKind[];
   phases: ThreatPhase[];
   outcomes: ThreatOutcome[];
   tags: string[];
@@ -69,6 +83,7 @@ export type VideoLibraryItem = VideoLibraryEventItem | VideoLibraryClipItem;
 
 export const EMPTY_VIDEO_LIBRARY_FILTERS: VideoLibraryFilters = {
   source: "ALL",
+  side: "ALL",
   playerIds: [],
   matchIds: [],
   rivals: [],
@@ -106,14 +121,29 @@ function searchNumbers(params: SearchParamsReader, key: string): number[] {
   return searchList(params, key).map(Number).filter((value) => Number.isInteger(value));
 }
 
+const LEGACY_EVENT_KIND: Partial<Record<MatchEvent["type"], VideoLibraryEventKind[]>> = {
+  threat_recorded: ["SHOTS", "THREATS"],
+  possession_lost: ["LOSSES"],
+  restart_recorded: ["SET_PIECES"],
+  foul_recorded: ["FOULS"],
+  card_recorded: ["CARDS"],
+};
+
+function videoEventKinds(params: SearchParamsReader): VideoLibraryEventKind[] {
+  return Array.from(new Set(searchList(params, "vKinds", "vKind").flatMap((value) =>
+    LEGACY_EVENT_KIND[value as MatchEvent["type"]] ?? [value as VideoLibraryEventKind],
+  )));
+}
+
 export function videoLibraryFiltersFromSearchParams(params: SearchParamsReader, defaultSource: VideoLibrarySourceFilter = "ALL"): VideoLibraryFilters {
   return {
     ...EMPTY_VIDEO_LIBRARY_FILTERS,
     source: (params.get("vSource") as VideoLibrarySourceFilter | null) ?? defaultSource,
+    side: (params.get("vSide") as VideoLibrarySideFilter | null) ?? "ALL",
     playerIds: searchList(params, "vPlayers", "vPlayer"),
     matchIds: searchList(params, "vMatches", "vMatch"),
     rivals: searchList(params, "vRivals", "vRival").map(canonicalVideoRival),
-    eventKinds: searchList(params, "vKinds", "vKind") as MatchEvent["type"][],
+    eventKinds: videoEventKinds(params),
     phases: searchList(params, "vPhases") as ThreatPhase[],
     outcomes: searchList(params, "vOutcomes") as ThreatOutcome[],
     tags: searchList(params, "vTags", "vTag"),
@@ -134,7 +164,7 @@ export function videoLibraryFiltersFromSearchParams(params: SearchParamsReader, 
 export function videoLibraryFiltersToSearchParams(filters: VideoLibraryFilters, current = "", defaultSource: VideoLibrarySourceFilter = "ALL"): URLSearchParams {
   const params = new URLSearchParams(current);
   ["vPlayer", "vKind", "vCategory", "vTag", "vRival", "vMatch", "vSeason"].forEach((key) => params.delete(key));
-  const scalar: Array<[string, string]> = [["vSource", filters.source === defaultSource ? "" : filters.source], ["vVerified", filters.verifiedOnly ? "1" : ""]];
+  const scalar: Array<[string, string]> = [["vSource", filters.source === defaultSource ? "" : filters.source], ["vSide", filters.side === "ALL" ? "" : filters.side], ["vVerified", filters.verifiedOnly ? "1" : ""]];
   scalar.forEach(([key, value]) => value ? params.set(key, value) : params.delete(key));
   const lists: Array<[string, readonly (string | number)[]]> = [
     ["vPlayers", filters.playerIds], ["vMatches", filters.matchIds], ["vRivals", filters.rivals], ["vKinds", filters.eventKinds],
@@ -237,6 +267,34 @@ function clipItems(records: readonly DashboardMatchRecord[]): VideoLibraryClipIt
   })));
 }
 
+function isSetPieceThreat(event: MatchEvent): boolean {
+  return event.type === "threat_recorded" && [
+    "SET_PIECE_CORNER",
+    "SET_PIECE_FREE_KICK",
+    "SET_PIECE_KICK_IN",
+    "PENALTY",
+    "DOUBLE_PENALTY",
+  ].includes(event.phase);
+}
+
+export function matchesVideoEventKind(event: MatchEvent, kind: VideoLibraryEventKind): boolean {
+  if (kind === "SHOTS") return event.type === "threat_recorded" && event.side === "FOR";
+  if (kind === "THREATS") return event.type === "threat_recorded" && event.side === "AGAINST";
+  if (kind === "LOSSES") return event.type === "possession_lost";
+  if (kind === "FOULS") return event.type === "foul_recorded";
+  if (kind === "CARDS") return event.type === "card_recorded";
+  if (kind === "SET_PIECES") return event.type === "restart_recorded" || event.type === "foul_recorded" || isSetPieceThreat(event);
+  if (kind === "SET_PIECE_CORNER") return (event.type === "restart_recorded" && event.restart === "CORNER") || (event.type === "threat_recorded" && event.phase === "SET_PIECE_CORNER");
+  if (kind === "SET_PIECE_FREE_KICK") return event.type === "foul_recorded" || (event.type === "threat_recorded" && event.phase === "SET_PIECE_FREE_KICK");
+  if (kind === "SET_PIECE_KICK_IN") return (event.type === "restart_recorded" && event.restart === "DANGEROUS_KICK_IN") || (event.type === "threat_recorded" && event.phase === "SET_PIECE_KICK_IN");
+  if (kind === "SET_PIECE_PENALTY") return event.type === "threat_recorded" && event.phase === "PENALTY";
+  return event.type === "threat_recorded" && event.phase === "DOUBLE_PENALTY";
+}
+
+function eventSide(event: MatchEvent): ThreatSide | null {
+  return "side" in event && (event.side === "FOR" || event.side === "AGAINST") ? event.side : null;
+}
+
 function filterItems(items: VideoLibraryItem[], filters: VideoLibraryFilters): VideoLibraryItem[] {
   return items.filter((item) => {
     if (filters.source !== "ALL" && item.source !== filters.source) return false;
@@ -250,7 +308,8 @@ function filterItems(items: VideoLibraryItem[], filters: VideoLibraryFilters): V
     if (filters.matchdays.length > 0 && (!item.matchday || !filters.matchdays.includes(item.matchday))) return false;
     if (filters.dominantFeet.length > 0 && !filters.dominantFeet.some((foot) => item.dominantFeet.includes(foot))) return false;
     if (filters.verifiedOnly && !item.verified) return false;
-    if (filters.eventKinds.length > 0 && (item.source !== "EVENT" || !filters.eventKinds.includes(item.event.type))) return false;
+    if (filters.side !== "ALL" && (item.source !== "EVENT" || eventSide(item.event) !== filters.side)) return false;
+    if (filters.eventKinds.length > 0 && (item.source !== "EVENT" || !filters.eventKinds.some((kind) => matchesVideoEventKind(item.event, kind)))) return false;
     if (filters.phases.length > 0 && (item.source !== "EVENT" || item.event.type !== "threat_recorded" || !filters.phases.includes(item.event.phase))) return false;
     if (filters.outcomes.length > 0 && (item.source !== "EVENT" || item.event.type !== "threat_recorded" || !filters.outcomes.includes(item.event.outcome))) return false;
     if (filters.goalkeeperIds.length > 0 && (item.source !== "EVENT" || item.event.type !== "threat_recorded" || item.event.defensive?.goalkeeper.status !== "PLAYER" || !filters.goalkeeperIds.includes(item.event.defensive.goalkeeper.playerId))) return false;
@@ -357,6 +416,12 @@ export function videoLibraryKeyboardAction(code: string, editableTarget: boolean
   if (code === "ArrowLeft") return "PREVIOUS";
   if (code === "ArrowRight") return "NEXT";
   return null;
+}
+
+export type VideoFilterMenuInteraction = "OPTION_SELECTED" | "OUTSIDE_POINTER" | "OTHER_MENU_OPENED" | "ESCAPE" | "HEADER_TOGGLE";
+
+export function shouldCloseVideoFilterMenu(interaction: VideoFilterMenuInteraction): boolean {
+  return interaction === "OUTSIDE_POINTER" || interaction === "OTHER_MENU_OPENED" || interaction === "ESCAPE";
 }
 
 export function dashboardReturnHref(search: string): string {
