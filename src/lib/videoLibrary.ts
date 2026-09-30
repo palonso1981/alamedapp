@@ -1,23 +1,35 @@
 import { DashboardMatchRecord } from "./dashboardAnalytics";
-import { DashboardScopeV2, filterDashboardDataset, filterDashboardEventSelection } from "./dashboardV2";
+import { deriveThreatOriginZone, PitchOriginZone } from "./dashboardAnalysis";
+import { DashboardCompetition, DashboardScopeV2, filterDashboardDataset, filterDashboardEventSelection, matchCompetition } from "./dashboardV2";
 import { eventDescription } from "./eventPresentation";
+import { GOAL_FRAME } from "./goalTarget";
+import { deriveGoalZoneV1, GoalZoneV1 } from "./spatialZones";
 import { isVideoReviewableEvent } from "./videoReview";
 import { resolveEventVideoPosition } from "./videoIndex";
-import { MatchEvent, MatchVideoAnalysisClip } from "../types";
+import { DominantFoot, MatchEvent, MatchVenue, MatchVideoAnalysisClip, ThreatOutcome, ThreatPhase } from "../types";
 
-export type VideoLibraryEventKind = "ALL" | MatchEvent["type"];
 export type VideoLibrarySource = "EVENT" | "CLIP";
 export type VideoLibrarySourceFilter = "ALL" | VideoLibrarySource;
 
 export interface VideoLibraryFilters {
   source: VideoLibrarySourceFilter;
-  playerId: string;
-  eventKind: VideoLibraryEventKind;
-  category: string;
-  tag: string;
-  rival: string;
-  matchId: string;
-  seasonId: string;
+  playerIds: string[];
+  matchIds: string[];
+  rivals: string[];
+  eventKinds: MatchEvent["type"][];
+  phases: ThreatPhase[];
+  outcomes: ThreatOutcome[];
+  tags: string[];
+  themes: string[];
+  seasonIds: string[];
+  periods: number[];
+  venues: MatchVenue[];
+  competitions: Exclude<DashboardCompetition, "ALL">[];
+  matchdays: number[];
+  goalkeeperIds: string[];
+  originZones: PitchOriginZone[];
+  targetZones: GoalZoneV1[];
+  dominantFeet: Exclude<DominantFoot, "UNKNOWN">[];
   verifiedOnly: boolean;
 }
 
@@ -28,12 +40,17 @@ interface BaseVideoLibraryItem {
   opponent: string;
   date: string;
   seasonId: string;
+  venue: MatchVenue;
+  competition: Exclude<DashboardCompetition, "ALL">;
+  matchday?: number;
+  period?: number;
   videoId: string;
   startSecond: number;
   endSecond: number;
   referenceSecond: number;
   verified: boolean;
   playerIds: string[];
+  dominantFeet: Exclude<DominantFoot, "UNKNOWN">[];
 }
 
 export interface VideoLibraryEventItem extends BaseVideoLibraryItem {
@@ -52,21 +69,112 @@ export type VideoLibraryItem = VideoLibraryEventItem | VideoLibraryClipItem;
 
 export const EMPTY_VIDEO_LIBRARY_FILTERS: VideoLibraryFilters = {
   source: "ALL",
-  playerId: "",
-  eventKind: "ALL",
-  category: "",
-  tag: "",
-  rival: "",
-  matchId: "",
-  seasonId: "",
+  playerIds: [],
+  matchIds: [],
+  rivals: [],
+  eventKinds: [],
+  phases: [],
+  outcomes: [],
+  tags: [],
+  themes: [],
+  seasonIds: [],
+  periods: [],
+  venues: [],
+  competitions: [],
+  matchdays: [],
+  goalkeeperIds: [],
+  originZones: [],
+  targetZones: [],
+  dominantFeet: [],
   verifiedOnly: false,
 };
+
+interface SearchParamsReader {
+  get(key: string): string | null;
+  getAll(key: string): string[];
+  toString(): string;
+}
+
+function searchList(params: SearchParamsReader, key: string, legacyKey?: string): string[] {
+  const values = params.getAll(key).flatMap((value) => value.split(",")).map((value) => value.trim()).filter(Boolean);
+  if (values.length > 0 || !legacyKey) return Array.from(new Set(values));
+  const legacy = params.get(legacyKey);
+  return legacy ? [legacy] : [];
+}
+
+function searchNumbers(params: SearchParamsReader, key: string): number[] {
+  return searchList(params, key).map(Number).filter((value) => Number.isInteger(value));
+}
+
+export function videoLibraryFiltersFromSearchParams(params: SearchParamsReader, defaultSource: VideoLibrarySourceFilter = "ALL"): VideoLibraryFilters {
+  return {
+    ...EMPTY_VIDEO_LIBRARY_FILTERS,
+    source: (params.get("vSource") as VideoLibrarySourceFilter | null) ?? defaultSource,
+    playerIds: searchList(params, "vPlayers", "vPlayer"),
+    matchIds: searchList(params, "vMatches", "vMatch"),
+    rivals: searchList(params, "vRivals", "vRival").map(canonicalVideoRival),
+    eventKinds: searchList(params, "vKinds", "vKind") as MatchEvent["type"][],
+    phases: searchList(params, "vPhases") as ThreatPhase[],
+    outcomes: searchList(params, "vOutcomes") as ThreatOutcome[],
+    tags: searchList(params, "vTags", "vTag"),
+    themes: searchList(params, "vThemes", "vCategory"),
+    seasonIds: searchList(params, "vSeasons", "vSeason"),
+    periods: searchNumbers(params, "vPeriods"),
+    venues: searchList(params, "vVenues") as MatchVenue[],
+    competitions: searchList(params, "vCompetitions") as Exclude<DashboardCompetition, "ALL">[],
+    matchdays: searchNumbers(params, "vMatchdays"),
+    goalkeeperIds: searchList(params, "vGoalkeepers"),
+    originZones: searchList(params, "vOriginZones") as PitchOriginZone[],
+    targetZones: searchList(params, "vTargetZones") as GoalZoneV1[],
+    dominantFeet: searchList(params, "vFeet") as Exclude<DominantFoot, "UNKNOWN">[],
+    verifiedOnly: params.get("vVerified") === "1",
+  };
+}
+
+export function videoLibraryFiltersToSearchParams(filters: VideoLibraryFilters, current = "", defaultSource: VideoLibrarySourceFilter = "ALL"): URLSearchParams {
+  const params = new URLSearchParams(current);
+  ["vPlayer", "vKind", "vCategory", "vTag", "vRival", "vMatch", "vSeason"].forEach((key) => params.delete(key));
+  const scalar: Array<[string, string]> = [["vSource", filters.source === defaultSource ? "" : filters.source], ["vVerified", filters.verifiedOnly ? "1" : ""]];
+  scalar.forEach(([key, value]) => value ? params.set(key, value) : params.delete(key));
+  const lists: Array<[string, readonly (string | number)[]]> = [
+    ["vPlayers", filters.playerIds], ["vMatches", filters.matchIds], ["vRivals", filters.rivals], ["vKinds", filters.eventKinds],
+    ["vPhases", filters.phases], ["vOutcomes", filters.outcomes], ["vTags", filters.tags], ["vThemes", filters.themes],
+    ["vSeasons", filters.seasonIds], ["vPeriods", filters.periods], ["vVenues", filters.venues], ["vCompetitions", filters.competitions],
+    ["vMatchdays", filters.matchdays], ["vGoalkeepers", filters.goalkeeperIds], ["vOriginZones", filters.originZones],
+    ["vTargetZones", filters.targetZones], ["vFeet", filters.dominantFeet],
+  ];
+  lists.forEach(([key, values]) => {
+    params.delete(key);
+    values.forEach((value) => params.append(key, String(value)));
+  });
+  return params;
+}
+
+export function canonicalVideoRival(value: string): string {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim().replace(/\s+/g, " ").toLocaleLowerCase("es");
+}
+
+export function activeVideoLibraryRecords(records: readonly DashboardMatchRecord[]): DashboardMatchRecord[] {
+  return records.filter(({ catalog, session }) => !catalog.archivedAt && !catalog.deletedAt && !session.preparation?.archivedAt && !session.preparation?.deletedAt);
+}
 
 function eventPlayerIds(event: MatchEvent): string[] {
   const ids: string[] = [];
   if ("playerId" in event && typeof event.playerId === "string") ids.push(event.playerId);
   if (event.type === "threat_recorded" && event.defensive?.goalkeeper.status === "PLAYER") ids.push(event.defensive.goalkeeper.playerId);
   return Array.from(new Set(ids));
+}
+
+function playerFeet(record: DashboardMatchRecord, playerIds: readonly string[]): Exclude<DominantFoot, "UNKNOWN">[] {
+  return Array.from(new Set(playerIds.flatMap((playerId) => {
+    const foot = record.session.players.find((player) => player.id === playerId)?.dominantFoot;
+    return foot && foot !== "UNKNOWN" ? [foot] : [];
+  })));
+}
+
+function clipPeriod(segmentId: string): number | undefined {
+  const match = segmentId.match(/:P([12])$/);
+  return match ? Number(match[1]) : undefined;
 }
 
 function eventItems(records: readonly DashboardMatchRecord[], scope?: DashboardScopeV2): VideoLibraryEventItem[] {
@@ -88,12 +196,17 @@ function eventItems(records: readonly DashboardMatchRecord[], scope?: DashboardS
       opponent: record.catalog.opponent,
       date: record.catalog.date,
       seasonId: record.catalog.seasonId ?? "",
+      venue: record.catalog.venue,
+      competition: matchCompetition(record),
+      matchday: record.session.preparation?.matchday,
+      period: event.period,
       videoId: resolution.videoId,
       startSecond: resolution.openSecond,
       endSecond: Math.max(resolution.openSecond + 1, resolution.estimatedSecond + resolution.leadSeconds),
       referenceSecond: resolution.estimatedSecond,
       verified,
       playerIds: eventPlayerIds(event),
+      dominantFeet: playerFeet(record, eventPlayerIds(event)),
       event,
       title: eventDescription(event, record.session.players, undefined, record.session.staff),
     }];
@@ -108,12 +221,17 @@ function clipItems(records: readonly DashboardMatchRecord[]): VideoLibraryClipIt
     opponent: record.catalog.opponent,
     date: record.catalog.date,
     seasonId: record.catalog.seasonId ?? "",
+    venue: record.catalog.venue,
+    competition: matchCompetition(record),
+    matchday: record.session.preparation?.matchday,
+    period: clipPeriod(clip.segmentId),
     videoId: clip.videoId,
     startSecond: clip.startSecond,
     endSecond: clip.endSecond,
     referenceSecond: clip.referenceSecond,
     verified: true,
     playerIds: clip.playerIds,
+    dominantFeet: playerFeet(record, clip.playerIds),
     clip,
     title: clip.category || clip.tags[0] || "Clip de análisis",
   })));
@@ -122,14 +240,28 @@ function clipItems(records: readonly DashboardMatchRecord[]): VideoLibraryClipIt
 function filterItems(items: VideoLibraryItem[], filters: VideoLibraryFilters): VideoLibraryItem[] {
   return items.filter((item) => {
     if (filters.source !== "ALL" && item.source !== filters.source) return false;
-    if (filters.playerId && !item.playerIds.includes(filters.playerId)) return false;
-    if (filters.rival && item.opponent !== filters.rival) return false;
-    if (filters.matchId && item.matchId !== filters.matchId) return false;
-    if (filters.seasonId && item.seasonId !== filters.seasonId) return false;
+    if (filters.playerIds.length > 0 && !filters.playerIds.some((playerId) => item.playerIds.includes(playerId))) return false;
+    if (filters.rivals.length > 0 && !filters.rivals.includes(canonicalVideoRival(item.opponent))) return false;
+    if (filters.matchIds.length > 0 && !filters.matchIds.includes(item.matchId)) return false;
+    if (filters.seasonIds.length > 0 && !filters.seasonIds.includes(item.seasonId)) return false;
+    if (filters.periods.length > 0 && (!item.period || !filters.periods.includes(item.period))) return false;
+    if (filters.venues.length > 0 && !filters.venues.includes(item.venue)) return false;
+    if (filters.competitions.length > 0 && !filters.competitions.includes(item.competition)) return false;
+    if (filters.matchdays.length > 0 && (!item.matchday || !filters.matchdays.includes(item.matchday))) return false;
+    if (filters.dominantFeet.length > 0 && !filters.dominantFeet.some((foot) => item.dominantFeet.includes(foot))) return false;
     if (filters.verifiedOnly && !item.verified) return false;
-    if (filters.eventKind !== "ALL" && (item.source !== "EVENT" || item.event.type !== filters.eventKind)) return false;
-    if (filters.category && (item.source !== "CLIP" || item.clip.category !== filters.category)) return false;
-    if (filters.tag && (item.source !== "CLIP" || !item.clip.tags.includes(filters.tag))) return false;
+    if (filters.eventKinds.length > 0 && (item.source !== "EVENT" || !filters.eventKinds.includes(item.event.type))) return false;
+    if (filters.phases.length > 0 && (item.source !== "EVENT" || item.event.type !== "threat_recorded" || !filters.phases.includes(item.event.phase))) return false;
+    if (filters.outcomes.length > 0 && (item.source !== "EVENT" || item.event.type !== "threat_recorded" || !filters.outcomes.includes(item.event.outcome))) return false;
+    if (filters.goalkeeperIds.length > 0 && (item.source !== "EVENT" || item.event.type !== "threat_recorded" || item.event.defensive?.goalkeeper.status !== "PLAYER" || !filters.goalkeeperIds.includes(item.event.defensive.goalkeeper.playerId))) return false;
+    if (filters.originZones.length > 0 && (item.source !== "EVENT" || item.event.type !== "threat_recorded" || !filters.originZones.includes(deriveThreatOriginZone(item.event.origin, item.event.side)))) return false;
+    if (filters.targetZones.length > 0) {
+      if (item.source !== "EVENT" || item.event.type !== "threat_recorded" || !item.event.defensive || item.event.outcome === "FUERA") return false;
+      const zone = deriveGoalZoneV1(item.event.defensive.goalTarget, GOAL_FRAME);
+      if (zone.startsWith("OUT_") || !filters.targetZones.includes(zone as GoalZoneV1)) return false;
+    }
+    if (filters.themes.length > 0 && (item.source !== "CLIP" || !item.clip.category || !filters.themes.includes(item.clip.category))) return false;
+    if (filters.tags.length > 0 && (item.source !== "CLIP" || !filters.tags.some((tag) => item.clip.tags.some((candidate) => candidate.toLocaleLowerCase("es") === tag.toLocaleLowerCase("es"))))) return false;
     return true;
   });
 }
@@ -139,18 +271,50 @@ export function buildVideoLibraryItems(
   filters: VideoLibraryFilters = EMPTY_VIDEO_LIBRARY_FILTERS,
   options: { dashboardScope?: DashboardScopeV2; includeClips?: boolean } = {},
 ): VideoLibraryItem[] {
-  const clipsRequested = Boolean(options.includeClips || filters.source !== "EVENT" || filters.category || filters.tag);
+  const activeRecords = activeVideoLibraryRecords(records);
+  const clipsRequested = Boolean(options.includeClips || filters.source !== "EVENT" || filters.themes.length > 0 || filters.tags.length > 0);
   const scopedMatchIds = options.dashboardScope
-    ? new Set(filterDashboardDataset(records, options.dashboardScope).map((record) => record.catalog.matchId))
+    ? new Set(filterDashboardDataset(activeRecords, options.dashboardScope).map((record) => record.catalog.matchId))
     : null;
-  const clipRecords = scopedMatchIds ? records.filter((record) => scopedMatchIds.has(record.catalog.matchId)) : records;
+  const clipRecords = scopedMatchIds ? activeRecords.filter((record) => scopedMatchIds.has(record.catalog.matchId)) : activeRecords;
   const items: VideoLibraryItem[] = [
-    ...eventItems(records, options.dashboardScope),
+    ...eventItems(activeRecords, options.dashboardScope),
     ...(clipsRequested ? clipItems(clipRecords) : []),
   ];
   return filterItems(items, filters).sort((left, right) =>
     right.date.localeCompare(left.date) || left.matchId.localeCompare(right.matchId) || left.startSecond - right.startSecond,
   );
+}
+
+function normalizedTag(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+export function videoTagUsage(clips: readonly MatchVideoAnalysisClip[], tag: string): number {
+  const key = normalizedTag(tag).toLocaleLowerCase("es");
+  return clips.filter((clip) => clip.tags.some((candidate) => normalizedTag(candidate).toLocaleLowerCase("es") === key)).length;
+}
+
+export function renameVideoTag(clips: readonly MatchVideoAnalysisClip[], from: string, to: string, now = Date.now()): MatchVideoAnalysisClip[] {
+  const source = normalizedTag(from).toLocaleLowerCase("es");
+  const target = normalizedTag(to);
+  if (!source || !target) return [...clips];
+  return clips.map((clip) => {
+    if (!clip.tags.some((tag) => normalizedTag(tag).toLocaleLowerCase("es") === source)) return clip;
+    const tags = Array.from(new Map(clip.tags.map((tag) => {
+      const value = normalizedTag(tag).toLocaleLowerCase("es") === source ? target : normalizedTag(tag);
+      return [value.toLocaleLowerCase("es"), value];
+    })).values());
+    return { ...clip, tags, updatedAt: now };
+  });
+}
+
+export function removeVideoTag(clips: readonly MatchVideoAnalysisClip[], tag: string, now = Date.now()): MatchVideoAnalysisClip[] {
+  const key = normalizedTag(tag).toLocaleLowerCase("es");
+  if (!key) return [...clips];
+  return clips.map((clip) => clip.tags.some((candidate) => normalizedTag(candidate).toLocaleLowerCase("es") === key)
+    ? { ...clip, tags: clip.tags.filter((candidate) => normalizedTag(candidate).toLocaleLowerCase("es") !== key), updatedAt: now }
+    : clip);
 }
 
 export function nextReelIndex(items: readonly VideoLibraryItem[], current: number, direction: 1 | -1 = 1): number {

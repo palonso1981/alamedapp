@@ -16,8 +16,16 @@ export interface VideoReviewRow {
   resolution: ReturnType<typeof resolveEventVideoPosition>;
 }
 
+export const VIDEO_REVIEWABLE_EVENT_TYPES = [
+  "threat_recorded",
+  "possession_lost",
+  "restart_recorded",
+  "foul_recorded",
+  "card_recorded",
+] as const satisfies readonly MatchEvent["type"][];
+
 export function isVideoReviewableEvent(event: MatchEvent): boolean {
-  return ["threat_recorded", "possession_lost", "restart_recorded", "foul_recorded", "card_recorded"].includes(event.type);
+  return (VIDEO_REVIEWABLE_EVENT_TYPES as readonly MatchEvent["type"][]).includes(event.type);
 }
 
 function matchesKind(event: MatchEvent, kind: VideoReviewKind, actorId?: string): boolean {
