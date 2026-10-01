@@ -183,6 +183,16 @@ test("Rules: no existe borrado físico autorizado", () => {
   assert.match(rules, /match \/\{document=\*\*\} \{\s*allow read, write: if false/);
 });
 
+test("Rules: colecciones requieren sesión, ADMIN/EDITOR escriben y VIEWER solo lee", () => {
+  const block = rules.match(/match \/videoCollections\/\{collectionId\} \{([\s\S]*?)\n      \}/)?.[1] ?? "";
+  assert.match(block, /allow get, list: if validAccess\(clubId\)/);
+  assert.match(block, /allow create: if canWriteClub\(clubId\)/);
+  assert.match(block, /allow update: if canWriteClub\(clubId\)/);
+  assert.match(block, /data\.entityType == "VIDEO_COLLECTION"/);
+  assert.match(block, /data\.payload\.collectionId == collectionId/);
+  assert.match(block, /allow delete: if false/);
+});
+
 test("Rules RC2: lease exacto por partido, sin list ni delete", () => {
   const block = rules.match(/match \/matchCaptureLeases\/\{matchId\} \{([\s\S]*?)\n    \}/)?.[1] ?? "";
   assert.match(block, /allow get: if teamAllowed\(parentClub\(\), parentTeam\(\)\)/);

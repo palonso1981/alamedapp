@@ -300,6 +300,31 @@ service cloud.firestore {
         && nextRevision();
       allow list, delete: if false;
 
+      // VIDEO COLLECTIONS V1 · snapshot de referencias/cortes; nunca modifica
+      // eventos ni metadata audiovisual de los partidos. Acceso siempre autenticado.
+      match /videoCollections/{collectionId} {
+        function validVideoCollection(data) {
+          return data.clubId == clubId
+            && data.entityType == "VIDEO_COLLECTION"
+            && data.entityId == collectionId
+            && data.payload.clubId == clubId
+            && data.payload.collectionId == collectionId
+            && data.payload.schemaVersion == 1
+            && data.payload.kind in ["COLLECTION", "SHARED_REEL"]
+            && data.payload.visibility in ["CLUB", "LINK_ONLY"]
+            && data.payload.items is list
+            && data.payload.active is bool;
+        }
+        allow get, list: if validAccess(clubId);
+        allow create: if canWriteClub(clubId)
+          && validVideoCollection(request.resource.data)
+          && initialRevision();
+        allow update: if canWriteClub(clubId)
+          && validVideoCollection(request.resource.data)
+          && nextRevision();
+        allow delete: if false;
+      }
+
       match /players/{playerId} {
         allow get: if hasClubScope(clubId) || teamAllowed(clubId, resource.data.authorizationTeamId);
         allow create: if canWriteTeam(clubId, request.resource.data.authorizationTeamId)
