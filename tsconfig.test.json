@@ -51,6 +51,8 @@
     "src/lib/videoLab.test.ts",
     "src/lib/videoLibrary.ts",
     "src/lib/videoLibrary.test.ts",
+    "src/lib/videoCollections.ts",
+    "src/lib/videoCollections.test.ts",
     "src/lib/videoReview.ts",
     "src/lib/videoReview.test.ts",
     "src/lib/access/accessDomain.ts",
