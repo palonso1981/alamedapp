@@ -58,6 +58,8 @@ interface BaseVideoLibraryItem {
   competition: Exclude<DashboardCompetition, "ALL">;
   matchday?: number;
   period?: number;
+  /** Segmento físico o lógico que permite abrir el Video Lab exacto. */
+  segmentId: string;
   videoId: string;
   startSecond: number;
   endSecond: number;
@@ -188,7 +190,7 @@ export function activeVideoLibraryRecords(records: readonly DashboardMatchRecord
   return records.filter(({ catalog, session }) => !catalog.archivedAt && !catalog.deletedAt && !session.preparation?.archivedAt && !session.preparation?.deletedAt);
 }
 
-function eventPlayerIds(event: MatchEvent): string[] {
+export function videoEventPlayerIds(event: MatchEvent): string[] {
   const ids: string[] = [];
   if ("playerId" in event && typeof event.playerId === "string") ids.push(event.playerId);
   if (event.type === "threat_recorded" && event.defensive?.goalkeeper.status === "PLAYER") ids.push(event.defensive.goalkeeper.playerId);
@@ -230,13 +232,14 @@ function eventItems(records: readonly DashboardMatchRecord[], scope?: DashboardS
       competition: matchCompetition(record),
       matchday: record.session.preparation?.matchday,
       period: event.period,
+      segmentId: `${resolution.segmentId}:P${event.period}`,
       videoId: resolution.videoId,
       startSecond: resolution.openSecond,
       endSecond: Math.max(resolution.openSecond + 1, resolution.estimatedSecond + resolution.leadSeconds),
       referenceSecond: resolution.estimatedSecond,
       verified,
-      playerIds: eventPlayerIds(event),
-      dominantFeet: playerFeet(record, eventPlayerIds(event)),
+      playerIds: videoEventPlayerIds(event),
+      dominantFeet: playerFeet(record, videoEventPlayerIds(event)),
       event,
       title: eventDescription(event, record.session.players, undefined, record.session.staff),
     }];
@@ -255,6 +258,7 @@ function clipItems(records: readonly DashboardMatchRecord[]): VideoLibraryClipIt
     competition: matchCompetition(record),
     matchday: record.session.preparation?.matchday,
     period: clipPeriod(clip.segmentId),
+    segmentId: clip.segmentId,
     videoId: clip.videoId,
     startSecond: clip.startSecond,
     endSecond: clip.endSecond,
@@ -291,7 +295,7 @@ export function matchesVideoEventKind(event: MatchEvent, kind: VideoLibraryEvent
   return event.type === "threat_recorded" && event.phase === "DOUBLE_PENALTY";
 }
 
-function eventSide(event: MatchEvent): ThreatSide | null {
+export function videoEventSide(event: MatchEvent): ThreatSide | null {
   return "side" in event && (event.side === "FOR" || event.side === "AGAINST") ? event.side : null;
 }
 
@@ -308,7 +312,7 @@ function filterItems(items: VideoLibraryItem[], filters: VideoLibraryFilters): V
     if (filters.matchdays.length > 0 && (!item.matchday || !filters.matchdays.includes(item.matchday))) return false;
     if (filters.dominantFeet.length > 0 && !filters.dominantFeet.some((foot) => item.dominantFeet.includes(foot))) return false;
     if (filters.verifiedOnly && !item.verified) return false;
-    if (filters.side !== "ALL" && (item.source !== "EVENT" || eventSide(item.event) !== filters.side)) return false;
+    if (filters.side !== "ALL" && (item.source !== "EVENT" || videoEventSide(item.event) !== filters.side)) return false;
     if (filters.eventKinds.length > 0 && (item.source !== "EVENT" || !filters.eventKinds.some((kind) => matchesVideoEventKind(item.event, kind)))) return false;
     if (filters.phases.length > 0 && (item.source !== "EVENT" || item.event.type !== "threat_recorded" || !filters.phases.includes(item.event.phase))) return false;
     if (filters.outcomes.length > 0 && (item.source !== "EVENT" || item.event.type !== "threat_recorded" || !filters.outcomes.includes(item.event.outcome))) return false;
@@ -416,6 +420,65 @@ export function videoLibraryKeyboardAction(code: string, editableTarget: boolean
   if (code === "ArrowLeft") return "PREVIOUS";
   if (code === "ArrowRight") return "NEXT";
   return null;
+}
+
+export type VideoLabNavigationAction = "EDIT" | "ADD";
+
+export function videoLibraryWriteActionState(canWrite: boolean): { canAdd: boolean; canEdit: boolean } {
+  return { canAdd: canWrite, canEdit: canWrite };
+}
+
+/** Conserva el estado serializable completo de Biblioteca y añade el resultado activo. */
+export function videoLibraryReturnHref(currentSearch: string, focusKey?: string): string {
+  const params = new URLSearchParams(currentSearch);
+  if (focusKey) params.set("vFocus", focusKey);
+  const query = params.toString();
+  return `/video${query ? `?${query}` : ""}`;
+}
+
+/** Solo acepta retornos internos a Biblioteca; evita convertir el parámetro en un redirect abierto. */
+export function safeVideoLibraryReturnHref(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value, "https://alamedapp.invalid");
+    if (parsed.origin !== "https://alamedapp.invalid" || parsed.pathname !== "/video") return null;
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Conecta Biblioteca con el Video Lab sin duplicar editores. Los filtros V2 se
+ * transportan para dar contexto y `returnTo` conserva exactamente la consulta
+ * de origen, incluyendo scopes del Dashboard.
+ */
+export function videoLabNavigationHref(
+  item: VideoLibraryItem,
+  currentSearch: string,
+  action: VideoLabNavigationAction,
+  currentSecond?: number,
+): string {
+  const source = new URLSearchParams(currentSearch);
+  const params = new URLSearchParams();
+  source.forEach((value, key) => {
+    if (key.startsWith("v") && key !== "vFocus") params.append(key, value);
+  });
+  params.set("from", "video");
+  params.set("returnTo", videoLibraryReturnHref(currentSearch, item.key));
+  params.set("segmentId", item.segmentId);
+  const targetSecond = currentSecond ?? (action === "EDIT" && item.source === "CLIP" ? item.startSecond : item.referenceSecond);
+  params.set("videoSecond", String(Math.max(0, Math.round(targetSecond))));
+  if (action === "ADD") {
+    params.set("videoAction", "add");
+  } else if (item.source === "EVENT") {
+    params.set("focusEventId", item.event.id);
+    params.set("videoAction", "edit-event");
+  } else {
+    params.set("focusClipId", item.clip.id);
+    params.set("videoAction", "edit-clip");
+  }
+  return `/partido/${encodeURIComponent(item.matchId)}/video-lab?${params.toString()}`;
 }
 
 export type VideoFilterMenuInteraction = "OPTION_SELECTED" | "OUTSIDE_POINTER" | "OTHER_MENU_OPENED" | "ESCAPE" | "HEADER_TOGGLE";

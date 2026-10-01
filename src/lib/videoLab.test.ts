@@ -14,6 +14,8 @@ import {
   createVideoAnalysisClip,
   createVideoSportsInsertion,
   defaultVideoClipWindow,
+  filterVideoLabClips,
+  filterVideoLabTimeline,
   hasVideoLabAvailable,
   isVideoLabClipEligible,
   nextVideoLabRow,
@@ -26,6 +28,7 @@ import {
   videoLabEventActionState,
   videoLabSeekSecond,
 } from "./videoLab";
+import { EMPTY_VIDEO_LIBRARY_FILTERS } from "./videoLibrary";
 import { loadMatchSession, LocalStorageAdapter, saveMatchSession } from "./matchPersistence";
 import { MatchEvent, MatchSession, MatchVideoSegment } from "../types";
 
@@ -272,4 +275,34 @@ test("editar clip conserva identidad y creación; eliminarlo no altera MatchEven
   const removed = removeVideoAnalysisClip(withClip, original.id);
   assert.deepEqual(removed.videoAnalysisClips, []);
   assert.deepEqual(removed.events, events);
+});
+
+test("filtros de trabajo del Video Lab combinan jugador, evento, periodo, lado y VERIFIED", () => {
+  const base = buildSession([
+    video("first", "abcdefghijk", [1], [{ id: "a1", eventId: "p1-shot", videoSecond: 100 }]),
+    video("second", "zyxwvutsrqp", [2], [{ id: "a2", eventId: "p2-shot", videoSecond: 50 }]),
+  ]);
+  const rows = buildVideoLabTimeline(base);
+  const p1 = rows.find((row) => row.event.id === "p1-shot")!;
+  const verifiedSession = persistVideoLabVerification(base, p1, { videoSecond: 101, timeSource: "manual", now: 10 });
+  const verifiedRows = buildVideoLabTimeline(verifiedSession);
+  const filtered = filterVideoLabTimeline(verifiedRows, {
+    ...EMPTY_VIDEO_LIBRARY_FILTERS,
+    playerIds: ["p2"],
+    eventKinds: ["SHOTS"],
+    periods: [1],
+    side: "FOR",
+    verifiedOnly: true,
+  });
+  assert.deepEqual(filtered.map((row) => row.event.id), ["p1-shot"]);
+  assert.deepEqual(filterVideoLabTimeline(verifiedRows, { ...EMPTY_VIDEO_LIBRARY_FILTERS, side: "AGAINST" }), []);
+  assert.deepEqual(filterVideoLabTimeline(verifiedRows, { ...EMPTY_VIDEO_LIBRARY_FILTERS, periods: [2] }).map((row) => row.event.period), [2]);
+});
+
+test("filtros de clips usan jugadores, etiquetas, temática y periodo sin inventar lado deportivo", () => {
+  const clip = createVideoAnalysisClip({ id: "clip-filter", now: 10, clubId: "club", matchId: "video-lab", segmentId: "first:P2", videoId: "abcdefghijk", referenceSecond: 40, startSecond: 37, endSecond: 46, category: "DEFENSIVO", tags: ["presión"], playerIds: ["p4"] });
+  const matches = filterVideoLabClips([clip], { ...EMPTY_VIDEO_LIBRARY_FILTERS, playerIds: ["p4"], tags: ["PRESIÓN"], themes: ["DEFENSIVO"], periods: [2], verifiedOnly: true });
+  assert.deepEqual(matches.map((item) => item.id), [clip.id]);
+  assert.deepEqual(filterVideoLabClips([clip], { ...EMPTY_VIDEO_LIBRARY_FILTERS, side: "FOR" }), []);
+  assert.deepEqual(filterVideoLabClips([clip], { ...EMPTY_VIDEO_LIBRARY_FILTERS, periods: [1] }), []);
 });

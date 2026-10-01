@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { AppHeader } from "../../components/app/AppHeader";
 import { useAccess } from "../../components/access/AccessProvider";
 import { CompactMultiSelect, CompactMultiSelectOption } from "../../components/video/CompactMultiSelect";
-import { VideoClipComposer } from "../../components/video/VideoClipComposer";
 import { YouTubeLabPlayer, YouTubeLabPlayerHandle } from "../../components/video/YouTubeLabPlayer";
 import { DASHBOARD_PHASES, DashboardMatchRecord } from "../../lib/dashboardAnalytics";
 import { PitchOriginZone } from "../../lib/dashboardAnalysis";
@@ -15,9 +14,9 @@ import { emptyDashboardScope, hasDashboardScopeSearchParams, matchCompetition, s
 import { eventDescription, phaseLabel } from "../../lib/eventPresentation";
 import { listMatchCatalog } from "../../lib/matchCatalog";
 import { loadMatchSession } from "../../lib/matchPersistence";
-import { buildVideoLabSyncSegments, VIDEO_CLIP_SUGGESTED_CATEGORIES, videoClipTagSuggestions } from "../../lib/videoLab";
+import { VIDEO_CLIP_SUGGESTED_CATEGORIES, videoClipTagSuggestions } from "../../lib/videoLab";
 import { formatVideoTimestamp } from "../../lib/videoIndex";
-import { activeVideoLibraryRecords, buildVideoLibraryItems, canonicalVideoRival, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, reelCutCompletion, removeVideoTag, renameVideoTag, videoLibraryFiltersFromSearchParams, videoLibraryFiltersToSearchParams, videoLibraryKeyboardAction, VideoLibraryEventKind, VideoLibraryFilters, VideoLibraryItem, VideoLibrarySourceFilter, videoTagUsage } from "../../lib/videoLibrary";
+import { activeVideoLibraryRecords, buildVideoLibraryItems, canonicalVideoRival, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, reelCutCompletion, removeVideoTag, renameVideoTag, videoLabNavigationHref, videoLibraryFiltersFromSearchParams, videoLibraryFiltersToSearchParams, videoLibraryKeyboardAction, videoLibraryWriteActionState, VideoLibraryEventKind, VideoLibraryFilters, VideoLibraryItem, VideoLibrarySourceFilter, videoTagUsage } from "../../lib/videoLibrary";
 import { useMatchStore } from "../../store/useMatchStore";
 import { useTeamStore } from "../../store/useTeamStore";
 import { MatchVideoAnalysisClip, ThreatOutcome } from "../../types";
@@ -62,6 +61,7 @@ function VideoLibraryContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { canWrite } = useAccess();
+  const writeActions = videoLibraryWriteActionState(canWrite);
   const currentClubId = useTeamStore((state) => state.currentClubId);
   const workspace = useTeamStore((state) => state.teams[currentClubId]);
   const ensureRegistry = useTeamStore((state) => state.ensureRegistry);
@@ -71,6 +71,7 @@ function VideoLibraryContent() {
   const removeClip = useMatchStore((state) => state.removeVideoAnalysisClip);
   const playerRef = useRef<YouTubeLabPlayerHandle>(null);
   const reelContainerRef = useRef<HTMLElement>(null);
+  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const lastCompletedCutRef = useRef<string | null>(null);
   const fixture = searchParams.get("fixture") === "1";
   const fromDashboard = searchParams.get("from") === "dashboard";
@@ -86,7 +87,6 @@ function VideoLibraryContent() {
   const [fullscreenFallback, setFullscreenFallback] = useState(false);
   const [reelFinished, setReelFinished] = useState(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
-  const [editing, setEditing] = useState<MatchVideoAnalysisClip | null>(null);
   const [manageTags, setManageTags] = useState(false);
   const [tagDrafts, setTagDrafts] = useState<Record<string, string>>({});
 
@@ -117,13 +117,16 @@ function VideoLibraryContent() {
 
   useEffect(() => { if (selected >= items.length) setSelected(Math.max(0, items.length - 1)); }, [items.length, selected]);
   useEffect(() => {
-    setSelected(0);
+    const focusKey = searchParams.get("vFocus");
+    const focusIndex = focusKey ? items.findIndex((item) => item.key === focusKey) : -1;
+    setSelected(focusIndex >= 0 ? focusIndex : 0);
+    if (focusKey && focusIndex >= 0) window.setTimeout(() => itemRefs.current[focusKey]?.scrollIntoView({ block: "nearest" }), 0);
     setReel(false);
     setAutoPlaySelection(false);
     setReelFinished(false);
     setAutoplayBlocked(false);
     lastCompletedCutRef.current = null;
-  }, [itemSignature]);
+  }, [itemSignature, items, searchParams]);
   useEffect(() => {
     const onFullscreenChange = () => setFullscreen(document.fullscreenElement === reelContainerRef.current);
     document.addEventListener("fullscreenchange", onFullscreenChange);
@@ -240,9 +243,6 @@ function VideoLibraryContent() {
       playerRef.current?.play();
     }
   };
-  const openEdit = (clip: MatchVideoAnalysisClip) => { ensureMatch(clip.matchId); setEditing(clip); setReel(false); };
-  const editingRecord = editing ? visibleRecords.find((record) => record.catalog.matchId === editing.matchId) : undefined;
-  const editingSegment = editingRecord ? buildVideoLabSyncSegments(editingRecord.session).find((segment) => segment.id === editing?.segmentId) : undefined;
   const updateFilter = <K extends keyof VideoLibraryFilters>(key: K, value: VideoLibraryFilters[K]) => setFilters((current) => ({ ...current, [key]: value }));
   const selectSource = (source: VideoLibrarySourceFilter) => setFilters((current) => ({
     ...current,
@@ -277,6 +277,11 @@ function VideoLibraryContent() {
     persistTagChange((clips) => removeVideoTag(clips, tag));
   };
   const dashboardReturnUrl = useMemo(() => dashboardReturnHref(searchParams.toString()), [searchParams]);
+  const editHref = active ? videoLabNavigationHref(active, searchParams.toString(), "EDIT") : "#";
+  const addAtCurrentSecond = () => {
+    if (!active || !writeActions.canAdd) return;
+    router.push(videoLabNavigationHref(active, searchParams.toString(), "ADD", playerRef.current?.currentSecond() ?? active.referenceSecond));
+  };
   const activePlayerNames = active
     ? Array.from(new Set(active.playerIds.flatMap((playerId) => visibleRecords.flatMap((record) => record.session.players.filter((player) => player.id === playerId).map((player) => player.name)))))
     : [];
@@ -338,19 +343,20 @@ function VideoLibraryContent() {
           <div className="flex shrink-0 items-center gap-2"><span className="rounded-full bg-slate-900 px-3 py-2 font-mono text-xs font-black text-cyan-300">{selected + 1} / {items.length}</span><button type="button" onClick={leaveFullscreen} className="min-h-11 rounded-xl bg-slate-800 px-4 text-xs font-black">SALIR ✕</button></div>
         </header>}
         <div className={cinemaMode ? "min-h-0 flex-1" : ""}><YouTubeLabPlayer ref={playerRef} videoId={active.videoId} initialSecond={active.startSecond} autoPlay={reel || autoPlaySelection} onPlayingChange={(value) => { setPlaying(value); if (value) setAutoplayBlocked(false); }} onTimeChange={onTimeChange} onAutoplayBlocked={() => setAutoplayBlocked(true)} presentation={cinemaMode ? "REEL" : "LAB"}/></div>
-        <div className={`grid shrink-0 grid-cols-2 gap-2 ${cinemaMode ? "pt-2 sm:grid-cols-5" : "mt-3 sm:grid-cols-5"}`}>
+        <div className={`grid shrink-0 grid-cols-2 gap-2 ${cinemaMode ? "pt-2 sm:grid-cols-5" : canWrite ? "mt-3 sm:grid-cols-6" : "mt-3 sm:grid-cols-5"}`}>
           <button type="button" onClick={() => move(-1)} className="min-h-12 rounded-xl bg-slate-800 text-xs font-black">← ANTERIOR</button>
           <button type="button" onClick={() => move(1)} className="min-h-12 rounded-xl bg-slate-800 text-xs font-black">SIGUIENTE →</button>
           <button type="button" onClick={() => { const next = !reel; setReel(next); setAutoPlaySelection(next); setReelFinished(false); if (next) playerRef.current?.play(); else playerRef.current?.pause(); }} className={`min-h-12 rounded-xl text-xs font-black ${reel ? "bg-amber-400 text-slate-950" : "bg-cyan-400 text-slate-950"}`}>{reel ? "Ⅱ PAUSA REEL" : "▶ REPRODUCIR REEL"}</button>
           {!cinemaMode ? <button type="button" onClick={startFullscreenReel} className="min-h-12 rounded-xl bg-violet-400 px-3 text-xs font-black text-slate-950">⛶ PANTALLA COMPLETA</button> : <span className="grid min-h-12 place-items-center rounded-xl bg-slate-900 font-mono text-xs text-cyan-300">{selected + 1} / {items.length}</span>}
           <span className="col-span-2 grid min-h-12 place-items-center rounded-xl bg-slate-950 font-mono text-xs text-cyan-300 sm:col-span-1">{formatVideoTimestamp(active.startSecond)}–{formatVideoTimestamp(active.endSecond)}</span>
+          {writeActions.canAdd && !cinemaMode && <button type="button" onClick={addAtCurrentSecond} className="col-span-2 min-h-12 rounded-xl bg-amber-400 px-3 text-xs font-black text-slate-950 sm:col-span-1">+ AÑADIR</button>}
         </div>
         {autoplayBlocked && <p role="status" className="mt-2 rounded-xl bg-amber-950 px-3 py-2 text-center text-xs font-bold text-amber-200">El navegador ha bloqueado el autoplay. Pulsa ▶ para continuar el reel.</p>}
         {reelFinished && <div role="status" className={`${cinemaMode ? "absolute inset-0 z-10 grid place-items-center bg-black/75" : "mt-3"}`}><div className="rounded-3xl border border-cyan-400/50 bg-slate-950 p-6 text-center shadow-2xl"><p className="text-sm font-black tracking-[.18em] text-cyan-300">FIN DEL REEL</p><div className="mt-4 flex flex-wrap justify-center gap-2"><button type="button" onClick={restartReel} className="min-h-12 rounded-xl bg-cyan-400 px-5 text-xs font-black text-slate-950">↺ VOLVER AL PRIMERO</button>{cinemaMode && <button type="button" onClick={leaveFullscreen} className="min-h-12 rounded-xl bg-slate-800 px-5 text-xs font-black">SALIR</button>}</div></div></div>}
         {fullscreenFallback && <p className="mt-2 text-center text-[10px] font-bold text-amber-300">Pantalla completa no disponible; el reel continúa en modo cine.</p>}
-        {!cinemaMode && <><p className="mt-2 text-center text-[10px] font-bold text-slate-500">← / → · ANTERIOR / SIGUIENTE &nbsp;·&nbsp; ESPACIO · PLAY / PAUSA</p><article className="mt-3 rounded-2xl bg-slate-950 p-4"><div className="flex items-start justify-between gap-3"><div><span className={`text-[9px] font-black ${active.source === "EVENT" ? "text-cyan-300" : "text-violet-300"}`}>{active.source === "EVENT" ? "EVENTO DEPORTIVO" : "CLIP DE ANÁLISIS"}</span><h2 className="text-xl font-black">{labelFor(active)}</h2><p className="text-xs text-slate-400">{active.opponent} · {active.date}</p></div><span className={`rounded-full px-3 py-2 text-[10px] font-black ${active.verified ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>{active.verified ? "VERIFIED" : "AUTO"}</span></div>{active.source === "EVENT" ? <p className="mt-2 text-sm text-slate-300">P{active.event.period} · min {active.event.minute} · {eventDescription(active.event, visibleRecords.find((record) => record.catalog.matchId === active.matchId)?.session.players ?? [])}</p> : <><p className="mt-2 text-sm text-slate-300">{active.clip.tags.join(" · ") || "Sin etiquetas"}</p>{active.clip.comment && <p className="mt-2 text-sm text-slate-400">{active.clip.comment}</p>}{canWrite && <div className="mt-3 flex gap-2"><button type="button" onClick={() => openEdit(active.clip)} className="min-h-11 rounded-xl bg-violet-500 px-4 text-xs font-black text-slate-950">EDITAR CLIP</button><button type="button" onClick={() => { if (window.confirm("¿Eliminar este clip de análisis?")) { ensureMatch(active.matchId); window.setTimeout(() => { removeClip(active.matchId, active.clip.id); setRecords(readLocalRecords()); }, 0); } }} className="min-h-11 rounded-xl bg-rose-950 px-4 text-xs font-black text-rose-200">ELIMINAR</button></div>}</>}</article>{editing && editingRecord && editingSegment && <div className="mt-3"><VideoClipComposer session={editingRecord.session} segment={editingSegment} initialClip={editing} currentSecond={() => playerRef.current?.currentSecond() ?? editing.referenceSecond} onSave={(clip) => { upsertClip(editing.matchId, clip); window.setTimeout(() => setRecords(readLocalRecords()), 0); setEditing(null); }} onCancel={() => setEditing(null)}/></div>}</>}
+        {!cinemaMode && <><p className="mt-2 text-center text-[10px] font-bold text-slate-500">← / → · ANTERIOR / SIGUIENTE &nbsp;·&nbsp; ESPACIO · PLAY / PAUSA</p><article className="mt-3 rounded-2xl bg-slate-950 p-4"><div className="flex items-start justify-between gap-3"><div><span className={`text-[9px] font-black ${active.source === "EVENT" ? "text-cyan-300" : "text-violet-300"}`}>{active.source === "EVENT" ? "EVENTO DEPORTIVO" : "CLIP DE ANÁLISIS"}</span><h2 className="text-xl font-black">{labelFor(active)}</h2><p className="text-xs text-slate-400">{active.opponent} · {active.date}</p></div><span className={`rounded-full px-3 py-2 text-[10px] font-black ${active.verified ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>{active.verified ? "VERIFIED" : "AUTO"}</span></div>{active.source === "EVENT" ? <p className="mt-2 text-sm text-slate-300">P{active.event.period} · min {active.event.minute} · {eventDescription(active.event, visibleRecords.find((record) => record.catalog.matchId === active.matchId)?.session.players ?? [])}</p> : <><p className="mt-2 text-sm text-slate-300">{active.clip.tags.join(" · ") || "Sin etiquetas"}</p>{active.clip.comment && <p className="mt-2 text-sm text-slate-400">{active.clip.comment}</p>}</>} {writeActions.canEdit && <div className="mt-3 flex flex-wrap gap-2"><Link href={editHref} className="inline-grid min-h-11 place-items-center rounded-xl bg-violet-500 px-4 text-xs font-black text-slate-950">EDITAR</Link>{active.source === "CLIP" && <button type="button" onClick={() => { if (window.confirm("¿Eliminar este clip de análisis?")) { ensureMatch(active.matchId); window.setTimeout(() => { removeClip(active.matchId, active.clip.id); setRecords(readLocalRecords()); }, 0); } }} className="min-h-11 rounded-xl bg-rose-950 px-4 text-xs font-black text-rose-200">ELIMINAR</button>}</div>}</article></>}
       </section>
-      {!cinemaMode && <section className="max-h-[75vh] space-y-2 overflow-y-auto rounded-3xl border border-slate-800 bg-slate-900 p-2">{items.map((item, index) => <button key={item.key} type="button" onClick={() => { setSelected(index); setReel(false); setAutoPlaySelection(false); setReelFinished(false); }} className={`w-full rounded-2xl border p-3 text-left ${index === selected ? "border-cyan-400 bg-cyan-950/30" : "border-transparent bg-slate-950"}`}><div className="flex justify-between gap-2"><strong className="truncate text-sm">{labelFor(item)}</strong><span className="font-mono text-[10px] text-cyan-300">{formatVideoTimestamp(item.startSecond)}</span></div><p className="mt-1 text-[10px] text-slate-400">{item.opponent} · {item.date}</p><div className="mt-2 flex gap-2"><span className={`rounded-full px-2 py-1 text-[9px] font-black ${item.source === "EVENT" ? "bg-cyan-950 text-cyan-300" : "bg-violet-950 text-violet-300"}`}>{item.source}</span><span className={`rounded-full px-2 py-1 text-[9px] font-black ${item.verified ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>{item.verified ? "VERIFIED" : "AUTO"}</span></div></button>)}</section>}
+      {!cinemaMode && <section className="max-h-[75vh] space-y-2 overflow-y-auto rounded-3xl border border-slate-800 bg-slate-900 p-2">{items.map((item, index) => <button ref={(node) => { itemRefs.current[item.key] = node; }} key={item.key} type="button" onClick={() => { setSelected(index); setReel(false); setAutoPlaySelection(false); setReelFinished(false); }} className={`w-full rounded-2xl border p-3 text-left ${index === selected ? "border-cyan-400 bg-cyan-950/30" : "border-transparent bg-slate-950"}`}><div className="flex justify-between gap-2"><strong className="truncate text-sm">{labelFor(item)}</strong><span className="font-mono text-[10px] text-cyan-300">{formatVideoTimestamp(item.startSecond)}</span></div><p className="mt-1 text-[10px] text-slate-400">{item.opponent} · {item.date}</p><div className="mt-2 flex gap-2"><span className={`rounded-full px-2 py-1 text-[9px] font-black ${item.source === "EVENT" ? "bg-cyan-950 text-cyan-300" : "bg-violet-950 text-violet-300"}`}>{item.source}</span><span className={`rounded-full px-2 py-1 text-[9px] font-black ${item.verified ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>{item.verified ? "VERIFIED" : "AUTO"}</span></div></button>)}</section>}
     </div>}
   </main></div>;
 }

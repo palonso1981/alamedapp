@@ -1,31 +1,50 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppHeader } from "../../../../components/app/AppHeader";
 import { useAccess } from "../../../../components/access/AccessProvider";
+import { EventEditor } from "../../../../components/match/EventEditor";
 import { SyncStatusBadge } from "../../../../components/match/SyncStatusBadge";
+import { CompactMultiSelect, CompactMultiSelectOption } from "../../../../components/video/CompactMultiSelect";
 import { YouTubeLabPlayer, YouTubeLabPlayerHandle } from "../../../../components/video/YouTubeLabPlayer";
 import { VideoClipComposer } from "../../../../components/video/VideoClipComposer";
 import { VideoSportsEventComposer } from "../../../../components/video/VideoSportsEventComposer";
-import { eventDescription } from "../../../../lib/eventPresentation";
+import { eventDescription, phaseLabel } from "../../../../lib/eventPresentation";
 import { buildDashboardFixture } from "../../../../lib/dashboardFixture";
+import { DASHBOARD_PHASES } from "../../../../lib/dashboardAnalytics";
+import { replayMatch } from "../../../../lib/matchEngine";
 import { formatVideoTimestamp } from "../../../../lib/videoIndex";
 import {
   buildVideoLabSyncSegments,
   buildVideoLabTimeline,
   currentVideoLabRow,
+  filterVideoLabClips,
+  filterVideoLabTimeline,
   nextVideoLabRow,
   persistVideoLabVerification,
   videoLabEventActionState,
   videoLabSeekSecond,
+  videoClipTagSuggestions,
 } from "../../../../lib/videoLab";
+import { EMPTY_VIDEO_LIBRARY_FILTERS, safeVideoLibraryReturnHref, videoLibraryFiltersFromSearchParams, videoLibraryFiltersToSearchParams, VideoLibraryEventKind, VideoLibraryFilters } from "../../../../lib/videoLibrary";
 import { useMatchStore } from "../../../../store/useMatchStore";
+import { ThreatOutcome } from "../../../../types";
+
+const EVENT_FILTERS: Array<[VideoLibraryEventKind, string]> = [
+  ["SHOTS", "REMATES"], ["THREATS", "AMENAZAS"], ["LOSSES", "PÉRDIDAS"], ["SET_PIECES", "ABP"],
+  ["SET_PIECE_CORNER", "ABP · CÓRNER"], ["SET_PIECE_FREE_KICK", "ABP · FALTA / LIBRE DIRECTO"],
+  ["SET_PIECE_KICK_IN", "ABP · BANDA"], ["SET_PIECE_PENALTY", "ABP · PENALTI"],
+  ["SET_PIECE_DOUBLE_PENALTY", "ABP · DOBLE PENALTI"], ["FOULS", "FALTAS"], ["CARDS", "TARJETAS"],
+];
+const OUTCOME_LABELS: Record<ThreatOutcome, string> = { GOL: "GOL", PARADA: "PARADA", FUERA: "FUERA", BLOQUEADO: "BLOQUEADO · LEGACY" };
+const option = (value: string, label = value): CompactMultiSelectOption => ({ value, label });
 
 export default function VideoLabPage() {
   const { id: matchId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { canWrite } = useAccess();
   const storedSession = useMatchStore((state) => state.matches[matchId]);
   const fixtureSession = useMemo(() =>
@@ -38,12 +57,16 @@ export default function VideoLabPage() {
   const playerRef = useRef<YouTubeLabPlayerHandle>(null);
   const rowRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const timelineRef = useRef<HTMLDivElement>(null);
+  const navigationAppliedRef = useRef(false);
+  const editorIntentAppliedRef = useRef(false);
   const [segmentId, setSegmentId] = useState("");
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [currentSecond, setCurrentSecond] = useState(0);
   const [followVideo, setFollowVideo] = useState(true);
   const [composer, setComposer] = useState<"EVENT" | "CLIP" | null>(null);
   const [editingClipId, setEditingClipId] = useState<string | null>(null);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [workFilters, setWorkFilters] = useState<VideoLibraryFilters>(() => videoLibraryFiltersFromSearchParams(searchParams, "ALL"));
 
   useEffect(() => { if (!fixtureSession) ensureMatch(matchId); }, [ensureMatch, fixtureSession, matchId]);
   const segments = useMemo(() => session ? buildVideoLabSyncSegments(session) : [], [session]);
@@ -51,11 +74,16 @@ export default function VideoLabPage() {
     if (!segments.some((segment) => segment.id === segmentId)) setSegmentId(segments[0]?.id ?? "");
   }, [segmentId, segments]);
   const rows = useMemo(() => session ? buildVideoLabTimeline(session) : [], [session]);
+  const filteredRows = useMemo(() => filterVideoLabTimeline(rows, workFilters), [rows, workFilters]);
+  const visibleSegments = useMemo(() => segments.filter((candidate) => workFilters.periods.length === 0 || workFilters.periods.includes(candidate.period)), [segments, workFilters.periods]);
   const segment = segments.find((candidate) => candidate.id === segmentId);
-  const segmentRows = rows.filter((row) => row.syncSegmentId === segmentId);
-  const activeRow = currentVideoLabRow(rows, segmentId, currentSecond);
+  const segmentRows = filteredRows.filter((row) => row.syncSegmentId === segmentId);
+  const activeRow = currentVideoLabRow(filteredRows, segmentId, currentSecond);
   const selectedRow = rows.find((row) => row.event.id === selectedEventId) ?? activeRow;
   const eventAction = videoLabEventActionState(canWrite, selectedRow?.event.id);
+  useEffect(() => {
+    if (visibleSegments.length > 0 && !visibleSegments.some((candidate) => candidate.id === segmentId)) setSegmentId(visibleSegments[0].id);
+  }, [segmentId, visibleSegments]);
 
   useEffect(() => {
     const row = activeRow ? rowRefs.current[activeRow.event.id] : null;
@@ -73,10 +101,39 @@ export default function VideoLabPage() {
     const second = row ? videoLabSeekSecond(row) : null;
     if (second !== null) playerRef.current?.seekTo(second);
   };
+
+  useEffect(() => {
+    if (!session || navigationAppliedRef.current || segments.length === 0) return;
+    const requestedSegmentId = searchParams.get("segmentId");
+    const requestedSecondValue = searchParams.get("videoSecond");
+    const requestedSecond = requestedSecondValue === null ? undefined : Number(requestedSecondValue);
+    const focusEventId = searchParams.get("focusEventId");
+    const focusClipId = searchParams.get("focusClipId");
+    const focusEventRow = focusEventId ? rows.find((row) => row.event.id === focusEventId) : undefined;
+    const focusClip = focusClipId ? (session.videoAnalysisClips ?? []).find((clip) => clip.id === focusClipId) : undefined;
+    const targetSegmentId = focusEventRow?.syncSegmentId ?? focusClip?.segmentId ?? (segments.some((candidate) => candidate.id === requestedSegmentId) ? requestedSegmentId : undefined);
+    if (targetSegmentId) setSegmentId(targetSegmentId);
+    const targetSecond = requestedSecond !== undefined && Number.isFinite(requestedSecond)
+      ? Math.max(0, Math.round(requestedSecond))
+      : focusEventRow ? videoLabSeekSecond(focusEventRow) : focusClip?.startSecond;
+    const referenceRow = focusEventRow ?? (targetSegmentId && targetSecond !== undefined && targetSecond !== null
+      ? currentVideoLabRow(rows, targetSegmentId, targetSecond) ?? rows.find((row) => row.syncSegmentId === targetSegmentId)
+      : undefined);
+    if (referenceRow) {
+      setSelectedEventId(referenceRow.event.id);
+      setFollowVideo(false);
+    }
+    if (targetSecond !== undefined && targetSecond !== null) {
+      setCurrentSecond(targetSecond);
+      window.setTimeout(() => playerRef.current?.seekTo(targetSecond), 80);
+    }
+    navigationAppliedRef.current = true;
+  }, [rows, searchParams, segments, session]);
   const setOverrides = useMatchStore((state) => state.setVideoEventOverrides);
   const addVideoLabEvent = useMatchStore((state) => state.addVideoLabEvent);
   const upsertVideoAnalysisClip = useMatchStore((state) => state.upsertVideoAnalysisClip);
   const removeVideoAnalysisClip = useMatchStore((state) => state.removeVideoAnalysisClip);
+  const editAndReorderEvent = useMatchStore((state) => state.editAndReorderEvent);
   const readPlayerSecond = useCallback(() => playerRef.current?.currentSecond() ?? currentSecond, [currentSecond]);
   const verifySelected = (videoSecond?: number, timeSource?: "manual", advance = false) => {
     if (!session || !selectedRow || !canWrite) return;
@@ -96,8 +153,36 @@ export default function VideoLabPage() {
     const next = segmentRows[(index + 1 + segmentRows.length) % segmentRows.length];
     chooseRow(next.event.id);
   };
-  const clips = session?.videoAnalysisClips ?? [];
+  const clips = useMemo(() => session?.videoAnalysisClips ?? [], [session?.videoAnalysisClips]);
+  const filteredClips = useMemo(() => filterVideoLabClips(clips, workFilters), [clips, workFilters]);
   const editingClip = clips.find((clip) => clip.id === editingClipId);
+  const editingEvent = session?.events.find((event) => event.id === editingEventId);
+  useEffect(() => {
+    if (!canWrite || editorIntentAppliedRef.current) return;
+    const action = searchParams.get("videoAction");
+    const focusEventId = searchParams.get("focusEventId");
+    const focusClipId = searchParams.get("focusClipId");
+    if (action === "edit-event" && focusEventId && session?.events.some((event) => event.id === focusEventId)) {
+      setEditingEventId(focusEventId);
+      editorIntentAppliedRef.current = true;
+    }
+    if (action === "edit-clip" && focusClipId && clips.some((clip) => clip.id === focusClipId)) {
+      setEditingClipId(focusClipId);
+      editorIntentAppliedRef.current = true;
+    }
+  }, [canWrite, clips, searchParams, session?.events]);
+  const editingEntry = useMemo(() => session && editingEvent ? replayMatch(session.players, session.events).timeline.find((entry) => entry.event.id === editingEvent.id) : undefined, [editingEvent, session]);
+  const returnToVideo = safeVideoLibraryReturnHref(searchParams.get("returnTo"));
+  const updateFilter = <K extends keyof VideoLibraryFilters>(key: K, value: VideoLibraryFilters[K]) => setWorkFilters((current) => ({ ...current, [key]: value }));
+  const playerOptions = useMemo(() => (session?.players ?? []).map((player) => option(player.id, `#${player.number} ${player.name}`)), [session?.players]);
+  const outcomes = useMemo(() => Array.from(new Set(rows.flatMap((row) => row.event.type === "threat_recorded" ? [row.event.outcome] : []))) as ThreatOutcome[], [rows]);
+  const tags = useMemo(() => videoClipTagSuggestions(clips), [clips]);
+  const themes = useMemo(() => Array.from(new Set(clips.flatMap((clip) => clip.category ? [clip.category] : []))).sort(), [clips]);
+  useEffect(() => {
+    const params = videoLibraryFiltersToSearchParams(workFilters, searchParams.toString(), "ALL");
+    const next = params.toString();
+    if (next !== searchParams.toString()) router.replace(`/partido/${encodeURIComponent(matchId)}/video-lab${next ? `?${next}` : ""}`, { scroll: false });
+  }, [matchId, router, searchParams, workFilters]);
   useEffect(() => {
     if (!editingClip) return;
     setSegmentId(editingClip.segmentId);
@@ -117,6 +202,7 @@ export default function VideoLabPage() {
             <h1 className="text-xl font-black">{session.preparation?.opponent ?? matchId}</h1>
           </div>
           <div className="flex flex-wrap gap-2">
+            {returnToVideo && <Link href={returnToVideo} className="inline-grid min-h-11 place-items-center rounded-xl bg-cyan-950 px-4 text-xs font-black text-cyan-200">← VOLVER A VIDEO</Link>}
             <Link href={`/partidos/${matchId}/video`} className="inline-grid min-h-11 place-items-center rounded-xl bg-slate-800 px-4 text-xs font-black">CONFIGURAR VÍDEO</Link>
             <Link href={session.matchFinished ? `/partido/${matchId}/revision` : `/partido/${matchId}/directo`} className="inline-grid min-h-11 place-items-center rounded-xl bg-slate-800 px-4 text-xs font-black">VOLVER</Link>
           </div>
@@ -127,8 +213,27 @@ export default function VideoLabPage() {
         ) : (
           <>
             <nav className="flex gap-2 overflow-x-auto pb-1" aria-label="Segmentos de sincronización">
-              {segments.map((item) => <button key={item.id} type="button" onClick={() => { setSegmentId(item.id); setSelectedEventId(null); setFollowVideo(true); }} className={`min-h-11 shrink-0 rounded-xl px-4 text-xs font-black ${item.id === segmentId ? "bg-cyan-400 text-slate-950" : "bg-slate-800"}`}>{item.label}</button>)}
+              {visibleSegments.map((item) => <button key={item.id} type="button" onClick={() => { setSegmentId(item.id); setSelectedEventId(null); setFollowVideo(true); }} className={`min-h-11 shrink-0 rounded-xl px-4 text-xs font-black ${item.id === segmentId ? "bg-cyan-400 text-slate-950" : "bg-slate-800"}`}>{item.label}</button>)}
             </nav>
+            <section aria-label="Filtros de trabajo de Video Lab" className="rounded-2xl border border-slate-800 bg-slate-900 p-3">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <CompactMultiSelect label="JUGADORES" allLabel="TODOS LOS JUGADORES" values={workFilters.playerIds} options={playerOptions} onChange={(values) => updateFilter("playerIds", values)}/>
+                <CompactMultiSelect label="EVENTOS" allLabel="TODOS LOS EVENTOS" values={workFilters.eventKinds} options={EVENT_FILTERS.map(([value, label]) => option(value, label))} onChange={(values) => updateFilter("eventKinds", values as VideoLibraryEventKind[])}/>
+                <CompactMultiSelect label="FASES" allLabel="TODAS LAS FASES" values={workFilters.phases} options={DASHBOARD_PHASES.map((value) => option(value, phaseLabel(value)))} onChange={(values) => updateFilter("phases", values as VideoLibraryFilters["phases"])}/>
+                <CompactMultiSelect label="RESULTADO" allLabel="TODOS LOS RESULTADOS" values={workFilters.outcomes} options={outcomes.map((value) => option(value, OUTCOME_LABELS[value]))} onChange={(values) => updateFilter("outcomes", values as VideoLibraryFilters["outcomes"])}/>
+                <CompactMultiSelect label="ETIQUETAS" allLabel="TODAS LAS ETIQUETAS" values={workFilters.tags} options={tags.map((value) => option(value))} onChange={(values) => updateFilter("tags", values)}/>
+                <CompactMultiSelect label="TEMÁTICA" allLabel="TODAS LAS TEMÁTICAS" values={workFilters.themes} options={themes.map((value) => option(value))} onChange={(values) => updateFilter("themes", values)}/>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <div role="group" aria-label="Lado del evento" className="flex min-h-11 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 p-1">
+                  {(["ALL", "FOR", "AGAINST"] as const).map((side) => <button key={side} type="button" aria-pressed={workFilters.side === side} onClick={() => updateFilter("side", side)} className={`min-h-9 rounded-lg px-3 text-[10px] font-black ${workFilters.side === side ? side === "FOR" ? "bg-cyan-400 text-slate-950" : side === "AGAINST" ? "bg-rose-400 text-slate-950" : "bg-slate-600 text-white" : "text-slate-400"}`}>{side === "ALL" ? "TODOS" : side === "FOR" ? "CDA" : "RIVAL"}</button>)}
+                </div>
+                <button type="button" role="switch" aria-checked={workFilters.verifiedOnly} onClick={() => updateFilter("verifiedOnly", !workFilters.verifiedOnly)} className={`min-h-11 rounded-xl px-4 text-xs font-black ${workFilters.verifiedOnly ? "bg-emerald-400 text-slate-950" : "bg-slate-800"}`}>SOLO VERIFICADOS · {workFilters.verifiedOnly ? "ON" : "OFF"}</button>
+                <CompactMultiSelect label="PERIODO" allLabel="P1 + P2" values={workFilters.periods.map(String)} options={[option("1", "P1"), option("2", "P2")]} onChange={(values) => updateFilter("periods", values.map(Number))}/>
+                <button type="button" onClick={() => setWorkFilters({ ...EMPTY_VIDEO_LIBRARY_FILTERS })} className="min-h-11 rounded-xl border border-slate-700 px-4 text-xs font-black text-slate-300">LIMPIAR</button>
+              </div>
+            </section>
+            {canWrite && searchParams.get("videoAction") === "add" && <p role="status" className="rounded-2xl border border-amber-700/70 bg-amber-950/40 px-4 py-3 text-xs font-bold text-amber-100">Punto importado desde VIDEO · {formatVideoTimestamp(currentSecond)}. Elige + EVENTO o + CLIP mediante los flujos existentes.</p>}
             {segment && <div className="grid gap-3 lg:grid-cols-[minmax(0,1.55fr)_minmax(340px,.85fr)]">
               <section className="rounded-3xl border border-slate-800 bg-slate-900 p-3 sm:p-4">
                 <YouTubeLabPlayer ref={playerRef} videoId={segment.videoId} onTimeChange={handleTimeChange} actionDisabled={!canWrite} onActionHere={(second) => verifySelected(second, "manual", true)} />
@@ -143,8 +248,8 @@ export default function VideoLabPage() {
                 {composer === "CLIP" && <div className="mt-3"><VideoClipComposer session={session} segment={segment} currentSecond={readPlayerSecond} onSave={(clip) => { upsertVideoAnalysisClip(matchId, clip); setComposer(null); }} onCancel={() => setComposer(null)}/></div>}
                 {editingClip && segment?.id === editingClip.segmentId && <div className="mt-3"><VideoClipComposer session={session} segment={segment} initialClip={editingClip} currentSecond={readPlayerSecond} onSave={(clip) => { upsertVideoAnalysisClip(matchId, clip); setEditingClipId(null); }} onCancel={() => setEditingClipId(null)}/></div>}
                 <section className="mt-3 rounded-2xl border border-violet-900/70 bg-violet-950/20 p-3">
-                  <div className="flex items-center justify-between"><p className="text-xs font-black text-violet-200">CLIPS GUARDADOS ({clips.length})</p><Link href={`/video?vMatch=${encodeURIComponent(matchId)}&vSource=all`} className="text-[10px] font-black text-cyan-300">VER EN BIBLIOTECA →</Link></div>
-                  {clips.length === 0 ? <p className="mt-2 text-xs text-slate-500">Todavía no hay clips tácticos en este partido.</p> : <div className="mt-2 grid gap-2 sm:grid-cols-2">{clips.map((clip) => <article key={clip.id} className="rounded-xl bg-slate-900 p-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-sm">{clip.category || clip.tags[0] || "Clip de análisis"}</strong><span className="font-mono text-[10px] text-cyan-300">{formatVideoTimestamp(clip.startSecond)}–{formatVideoTimestamp(clip.endSecond)}</span></div><span className="rounded-full bg-violet-950 px-2 py-1 text-[9px] font-black text-violet-200">{clip.endSecond - clip.startSecond}s</span></div>{clip.tags.length > 0 && <p className="mt-1 truncate text-[10px] text-slate-400">{clip.tags.join(" · ")}</p>}{clip.comment && <p className="mt-1 line-clamp-2 text-xs text-slate-300">{clip.comment}</p>}<div className="mt-2 grid grid-cols-3 gap-1"><button type="button" onClick={() => { setSegmentId(clip.segmentId); setEditingClipId(null); window.setTimeout(() => playerRef.current?.seekTo(clip.startSecond), 50); }} className="min-h-10 rounded-lg bg-cyan-950 text-[10px] font-black text-cyan-200">▶ ABRIR</button>{canWrite && <button type="button" onClick={() => { setComposer(null); setEditingClipId(clip.id); }} className="min-h-10 rounded-lg bg-slate-800 text-[10px] font-black">EDITAR</button>}{canWrite && <button type="button" onClick={() => { if (window.confirm("¿Eliminar este clip de análisis? No se modificará ningún evento deportivo.")) removeVideoAnalysisClip(matchId, clip.id); }} className="min-h-10 rounded-lg bg-rose-950 text-[10px] font-black text-rose-200">ELIMINAR</button>}</div></article>)}</div>}
+                  <div className="flex items-center justify-between"><p className="text-xs font-black text-violet-200">CLIPS GUARDADOS ({filteredClips.length}/{clips.length})</p><Link href={`/video?vMatch=${encodeURIComponent(matchId)}&vSource=all`} className="text-[10px] font-black text-cyan-300">VER EN BIBLIOTECA →</Link></div>
+                  {filteredClips.length === 0 ? <p className="mt-2 text-xs text-slate-500">No hay clips para estos filtros.</p> : <div className="mt-2 grid gap-2 sm:grid-cols-2">{filteredClips.map((clip) => <article key={clip.id} className="rounded-xl bg-slate-900 p-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-sm">{clip.category || clip.tags[0] || "Clip de análisis"}</strong><span className="font-mono text-[10px] text-cyan-300">{formatVideoTimestamp(clip.startSecond)}–{formatVideoTimestamp(clip.endSecond)}</span></div><span className="rounded-full bg-violet-950 px-2 py-1 text-[9px] font-black text-violet-200">{clip.endSecond - clip.startSecond}s</span></div>{clip.tags.length > 0 && <p className="mt-1 truncate text-[10px] text-slate-400">{clip.tags.join(" · ")}</p>}{clip.comment && <p className="mt-1 line-clamp-2 text-xs text-slate-300">{clip.comment}</p>}<div className="mt-2 grid grid-cols-3 gap-1"><button type="button" onClick={() => { setSegmentId(clip.segmentId); setEditingClipId(null); window.setTimeout(() => playerRef.current?.seekTo(clip.startSecond), 50); }} className="min-h-10 rounded-lg bg-cyan-950 text-[10px] font-black text-cyan-200">▶ ABRIR</button>{canWrite && <button type="button" onClick={() => { setComposer(null); setEditingClipId(clip.id); }} className="min-h-10 rounded-lg bg-slate-800 text-[10px] font-black">EDITAR</button>}{canWrite && <button type="button" onClick={() => { if (window.confirm("¿Eliminar este clip de análisis? No se modificará ningún evento deportivo.")) removeVideoAnalysisClip(matchId, clip.id); }} className="min-h-10 rounded-lg bg-rose-950 text-[10px] font-black text-rose-200">ELIMINAR</button>}</div></article>)}</div>}
                 </section>
                 <p className="mt-3 text-xs text-slate-400">AUTO usa el primer anchor válido del periodo. Los anchors adicionales solo señalan coherencia o deriva; no desplazan la jugada silenciosamente.</p>
               </section>
@@ -171,6 +276,20 @@ export default function VideoLabPage() {
           </>
         )}
       </main>
+      {editingEvent && (
+        <EventEditor
+          event={editingEvent}
+          events={session.events}
+          entry={editingEntry}
+          players={session.players}
+          staff={session.staff}
+          onClose={() => setEditingEventId(null)}
+          onSave={(target, changes) => {
+            editAndReorderEvent(matchId, editingEvent.id, target, changes);
+            setEditingEventId(null);
+          }}
+        />
+      )}
     </div>
   );
 }

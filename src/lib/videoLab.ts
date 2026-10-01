@@ -10,6 +10,7 @@ import {
   sortEvents,
 } from "./matchEngine";
 import { normalizeLeadSeconds, upsertVideoEventOverride, videoEventTime } from "./videoIndex";
+import { matchesVideoEventKind, VideoLibraryFilters, videoEventPlayerIds, videoEventSide } from "./videoLibrary";
 import {
   MatchEvent,
   MatchSession,
@@ -380,6 +381,44 @@ export function nextVideoLabRow(
   const index = segmentRows.findIndex((row) => row.event.id === currentEventId);
   if (index < 0 || index === segmentRows.length - 1) return null;
   return segmentRows[index + 1];
+}
+
+/** Aplica en el partido el mismo significado deportivo de Filtros V2. */
+export function filterVideoLabTimeline(
+  rows: readonly VideoLabTimelineRow[],
+  filters: VideoLibraryFilters,
+): VideoLabTimelineRow[] {
+  return rows.filter((row) => {
+    const event = row.event;
+    if (filters.periods.length > 0 && !filters.periods.includes(event.period)) return false;
+    if (filters.verifiedOnly && row.status !== "VERIFIED") return false;
+    if (filters.playerIds.length > 0 && !filters.playerIds.some((id) => videoEventPlayerIds(event).includes(id))) return false;
+    if (filters.side !== "ALL" && videoEventSide(event) !== filters.side) return false;
+    if (filters.eventKinds.length > 0 && !filters.eventKinds.some((kind) => matchesVideoEventKind(event, kind))) return false;
+    if (filters.phases.length > 0 && (event.type !== "threat_recorded" || !filters.phases.includes(event.phase))) return false;
+    if (filters.outcomes.length > 0 && (event.type !== "threat_recorded" || !filters.outcomes.includes(event.outcome))) return false;
+    // Etiquetas y temática pertenecen a clips; no se atribuyen a eventos.
+    if (filters.tags.length > 0 || filters.themes.length > 0) return false;
+    return true;
+  });
+}
+
+/** Filtra clips sin inventar lado, fase o resultado cuando esos datos no existen. */
+export function filterVideoLabClips(
+  clips: readonly MatchVideoAnalysisClip[],
+  filters: VideoLibraryFilters,
+): MatchVideoAnalysisClip[] {
+  return clips.filter((clip) => {
+    const periodMatch = clip.segmentId.match(/:P([12])$/);
+    const period = periodMatch ? Number(periodMatch[1]) : undefined;
+    if (filters.periods.length > 0 && (!period || !filters.periods.includes(period))) return false;
+    if (filters.playerIds.length > 0 && !filters.playerIds.some((id) => clip.playerIds.includes(id))) return false;
+    if (filters.tags.length > 0 && !filters.tags.some((tag) => clip.tags.some((candidate) => candidate.toLocaleLowerCase("es") === tag.toLocaleLowerCase("es")))) return false;
+    if (filters.themes.length > 0 && (!clip.category || !filters.themes.includes(clip.category))) return false;
+    if (filters.side !== "ALL" || filters.eventKinds.length > 0 || filters.phases.length > 0 || filters.outcomes.length > 0) return false;
+    // Un clip guardado es contenido audiovisual confirmado; SOLO VERIFICADOS lo conserva.
+    return true;
+  });
 }
 
 export function currentVideoLabRow(

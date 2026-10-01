@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildDashboardFixture } from "./dashboardFixture";
 import { emptyDashboardScope } from "./dashboardV2";
-import { activeVideoLibraryRecords, buildVideoLibraryItems, canonicalVideoRival, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, matchesVideoEventKind, nextReelIndex, reelCutCompletion, removeVideoTag, renameVideoTag, shouldAdvanceReel, shouldCloseVideoFilterMenu, shouldCorrectReelStart, videoLibraryFiltersFromSearchParams, videoLibraryFiltersToSearchParams, videoLibraryKeyboardAction, videoTagUsage } from "./videoLibrary";
+import { activeVideoLibraryRecords, buildVideoLibraryItems, canonicalVideoRival, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, matchesVideoEventKind, nextReelIndex, reelCutCompletion, removeVideoTag, renameVideoTag, safeVideoLibraryReturnHref, shouldAdvanceReel, shouldCloseVideoFilterMenu, shouldCorrectReelStart, videoLabNavigationHref, videoLibraryFiltersFromSearchParams, videoLibraryFiltersToSearchParams, videoLibraryKeyboardAction, videoLibraryReturnHref, videoLibraryWriteActionState, videoTagUsage } from "./videoLibrary";
 import { MatchVideoAnalysisClip } from "../types";
 
 function libraryRecords() {
@@ -364,4 +364,43 @@ test("volver al análisis conserva exactamente el scope Dashboard y elimina solo
   const href = dashboardReturnHref("from=dashboard&aClub=club&aTeam=team&aCompetition=ALL&rCompetition=LEAGUE&mode=TOTALS&area=PLAYERS&vSource=CLIP&vMatch=match&vVerified=1");
   assert.equal(href, "/dashboard?aClub=club&aTeam=team&aCompetition=ALL&rCompetition=LEAGUE&mode=TOTALS&area=PLAYERS");
   assert.equal(dashboardReturnHref("from=dashboard&vSource=EVENT"), "/dashboard");
+});
+
+test("VIDEO abre el Video Lab exacto y conserva filtros, multiselecciones y resultado activo al volver", () => {
+  const items = buildVideoLibraryItems(libraryRecords(), EMPTY_VIDEO_LIBRARY_FILTERS, { includeClips: true });
+  const event = items.find((item) => item.source === "EVENT")!;
+  const clip = items.find((item) => item.source === "CLIP")!;
+  const current = "vPlayers=p1&vPlayers=p2&vKinds=LOSSES&vSide=FOR&vVerified=1&from=dashboard&aTeam=team";
+  const eventHref = new URL(videoLabNavigationHref(event, current, "EDIT"), "https://app.invalid");
+  assert.equal(eventHref.pathname, `/partido/${event.matchId}/video-lab`);
+  assert.equal(eventHref.searchParams.get("focusEventId"), event.event.id);
+  assert.equal(eventHref.searchParams.get("videoAction"), "edit-event");
+  assert.equal(eventHref.searchParams.get("segmentId"), event.segmentId);
+  assert.deepEqual(eventHref.searchParams.getAll("vPlayers"), ["p1", "p2"]);
+  const returnTo = eventHref.searchParams.get("returnTo")!;
+  assert.equal(returnTo, videoLibraryReturnHref(current, event.key));
+  assert.match(returnTo, /vSide=FOR/);
+  assert.match(returnTo, /vVerified=1/);
+  assert.match(returnTo, /aTeam=team/);
+
+  const clipHref = new URL(videoLabNavigationHref(clip, current, "EDIT"), "https://app.invalid");
+  assert.equal(clipHref.searchParams.get("focusClipId"), clip.clip.id);
+  assert.equal(clipHref.searchParams.get("videoAction"), "edit-clip");
+  assert.equal(clipHref.searchParams.get("videoSecond"), String(clip.startSecond));
+});
+
+test("+ AÑADIR transporta el segundo real y el retorno solo admite Biblioteca interna", () => {
+  const [item] = buildVideoLibraryItems(libraryRecords(), EMPTY_VIDEO_LIBRARY_FILTERS, { includeClips: true });
+  const href = new URL(videoLabNavigationHref(item, "vSide=AGAINST", "ADD", 143.6), "https://app.invalid");
+  assert.equal(href.searchParams.get("videoAction"), "add");
+  assert.equal(href.searchParams.get("videoSecond"), "144");
+  assert.equal(href.searchParams.get("segmentId"), item.segmentId);
+  assert.equal(safeVideoLibraryReturnHref(href.searchParams.get("returnTo")), href.searchParams.get("returnTo"));
+  assert.equal(safeVideoLibraryReturnHref("https://evil.invalid/video?vSide=FOR"), null);
+  assert.equal(safeVideoLibraryReturnHref("/dashboard"), null);
+});
+
+test("ADMIN y EDITOR conservan acciones de escritura; VIEWER solo consume vídeo", () => {
+  assert.deepEqual(videoLibraryWriteActionState(true), { canAdd: true, canEdit: true });
+  assert.deepEqual(videoLibraryWriteActionState(false), { canAdd: false, canEdit: false });
 });
