@@ -12,6 +12,7 @@ import {
   MomentumDangerFilter,
   MomentumFilters,
   MomentumPeriodFilter,
+  momentumBinOpacity,
   momentumBinTotal,
   momentumExportHeading,
 } from "../../lib/matchMomentum";
@@ -102,7 +103,7 @@ function MomentumBar({ bin, x, axis, width, unit, selected, onSelect }: { bin: M
     const height = count * unit;
     const y = side === "FOR" ? top - height : bottom;
     if (side === "FOR") top -= height; else bottom += height;
-    return [<rect key={`${side}-${danger}`} x={x - width / 2} y={y} width={width} height={height} fill={MOMENTUM_COLORS[side][danger]} opacity={bin.highlighted ? 1 : .2}/>];
+    return [<rect key={`${side}-${danger}`} x={x - width / 2} y={y} width={width} height={height} fill={MOMENTUM_COLORS[side][danger]} opacity={momentumBinOpacity(bin)}/>];
   }));
   return <g role="button" tabIndex={0} aria-label={`P${bin.period} minuto ${bin.minute}: ${momentumBinTotal(bin, "FOR")} remates CDA, ${momentumBinTotal(bin, "AGAINST")} amenazas rival`} onMouseEnter={onSelect} onFocus={onSelect} onClick={onSelect} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(); }} className="cursor-pointer"><rect x={x - Math.max(10, width) / 2} y="20" width={Math.max(10, width)} height="290" fill="transparent"/>{pieces}{selected && <rect x={x - width / 2 - 3} y={top - 3} width={width + 6} height={bottom - top + 6} fill="none" stroke="#f8fafc" strokeWidth="2" rx="2"/>}</g>;
 }
@@ -138,7 +139,7 @@ async function shareMomentumImage(momentum: MatchMomentum, filters: MomentumFilt
   context.strokeStyle = "#64748b"; context.lineWidth = 2; context.beginPath(); context.moveTo(left, axis); context.lineTo(right, axis); context.stroke();
   for (const end of momentum.periodEnds.slice(0, -1).filter((value) => value > momentum.displayStart && value < momentum.displayStart + momentum.displayDuration)) { context.setLineDash([6, 6]); context.beginPath(); context.moveTo(x(end), 170); context.lineTo(x(end), 570); context.stroke(); context.setLineDash([]); }
   const barWidth = Math.max(5, Math.min(18, plot / Math.max(1, momentum.displayDuration + 1) - 2));
-  for (const bin of momentum.bins) { let top = axis; let bottom = axis; for (const side of ["FOR", "AGAINST"] as const) for (const danger of DANGERS) { const count = bin[side][danger]; if (!count) continue; const h = count * unit; context.globalAlpha = bin.highlighted ? 1 : .2; context.fillStyle = MOMENTUM_COLORS[side][danger]; if (side === "FOR") { top -= h; context.fillRect(x(bin.globalMinute) - barWidth / 2, top, barWidth, h); } else { context.fillRect(x(bin.globalMinute) - barWidth / 2, bottom, barWidth, h); bottom += h; } } }
+  for (const bin of momentum.bins) { let top = axis; let bottom = axis; for (const side of ["FOR", "AGAINST"] as const) for (const danger of DANGERS) { const count = bin[side][danger]; if (!count) continue; const h = count * unit; context.globalAlpha = momentumBinOpacity(bin); context.fillStyle = MOMENTUM_COLORS[side][danger]; if (side === "FOR") { top -= h; context.fillRect(x(bin.globalMinute) - barWidth / 2, top, barWidth, h); } else { context.fillRect(x(bin.globalMinute) - barWidth / 2, bottom, barWidth, h); bottom += h; } } }
   context.globalAlpha = 1; context.fillStyle = "#86efac"; context.font = "700 16px system-ui"; context.fillText("REMATES CDA ↑", 54, 166); context.fillStyle = "#fda4af"; context.fillText("AMENAZAS RIVAL ↓", 54, 568);
   context.font = "12px system-ui"; context.fillStyle = "#94a3b8"; for (let minute = 0; minute <= momentum.displayDuration; minute += 5) { context.textAlign = "center"; context.fillText(`${minute}'`, x(momentum.displayStart + minute), 588); } context.textAlign = "left";
   let legendX = 54; context.font = "12px system-ui"; for (const side of ["FOR", "AGAINST"] as const) for (const danger of DANGERS) { context.fillStyle = MOMENTUM_COLORS[side][danger]; context.fillRect(legendX, 610, 12, 12); context.fillStyle = "#cbd5e1"; context.fillText(`${side === "FOR" ? "CDA" : "Rival"} ${DANGER_LABEL[danger]}`, legendX + 18, 621); legendX += danger === "HIGH" ? 158 : 130; }

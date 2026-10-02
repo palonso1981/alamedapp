@@ -1,7 +1,7 @@
 import { MatchEvent, MatchSession, ThreatPhase, ThreatRecordedEvent } from "../types";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
 import { deriveThreatOriginZone } from "./dashboardAnalysis";
-import { effectiveThreatPhase, REGULATION_MATCH_CLOCK, replayMatch } from "./matchEngine";
+import { effectiveThreatPhase, REGULATION_MATCH_CLOCK, replayMatch, sortEvents } from "./matchEngine";
 
 export type MomentumDanger = "NORMAL" | "NEAR" | "HIGH" | "GOAL";
 export type MomentumDangerFilter = "ALL" | "NEAR" | "HIGH" | "GOAL";
@@ -23,6 +23,8 @@ export interface MomentumAction {
   danger: MomentumDanger;
   phase: ThreatPhase;
   playerId?: string;
+  lineupPlayerIds: string[];
+  highlighted: boolean;
 }
 
 export interface MomentumBin {
@@ -163,8 +165,12 @@ export function deriveSharedPlayerIntervals(
   return result;
 }
 
-function overlapsMinute(intervals: readonly MomentumInterval[], minute: number): boolean {
-  return intervals.some((interval) => interval.start < minute + 1 && interval.end > minute);
+function eventFitsRecordedPeriod(
+  event: Pick<MatchEvent, "period" | "minute">,
+  durations: readonly number[],
+): boolean {
+  const duration = durations[event.period - 1];
+  return duration !== undefined && event.minute >= 0 && event.minute <= duration;
 }
 
 export function buildMatchMomentum(
@@ -175,10 +181,19 @@ export function buildMatchMomentum(
   const durations = periodDurations(session);
   const offsets = periodOffsets(durations);
   const sharedIntervals = deriveSharedPlayerIntervals(session, filters.playerIds);
-  const allActions = session.events.flatMap((event): MomentumAction[] => {
+  const replay = replayMatch(session.players, session.events, {
+    currentClock: { period: session.period, minute: session.minute },
+  });
+  const lineupByEventId = new Map(
+    replay.timeline.map((entry) => [entry.event.id, entry.lineupPlayerIds]),
+  );
+  const allActions = sortEvents(session.events).flatMap((event): MomentumAction[] => {
     if (event.deletedAt !== null || event.type !== "threat_recorded") return [];
     const phase = effectiveThreatPhase(session.events, event);
     const danger = classifyMomentumDanger(event);
+    const lineupPlayerIds = eventFitsRecordedPeriod(event, durations)
+      ? lineupByEventId.get(event.id) ?? []
+      : [];
     return [{
       eventId: event.id,
       period: event.period,
@@ -188,6 +203,9 @@ export function buildMatchMomentum(
       danger,
       phase,
       playerId: event.playerId,
+      lineupPlayerIds: [...lineupPlayerIds],
+      highlighted: filters.playerIds.length === 0
+        || filters.playerIds.every((id) => lineupPlayerIds.includes(id)),
     }];
   });
   const scaleByMinute = new Map<string, { FOR: number; AGAINST: number }>();
@@ -215,14 +233,14 @@ export function buildMatchMomentum(
       AGAINST: emptyDangerCounts(),
       eventIds: [],
       phases: [],
-      highlighted: filters.playerIds.length === 0 || overlapsMinute(sharedIntervals, action.globalMinute),
+      highlighted: filters.playerIds.length === 0,
     };
     bin[action.side][action.danger] += 1;
     bin.eventIds.push(action.eventId);
     if (!bin.phases.includes(action.phase)) bin.phases.push(action.phase);
+    if (action.highlighted) bin.highlighted = true;
     binsByKey.set(key, bin);
   }
-  const replay = replayMatch(session.players, session.events);
   const displayPeriod = filters.period === "ALL" ? null : filters.period;
   const displayStart = displayPeriod === null ? 0 : offsets[displayPeriod - 1] ?? 0;
   const displayDuration = displayPeriod === null ? durations.reduce((sum, value) => sum + value, 0) : durations[displayPeriod - 1] ?? 0;
@@ -246,6 +264,10 @@ export function buildMatchMomentum(
 
 export function momentumBinTotal(bin: MomentumBin, side: "FOR" | "AGAINST"): number {
   return DANGERS.reduce((sum, danger) => sum + bin[side][danger], 0);
+}
+
+export function momentumBinOpacity(bin: Pick<MomentumBin, "highlighted">): number {
+  return bin.highlighted ? 1 : .2;
 }
 
 export function momentumExportHeading(momentum: MatchMomentum, filters: MomentumFilters): string {
