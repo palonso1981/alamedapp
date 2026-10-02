@@ -16,6 +16,7 @@ import {
   momentumExportHeading,
 } from "../../lib/matchMomentum";
 import { ThreatPhase } from "../../types";
+import { CompactMultiSelect } from "../video/CompactMultiSelect";
 
 const PHASES: Array<[ThreatPhase, string]> = [
   ["POSITIONAL", "Posicional"], ["TRANSITION", "Transición"],
@@ -51,7 +52,6 @@ export function MatchMomentumPanel({ records, matches, selectedMatchIds }: { rec
   const detail = momentum?.bins.find((bin) => bin.key === selectedBin) ?? null;
   if (!record || !momentum) return <section className="rounded-3xl border border-dashed border-slate-700 p-6 text-center text-slate-500"><b>MOMENTUM</b><p className="mt-1 text-xs">Selecciona un partido disponible para analizar su cronología sin mezclar partidos.</p></section>;
   const players = record.session.players.filter((player) => record.session.events.some((event) => event.type === "lineup_initialized" && event.squadPlayerIds.includes(player.id)));
-  const updatePlayers = (playerId: string) => setFilters((current) => ({ ...current, playerIds: current.playerIds.includes(playerId) ? current.playerIds.filter((id) => id !== playerId) : [...current.playerIds, playerId] }));
   const exportImage = async () => {
     setExporting(true);
     try { await shareMomentumImage(momentum, filters); } finally { setExporting(false); }
@@ -62,13 +62,13 @@ export function MatchMomentumPanel({ records, matches, selectedMatchIds }: { rec
       <label className="text-[9px] font-black text-slate-400">PARTIDO<select aria-label="Partido de Momentum" value={matchId} onChange={(event) => setMatchId(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl bg-slate-800 px-3 text-xs text-white">{matches.map((match) => <option key={match.matchId} value={match.matchId}>{match.date} · {match.opponent}</option>)}</select></label>
       <CompactButtons label="PERIODO" values={[["ALL", "TODO"], [1, "P1"], [2, "P2"]] as const} selected={filters.period} onSelect={(period) => setFilters((current) => ({ ...current, period: period as MomentumPeriodFilter }))}/>
       <CompactButtons label="PELIGROSIDAD" values={[["ALL", "TODAS"], ["NEAR", "CERCANAS"], ["HIGH", "CERC A PUERTA"], ["GOAL", "GOL"]] as const} selected={filters.danger} onSelect={(danger) => setFilters((current) => ({ ...current, danger: danger as MomentumDangerFilter }))}/>
-      <details className="relative"><summary className="flex min-h-11 cursor-pointer list-none items-center justify-between rounded-xl bg-slate-800 px-3 text-[10px] font-black"><span>JUGADORES</span><span className="text-emerald-300">{filters.playerIds.length || "TODOS"}</span></summary><div className="absolute right-0 z-20 mt-1 max-h-64 w-full min-w-56 overflow-y-auto rounded-xl border border-slate-700 bg-slate-950 p-2 shadow-2xl">{players.map((player) => <label key={player.id} className="flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs hover:bg-slate-800"><input type="checkbox" checked={filters.playerIds.includes(player.id)} onChange={() => updatePlayers(player.id)}/><span>#{player.number} · {player.name}</span></label>)}</div></details>
+      <CompactMultiSelect label="JUGADORES" allLabel="TODOS LOS JUGADORES" values={filters.playerIds} options={players.map((player) => ({ value: player.id, label: `#${player.number} · ${player.name}` }))} onChange={(playerIds) => setFilters((current) => ({ ...current, playerIds }))}/>
     </div>
     <div className="mt-3 flex flex-wrap gap-1">{PHASES.map(([phase, label]) => <button type="button" key={phase} onClick={() => setFilters((current) => ({ ...current, phases: current.phases.includes(phase) ? current.phases.filter((item) => item !== phase) : [...current.phases, phase] }))} className={`min-h-9 rounded-lg border px-2 text-[9px] font-black ${filters.phases.includes(phase) ? "border-emerald-300 bg-emerald-300 text-slate-950" : "border-slate-700 text-slate-400"}`}>{label.toUpperCase()}</button>)}</div>
     {filters.playerIds.length > 0 && <p className="mt-3 rounded-xl bg-slate-950/70 px-3 py-2 text-xs text-emerald-200"><b>{momentum.selectedPlayerNames.join(" + ")}</b> · juntos {formatDuration(momentum.sharedMinutes)}. El resto del partido permanece visible y atenuado.</p>}
     <MomentumChart momentum={momentum} selected={selectedBin} onSelect={setSelectedBin}/>
     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[9px] text-slate-400"><b className="text-white">PELIGROSIDAD</b>{(["FOR", "AGAINST"] as const).flatMap((side) => DANGERS.map((danger) => <span key={`${side}-${danger}`} className="inline-flex items-center gap-1"><i className="h-3 w-3 rounded-sm" style={{ backgroundColor: MOMENTUM_COLORS[side][danger] }}/>{side === "FOR" ? "CDA" : "Rival"} · {DANGER_LABEL[danger]}</span>))}<span className="basis-full">Cercana: acción originada en zona próxima a portería. · Cerc a puerta: acción cercana que además va a portería. · Gol: finalización en gol. · Más intensidad de color = mayor peligrosidad.</span></div>
-    {detail && <MomentumDetail bin={detail}/>} 
+    {detail && <MomentumDetail bin={detail}/>}
   </section>;
 }
 

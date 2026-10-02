@@ -151,6 +151,8 @@ test("la exportación incorpora partido y filtros activos", () => {
 test("el componente conserva selector interno y SVG responsive sin overflow global", () => {
   const source = readFileSync("src/components/dashboard/MatchMomentumPanel.tsx", "utf8");
   assert.match(source, /aria-label="Partido de Momentum"/);
+  assert.match(source, /<CompactMultiSelect label="JUGADORES"/);
+  assert.doesNotMatch(source, /<details className="relative"><summary[^>]*>.*JUGADORES/);
   assert.match(source, /viewBox=/);
   assert.match(source, /className="h-auto w-full/);
   assert.match(source, /COMPARTIR \/ EXPORTAR IMAGEN/);
