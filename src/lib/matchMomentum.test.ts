@@ -9,6 +9,7 @@ import {
   EMPTY_MOMENTUM_FILTERS,
   MOMENTUM_COLOR_INTENSITY,
   momentumDangerMatches,
+  momentumBinOpacity,
   momentumBinTotal,
   momentumExportHeading,
 } from "./matchMomentum";
@@ -27,10 +28,10 @@ const players: Player[] = Array.from({ length: 6 }, (_, index) => ({
   goalkeeperCapable: index === 0,
 }));
 
-function threat(id: string, period: number, minute: number, order: number, side: "FOR" | "AGAINST", outcome: "GOL" | "PARADA" | "FUERA", x: number, phase: ThreatPhase = "POSITIONAL"): MatchEvent {
+function threat(id: string, period: number, minute: number, order: number, side: "FOR" | "AGAINST", outcome: "GOL" | "PARADA" | "FUERA", x: number, phase: ThreatPhase = "POSITIONAL", playerId = "p2"): MatchEvent {
   return createLiveThreatEvent({
     id, matchId: "momentum", position: { period, minute, order }, side,
-    playerId: side === "FOR" ? "p2" : undefined,
+    playerId: side === "FOR" ? playerId : undefined,
     origin: { x, y: .5 }, outcome, phase: phase === "UNSPECIFIED" ? "POSITIONAL" : phase,
     defensive: side === "AGAINST" ? {
       version: 2, goalTarget: { x: outcome === "FUERA" ? .1 : .5, y: outcome === "FUERA" ? .1 : .5, geometryVersion: 3 },
@@ -40,6 +41,26 @@ function threat(id: string, period: number, minute: number, order: number, side:
     } : undefined,
     now: minute * 100 + order,
   });
+}
+
+function orderedPresenceRecord(): DashboardMatchRecord {
+  const events: MatchEvent[] = [
+    createLineupInitializedEvent({ id: "lineup-p1-order", matchId: "momentum", position: { period: 1, minute: 0, order: 1 }, squadPlayerIds: players.map((player) => player.id), onCourtPlayerIds: ["p1", "p2", "p3", "p4", "p5"], goalkeeperPlayerId: "p1", now: 1 }),
+    threat("p1-start", 1, 0, 2, "FOR", "FUERA", .5),
+    threat("p1-final-before", 1, 20, 1, "FOR", "GOL", .9),
+    createSubstitutionEvent({ id: "p1-final-change", matchId: "momentum", position: { period: 1, minute: 20, order: 2 }, playerOutId: "p2", playerInId: "p6", now: 2_002 }),
+    threat("p1-final-after", 1, 20, 3, "FOR", "GOL", .9, "POSITIONAL", "p6"),
+    createLineupInitializedEvent({ id: "lineup-p2-order", matchId: "momentum", position: { period: 2, minute: 0, order: 1 }, squadPlayerIds: players.map((player) => player.id), onCourtPlayerIds: ["p1", "p3", "p4", "p5", "p6"], goalkeeperPlayerId: "p1", now: 2_101 }),
+    threat("p2-start", 2, 0, 2, "FOR", "FUERA", .5, "POSITIONAL", "p6"),
+    threat("p2-final-before", 2, 20, 1, "FOR", "GOL", .9, "POSITIONAL", "p6"),
+    createSubstitutionEvent({ id: "p2-final-change-1", matchId: "momentum", position: { period: 2, minute: 20, order: 2 }, playerOutId: "p6", playerInId: "p2", now: 4_002 }),
+    threat("p2-final-middle", 2, 20, 3, "FOR", "GOL", .9, "POSITIONAL", "p2"),
+    createSubstitutionEvent({ id: "p2-final-change-2", matchId: "momentum", position: { period: 2, minute: 20, order: 4 }, playerOutId: "p3", playerInId: "p6", now: 4_004 }),
+    threat("p2-final-after", 2, 20, 5, "FOR", "GOL", .9, "POSITIONAL", "p6"),
+    threat("after-finish", 2, 21, 1, "FOR", "FUERA", .5, "POSITIONAL", "p2"),
+  ];
+  const session: MatchSession = { matchId: "momentum", players, staff: [], period: 2, minute: 20, periodMinutes: { 1: 20, 2: 20 }, closedPeriods: [1, 2], matchFinished: true, events, past: [], future: [], lastError: null, persistenceStatus: "saved", lastSavedAt: 1 };
+  return { catalog: { matchId: "momentum", clubId: "club", teamId: "team", seasonId: "season", opponent: "Cumbres", venue: "HOME", date: "2026-09-27", status: "FINISHED", updatedAt: 1 }, session };
 }
 
 function record(): DashboardMatchRecord {
@@ -141,6 +162,53 @@ test("la coincidencia solo atenúa fuera del intervalo y no elimina el partido",
   assert.equal(momentum.bins.find((item) => item.key === "1:2")?.highlighted, true);
   assert.equal(momentum.bins.find((item) => item.key === "2:3")?.highlighted, false);
   assert.equal(momentum.sharedMinutes, 8);
+});
+
+test("Cumbres: la presencia de cada acción usa el order canónico incluso en el último minuto", () => {
+  const data = orderedPresenceRecord();
+  const p2 = buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, playerIds: ["p2"] });
+  const p6 = buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, playerIds: ["p6"] });
+  const p2State = Object.fromEntries(p2.actions.map((action) => [action.eventId, action.highlighted]));
+  const p6State = Object.fromEntries(p6.actions.map((action) => [action.eventId, action.highlighted]));
+
+  assert.equal(p2State["p1-start"], true);
+  assert.equal(p2State["p1-final-before"], true);
+  assert.equal(p2State["p1-final-after"], false);
+  assert.equal(p6State["p1-final-before"], false);
+  assert.equal(p6State["p1-final-after"], true);
+  assert.equal(p6State["p2-start"], true);
+  assert.equal(p6State["p2-final-before"], true);
+  assert.equal(p6State["p2-final-middle"], false);
+  assert.equal(p6State["p2-final-after"], true);
+  assert.equal(p2State["p2-final-middle"], true);
+  assert.equal(p2State["p2-final-after"], true);
+  assert.equal(p2State["after-finish"], false);
+  assert.equal(p6State["after-finish"], false);
+});
+
+test("varios jugadores exigen intersección real tras varios cambios del mismo minuto", () => {
+  const momentum = buildMatchMomentum(orderedPresenceRecord(), { ...EMPTY_MOMENTUM_FILTERS, playerIds: ["p2", "p6"] });
+  const state = Object.fromEntries(momentum.actions.map((action) => [action.eventId, action.highlighted]));
+
+  assert.equal(state["p1-final-before"], false);
+  assert.equal(state["p1-final-after"], false);
+  assert.equal(state["p2-final-before"], false);
+  assert.equal(state["p2-final-middle"], false);
+  assert.equal(state["p2-final-after"], true);
+  assert.deepEqual(momentum.actions.find((action) => action.eventId === "p2-final-after")?.lineupPlayerIds, ["p1", "p6", "p4", "p5", "p2"]);
+});
+
+test("gráfica y exportación comparten el resaltado derivado por evento", () => {
+  const momentum = buildMatchMomentum(orderedPresenceRecord(), { ...EMPTY_MOMENTUM_FILTERS, playerIds: ["p2", "p6"] });
+  const p1Final = momentum.bins.find((bin) => bin.key === "1:20")!;
+  const p2Final = momentum.bins.find((bin) => bin.key === "2:20")!;
+
+  assert.equal(p1Final.highlighted, false);
+  assert.equal(p2Final.highlighted, true);
+  assert.equal(momentumBinOpacity(p1Final), .2);
+  assert.equal(momentumBinOpacity(p2Final), 1);
+  const source = readFileSync("src/components/dashboard/MatchMomentumPanel.tsx", "utf8");
+  assert.ok((source.match(/momentumBinOpacity\(bin\)/g) ?? []).length >= 2);
 });
 
 test("la exportación incorpora partido y filtros activos", () => {
