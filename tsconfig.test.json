@@ -41,6 +41,8 @@
     "src/lib/dashboardAnalysis.test.ts",
     "src/lib/dashboardV2.ts",
     "src/lib/dashboardV2.test.ts",
+    "src/lib/matchMomentum.ts",
+    "src/lib/matchMomentum.test.ts",
     "src/lib/dashboardCompetitiveContext.ts",
     "src/lib/dashboardMetricDefinitions.ts",
     "src/lib/dashboardTrace.ts",
