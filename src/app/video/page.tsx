@@ -117,6 +117,8 @@ function VideoLibraryContent() {
   const verifiedCount = allItems.filter((item) => item.verified).length;
   const active = items[selected] ?? items[0];
   const itemSignature = items.map((item) => item.key).join("|");
+  const focusKey = searchParams.get("vFocus");
+  const focusIndex = focusKey ? items.findIndex((item) => item.key === focusKey) : -1;
   const move = useCallback((direction: 1 | -1) => {
     const next = nextReelIndex(items, selected, direction);
     if (next >= 0) {
@@ -130,8 +132,6 @@ function VideoLibraryContent() {
 
   useEffect(() => { if (selected >= items.length) setSelected(Math.max(0, items.length - 1)); }, [items.length, selected]);
   useEffect(() => {
-    const focusKey = searchParams.get("vFocus");
-    const focusIndex = focusKey ? items.findIndex((item) => item.key === focusKey) : -1;
     setSelected(focusIndex >= 0 ? focusIndex : 0);
     if (focusKey && focusIndex >= 0) window.setTimeout(() => itemRefs.current[focusKey]?.scrollIntoView({ block: "nearest" }), 0);
     setReel(false);
@@ -139,7 +139,7 @@ function VideoLibraryContent() {
     setReelFinished(false);
     setAutoplayBlocked(false);
     lastCompletedCutRef.current = null;
-  }, [itemSignature, items, searchParams]);
+  }, [focusIndex, focusKey, itemSignature]);
   useEffect(() => {
     const onFullscreenChange = () => setFullscreen(document.fullscreenElement === reelContainerRef.current);
     document.addEventListener("fullscreenchange", onFullscreenChange);
