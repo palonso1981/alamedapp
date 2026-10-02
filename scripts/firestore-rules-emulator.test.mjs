@@ -7,7 +7,7 @@ import {
   assertSucceeds,
   initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc, writeBatch } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, writeBatch } from "firebase/firestore";
 
 const CLUB = "cd-alameda";
 const TEAM = "team-a";
@@ -154,6 +154,33 @@ function staffMembershipDocument(staffId, operationId = `op-${staffId}`) {
   };
 }
 
+function videoCollectionDocument(collectionId, revision = 1) {
+  return {
+    schemaVersion: 1,
+    clubId: CLUB,
+    entityType: "VIDEO_COLLECTION",
+    entityId: collectionId,
+    revision,
+    lastOperationId: `op-${collectionId}-${revision}`,
+    clientUpdatedAt: revision,
+    serverUpdatedAt: revision,
+    active: true,
+    payload: {
+      schemaVersion: 1,
+      collectionId,
+      clubId: CLUB,
+      kind: "COLLECTION",
+      name: "ABP",
+      visibility: "CLUB",
+      items: [],
+      active: true,
+      deletedAt: null,
+      createdAt: 1,
+      updatedAt: revision,
+    },
+  };
+}
+
 async function seedAccess(environment, uid, role, scope) {
   const accessId = `${role.toLowerCase()}-${uid}`;
   const codeHash = `hash-${uid}`;
@@ -248,4 +275,26 @@ test("Rules reales: creación coherente de PLAYER/STAFF y memberships", async ()
   } finally {
     await environment.cleanup();
   }
+});
+
+test("Rules reales: colecciones son legibles con sesión y solo ADMIN/EDITOR escriben", async () => {
+  const environment = await initializeTestEnvironment({ projectId: "alamedapp-rules-test", firestore: { rules: readFileSync("firestore.rules", "utf8") } });
+  try {
+    await seedAccess(environment, "admin-video", "ADMIN");
+    await seedAccess(environment, "editor-video", "EDITOR");
+    await seedAccess(environment, "viewer-video", "VIEWER", { type: "CLUB" });
+    const admin = environment.authenticatedContext("admin-video").firestore();
+    const editor = environment.authenticatedContext("editor-video").firestore();
+    const viewer = environment.authenticatedContext("viewer-video").firestore();
+    const anonymous = environment.unauthenticatedContext().firestore();
+    const reference = doc(admin, "clubs", CLUB, "videoCollections", "collection-1");
+    await assertSucceeds(setDoc(reference, videoCollectionDocument("collection-1")));
+    await assertSucceeds(getDoc(doc(viewer, "clubs", CLUB, "videoCollections", "collection-1")));
+    await assertSucceeds(getDocs(collection(viewer, "clubs", CLUB, "videoCollections")));
+    await assertFails(getDoc(doc(anonymous, "clubs", CLUB, "videoCollections", "collection-1")));
+    await assertFails(setDoc(doc(viewer, "clubs", CLUB, "videoCollections", "viewer-write"), videoCollectionDocument("viewer-write")));
+    await assertSucceeds(setDoc(doc(editor, "clubs", CLUB, "videoCollections", "editor-write"), videoCollectionDocument("editor-write")));
+    await assertSucceeds(setDoc(doc(admin, "clubs", CLUB, "videoCollections", "collection-1"), videoCollectionDocument("collection-1", 2)));
+    await assertFails(deleteDoc(reference));
+  } finally { await environment.cleanup(); }
 });

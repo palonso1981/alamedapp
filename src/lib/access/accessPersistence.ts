@@ -58,7 +58,7 @@ export function pendingLocalOperations(storage: AccessStorage | null = browserAc
   const pending: PendingLocalOperation[] = [];
   for (let index = 0; index < storage.length; index += 1) {
     const key = storage.key(index);
-    if (!key || (!key.startsWith("alamedapp:match:") && !key.startsWith("alamedapp:team:"))) continue;
+    if (!key || (!key.startsWith("alamedapp:match:") && !key.startsWith("alamedapp:team:") && !key.startsWith("alamedapp:video-collections:"))) continue;
     try {
       const parsed = JSON.parse(storage.getItem(key) ?? "null") as {
         sync?: {
@@ -73,15 +73,21 @@ export function pendingLocalOperations(storage: AccessStorage | null = browserAc
           }>;
         };
       } | null;
-      for (const operation of parsed?.sync?.outbox ?? []) {
-        if (typeof operation.id !== "string" || !blocksAccessChange(operation)) continue;
+      const direct = parsed as typeof parsed & { outbox?: Array<{ operationId?: string; status?: string; errorKind?: string; nextAttemptAt?: number; collectionId?: string }> };
+      const operations = (parsed?.sync?.outbox ?? direct?.outbox ?? []) as Array<{
+        id?: string; operationId?: string; status?: string; entityType?: string; entityId?: string;
+        namespace?: string; errorKind?: string; nextAttemptAt?: number; collectionId?: string;
+      }>;
+      for (const operation of operations) {
+        const operationId = operation.id ?? operation.operationId;
+        if (typeof operationId !== "string" || !blocksAccessChange(operation)) continue;
         pending.push({
           storageKey: key,
-          operationId: operation.id,
+          operationId,
           status: operation.status ?? "PENDING",
-          entityType: operation.entityType,
-          entityId: operation.entityId,
-          namespace: operation.namespace,
+          entityType: operation.entityType ?? "VIDEO_COLLECTION",
+          entityId: operation.entityId ?? operation.collectionId,
+          namespace: operation.namespace ?? "CLUBS",
           errorKind: operation.errorKind,
         });
       }

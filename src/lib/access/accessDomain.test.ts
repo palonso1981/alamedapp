@@ -152,8 +152,10 @@ test("cambiar acceso detecta outbox pendiente sin borrarlo ni reasignarlo", () =
   const storage = new MemoryStorage();
   storage.setItem("alamedapp:match:v1:m1", JSON.stringify({ sync: { outbox: [{ id: "op-match", status: "PENDING" }] } }));
   storage.setItem("alamedapp:team:v1:club-a", JSON.stringify({ sync: { outbox: [{ id: "op-team", status: "ERROR" }] } }));
+  storage.setItem("alamedapp:video-collections:v1:club-a", JSON.stringify({ outbox: [{ operationId: "op-collection", collectionId: "collection-1", status: "PENDING" }] }));
   const pending = pendingLocalOperations(storage);
-  assert.deepEqual(pending.map((item) => item.operationId), ["op-match", "op-team"]);
+  assert.deepEqual(pending.map((item) => item.operationId), ["op-match", "op-team", "op-collection"]);
+  assert.equal(pending[2].entityType, "VIDEO_COLLECTION");
   assert.equal(storage.getItem("alamedapp:match:v1:m1")?.includes("op-match"), true);
 });
 
