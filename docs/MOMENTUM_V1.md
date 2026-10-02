@@ -7,10 +7,12 @@ Momentum es una proyección de lectura del partido. No persiste métricas nuevas
 - Solo usa eventos canónicos activos `threat_recorded`.
 - CDA (`FOR`) se representa sobre el eje como remates; rival (`AGAINST`), bajo el eje como amenazas.
 - La altura es siempre el número exacto de acciones agrupadas por minuto deportivo.
-- Cada acción ocupa un único segmento. La prioridad exclusiva es `GOL > ALTO PELIGRO > CERCANA > NORMAL`.
+- Cada acción ocupa un único segmento. La prioridad exclusiva es `GOL > CERC A PUERTA > CERCANA > NORMAL`.
 - `CERCANA` utiliza la misma derivación canónica del Dashboard: zonas de origen `Z1`, `Z2` o `Z3`, con orientación según el lado atacante. El corte actual es el 25 % de la pista más próximo a la portería atacada.
-- `ALTO PELIGRO` es una acción cercana cuyo resultado va a portería (`PARADA`; un `GOL` entra en la categoría prioritaria GOL).
+- `CERC A PUERTA` es una acción cercana cuyo resultado va a portería (`PARADA`; un `GOL` entra en la categoría prioritaria GOL).
 - Coordenadas ausentes o inválidas no se estiman: la acción queda como `NORMAL`.
+
+Los filtros forman una jerarquía progresiva: `TODAS` incluye todo; `CERCANAS` incluye cercana, cerc a puerta y gol; `CERC A PUERTA` incluye cerc a puerta y gol; `GOL` incluye únicamente goles. La escala vertical se deriva siempre del máximo del partido completo, por lo que filtrar nunca agranda artificialmente las barras.
 
 Los colores verde/rojo expresan exclusivamente lado e intensidad dentro de Momentum. No sustituyen la semántica espacial de resultado usada en los mapas de portería.
 
@@ -24,5 +26,6 @@ El reloj deportivo persistido tiene precisión de minuto. Momentum no fabrica se
 
 Momentum analiza exactamente un partido. Si el scope global contiene uno, lo adopta; con cero o varios, mantiene un selector interno que no cambia los filtros globales.
 
-La exportación genera un PNG local con partido, marcador, filtros, selección de jugadores, gráfica y leyenda. Usa compartir nativo cuando admite ficheros y descarga el PNG como fallback. No necesita backend ni publica datos.
+`TODO` distribuye el partido completo; `P1` y `P2` usan como dominio horizontal la duración real de esa parte y ocupan todo el ancho disponible.
 
+La exportación genera un PNG local con partido, marcador, filtros, selección de jugadores, gráfica y leyenda. Usa compartir nativo cuando admite ficheros y descarga el PNG como fallback. No necesita backend ni publica datos.

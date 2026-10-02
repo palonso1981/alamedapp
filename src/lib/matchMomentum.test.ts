@@ -7,6 +7,8 @@ import {
   classifyMomentumDanger,
   deriveSharedPlayerIntervals,
   EMPTY_MOMENTUM_FILTERS,
+  MOMENTUM_COLOR_INTENSITY,
+  momentumDangerMatches,
   momentumBinTotal,
   momentumExportHeading,
 } from "./matchMomentum";
@@ -78,7 +80,46 @@ test("Momentum filtra TODO, P1, P2, fase y peligrosidad", () => {
   assert.ok(buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, period: 1 }).actions.every((item) => item.period === 1));
   assert.deepEqual(buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, period: 2 }).actions.map((item) => item.eventId), ["p2-goal"]);
   assert.deepEqual(buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, phases: ["TRANSITION"] }).actions.map((item) => item.eventId), ["rival-high", "p2-goal"]);
-  assert.deepEqual(buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, danger: "HIGH" }).actions.map((item) => item.eventId), ["high", "rival-high"]);
+  assert.deepEqual(buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, danger: "NEAR" }).actions.map((item) => item.eventId), ["near", "high", "goal", "rival-high", "p2-goal"]);
+  assert.deepEqual(buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, danger: "HIGH" }).actions.map((item) => item.eventId), ["high", "goal", "rival-high", "p2-goal"]);
+  assert.deepEqual(buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, danger: "GOAL" }).actions.map((item) => item.eventId), ["goal", "p2-goal"]);
+});
+
+test("la peligrosidad es una jerarquía progresiva y nunca recupera una categoría inferior", () => {
+  assert.equal(momentumDangerMatches("NORMAL", "NEAR"), false);
+  assert.equal(momentumDangerMatches("NEAR", "NEAR"), true);
+  assert.equal(momentumDangerMatches("HIGH", "NEAR"), true);
+  assert.equal(momentumDangerMatches("GOAL", "NEAR"), true);
+  assert.equal(momentumDangerMatches("NEAR", "HIGH"), false);
+  assert.equal(momentumDangerMatches("GOAL", "HIGH"), true);
+  assert.equal(momentumDangerMatches("HIGH", "GOAL"), false);
+});
+
+test("la escala permanece fija y una barra nunca crece con un filtro más restrictivo", () => {
+  const data = record();
+  const all = buildMatchMomentum(data);
+  const near = buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, danger: "NEAR" });
+  const high = buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, danger: "HIGH" });
+  const goal = buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, danger: "GOAL" });
+  assert.deepEqual([all.scaleMax, near.scaleMax, high.scaleMax, goal.scaleMax], [4, 4, 4, 4]);
+  const count = (momentum: ReturnType<typeof buildMatchMomentum>) => momentum.bins.find((item) => item.key === "1:2") ? momentumBinTotal(momentum.bins.find((item) => item.key === "1:2")!, "FOR") : 0;
+  assert.deepEqual([count(all), count(near), count(high), count(goal)], [4, 3, 2, 1]);
+});
+
+test("la intensidad visual crece inequívocamente de NORMAL a GOL", () => {
+  assert.deepEqual(["NORMAL", "NEAR", "HIGH", "GOAL"].map((danger) => MOMENTUM_COLOR_INTENSITY[danger as keyof typeof MOMENTUM_COLOR_INTENSITY]), [1, 2, 3, 4]);
+});
+
+test("P1 y P2 ocupan el ancho completo con sus duraciones reales", () => {
+  const data = record();
+  data.session.periodMinutes = { 1: 18, 2: 22 };
+  const all = buildMatchMomentum(data);
+  const p1 = buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, period: 1 });
+  const p2 = buildMatchMomentum(data, { ...EMPTY_MOMENTUM_FILTERS, period: 2 });
+  assert.deepEqual([all.displayStart, all.displayDuration], [0, 40]);
+  assert.deepEqual([p1.displayStart, p1.displayDuration], [0, 18]);
+  assert.deepEqual([p2.displayStart, p2.displayDuration], [18, 22]);
+  assert.equal(p2.scaleMax, all.scaleMax);
 });
 
 test("una acción sin coordenadas fiables permanece NORMAL", () => {
@@ -113,4 +154,9 @@ test("el componente conserva selector interno y SVG responsive sin overflow glob
   assert.match(source, /viewBox=/);
   assert.match(source, /className="h-auto w-full/);
   assert.match(source, /COMPARTIR \/ EXPORTAR IMAGEN/);
+  assert.match(source, /data-momentum-detail/);
+  assert.match(source, /CERC A PUERTA/);
+  assert.match(source, /momentum\.scaleMax/);
+  assert.match(source, /momentum\.displayStart/);
+  assert.match(source, /La altura representa cantidades/);
 });

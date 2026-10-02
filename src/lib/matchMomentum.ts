@@ -48,6 +48,9 @@ export interface MatchMomentum {
   date: string;
   score: { for: number; against: number };
   duration: number;
+  displayStart: number;
+  displayDuration: number;
+  scaleMax: number;
   periodEnds: number[];
   actions: MomentumAction[];
   bins: MomentumBin[];
@@ -64,6 +67,18 @@ export const EMPTY_MOMENTUM_FILTERS: MomentumFilters = {
 };
 
 const DANGERS: MomentumDanger[] = ["NORMAL", "NEAR", "HIGH", "GOAL"];
+
+export const MOMENTUM_COLORS: Record<"FOR" | "AGAINST", Record<MomentumDanger, string>> = {
+  FOR: { NORMAL: "#365844", NEAR: "#15803d", HIGH: "#22c55e", GOAL: "#a3e635" },
+  AGAINST: { NORMAL: "#5f3940", NEAR: "#be123c", HIGH: "#f43f5e", GOAL: "#ff1744" },
+};
+
+export const MOMENTUM_COLOR_INTENSITY: Record<MomentumDanger, number> = {
+  NORMAL: 1,
+  NEAR: 2,
+  HIGH: 3,
+  GOAL: 4,
+};
 
 function emptyDangerCounts(): Record<MomentumDanger, number> {
   return { NORMAL: 0, NEAR: 0, HIGH: 0, GOAL: 0 };
@@ -115,8 +130,9 @@ function eventGlobalMinute(event: Pick<MatchEvent, "period" | "minute">, offsets
   return (offsets[event.period - 1] ?? 0) + event.minute;
 }
 
-function dangerMatches(danger: MomentumDanger, filter: MomentumDangerFilter): boolean {
-  return filter === "ALL" || danger === filter;
+export function momentumDangerMatches(danger: MomentumDanger, filter: MomentumDangerFilter): boolean {
+  if (filter === "ALL") return true;
+  return MOMENTUM_COLOR_INTENSITY[danger] >= MOMENTUM_COLOR_INTENSITY[filter];
 }
 
 export function deriveSharedPlayerIntervals(
@@ -159,13 +175,10 @@ export function buildMatchMomentum(
   const durations = periodDurations(session);
   const offsets = periodOffsets(durations);
   const sharedIntervals = deriveSharedPlayerIntervals(session, filters.playerIds);
-  const actions = session.events.flatMap((event): MomentumAction[] => {
+  const allActions = session.events.flatMap((event): MomentumAction[] => {
     if (event.deletedAt !== null || event.type !== "threat_recorded") return [];
-    if (filters.period !== "ALL" && event.period !== filters.period) return [];
     const phase = effectiveThreatPhase(session.events, event);
-    if (filters.phases.length > 0 && !filters.phases.includes(phase)) return [];
     const danger = classifyMomentumDanger(event);
-    if (!dangerMatches(danger, filters.danger)) return [];
     return [{
       eventId: event.id,
       period: event.period,
@@ -176,6 +189,19 @@ export function buildMatchMomentum(
       phase,
       playerId: event.playerId,
     }];
+  });
+  const scaleByMinute = new Map<string, { FOR: number; AGAINST: number }>();
+  for (const action of allActions) {
+    const key = `${action.period}:${action.minute}`;
+    const counts = scaleByMinute.get(key) ?? { FOR: 0, AGAINST: 0 };
+    counts[action.side] += 1;
+    scaleByMinute.set(key, counts);
+  }
+  const scaleMax = Math.max(1, ...Array.from(scaleByMinute.values()).flatMap((counts) => [counts.FOR, counts.AGAINST]));
+  const actions = allActions.filter((action) => {
+    if (filters.period !== "ALL" && action.period !== filters.period) return false;
+    if (filters.phases.length > 0 && !filters.phases.includes(action.phase)) return false;
+    return momentumDangerMatches(action.danger, filters.danger);
   });
   const binsByKey = new Map<string, MomentumBin>();
   for (const action of actions) {
@@ -197,12 +223,18 @@ export function buildMatchMomentum(
     binsByKey.set(key, bin);
   }
   const replay = replayMatch(session.players, session.events);
+  const displayPeriod = filters.period === "ALL" ? null : filters.period;
+  const displayStart = displayPeriod === null ? 0 : offsets[displayPeriod - 1] ?? 0;
+  const displayDuration = displayPeriod === null ? durations.reduce((sum, value) => sum + value, 0) : durations[displayPeriod - 1] ?? 0;
   return {
     matchId: session.matchId,
     opponent: record.catalog.opponent,
     date: record.catalog.date,
     score: replay.score,
     duration: durations.reduce((sum, value) => sum + value, 0),
+    displayStart,
+    displayDuration,
+    scaleMax,
     periodEnds: durations.reduce<number[]>((result, duration) => [...result, (result.at(-1) ?? 0) + duration], []),
     actions,
     bins: Array.from(binsByKey.values()).sort((a, b) => a.globalMinute - b.globalMinute || a.key.localeCompare(b.key)),
@@ -219,7 +251,7 @@ export function momentumBinTotal(bin: MomentumBin, side: "FOR" | "AGAINST"): num
 export function momentumExportHeading(momentum: MatchMomentum, filters: MomentumFilters): string {
   const period = filters.period === "ALL" ? "TODO" : `P${filters.period}`;
   const phase = filters.phases.length === 1 ? filters.phases[0] : filters.phases.length > 1 ? `${filters.phases.length} fases` : "Todas las fases";
-  const danger = filters.danger === "ALL" ? "Todas las peligrosidades" : filters.danger === "NEAR" ? "Cercanas" : filters.danger === "HIGH" ? "Alto peligro" : "Goles";
+  const danger = filters.danger === "ALL" ? "Todas las peligrosidades" : filters.danger === "NEAR" ? "Cercanas" : filters.danger === "HIGH" ? "Cerc a puerta" : "Gol";
   const players = momentum.selectedPlayerNames.length ? ` · ${momentum.selectedPlayerNames.join(" + ")}` : "";
   return `${momentum.opponent} · ${period} · ${phase} · ${danger}${players}`;
 }
