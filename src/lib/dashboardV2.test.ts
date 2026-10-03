@@ -1030,12 +1030,16 @@ test("BLOQUEADO legacy suma remate pero no remate a puerta y el vacío es honest
 
 test("embudo ABP conserva selector táctil, escala común y apilado responsive", () => {
   const source = readFileSync("src/components/dashboard/SetPieceFunnel.tsx", "utf8");
+  const dashboard = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
   assert.match(source, /SET_PIECE_FUNNEL_OPTIONS/);
   assert.match(source, /min-h-11/);
   assert.match(source, /lg:grid-cols-2/);
+  assert.match(source, /data-abp-funnel-bar[^>]+mx-auto/);
+  assert.match(source, /data-abp-total-shots/);
   assert.match(source, /scaleMaximum/);
   assert.match(source, /Sin ABP registradas/);
   assert.doesNotMatch(source, /grid-cols-2 lg:grid-cols-1/);
+  assert.doesNotMatch(dashboard, /SetPieceCard|FALTA ABP · SIN DENOMINADOR/);
 });
 
 test("scope serializa lado y trazabilidad, conserva URLs antiguas y filtra VIDEO por el mismo conjunto", () => {
