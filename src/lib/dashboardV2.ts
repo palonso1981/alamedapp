@@ -400,6 +400,118 @@ export function linkedRestart(events: readonly MatchEvent[], event: ThreatRecord
   return restart;
 }
 
+export type SetPieceFunnelKind = "ALL" | "CORNER" | "FREE_KICK" | "KICK_IN" | "PENALTY" | "DOUBLE_PENALTY";
+
+export const SET_PIECE_FUNNEL_OPTIONS: ReadonlyArray<{ value: SetPieceFunnelKind; label: string }> = [
+  { value: "ALL", label: "TODAS" },
+  { value: "CORNER", label: "CÓRNER" },
+  { value: "FREE_KICK", label: "FALTA / LIBRE" },
+  { value: "KICK_IN", label: "BANDA CERCANA" },
+  { value: "PENALTY", label: "PENALTI" },
+  { value: "DOUBLE_PENALTY", label: "DOBLE PENALTI" },
+];
+
+export interface SetPieceFunnelSide {
+  opportunities: number;
+  withShot: number;
+  withOnTarget: number;
+  withGoal: number;
+  totalShots: number;
+}
+
+export interface SetPieceFunnelResult {
+  kind: SetPieceFunnelKind;
+  FOR: SetPieceFunnelSide;
+  AGAINST: SetPieceFunnelSide;
+  scaleMaximum: number;
+}
+
+function funnelKindForPhase(phase: ThreatPhase): Exclude<SetPieceFunnelKind, "ALL"> | null {
+  if (phase === "SET_PIECE_CORNER") return "CORNER";
+  if (phase === "SET_PIECE_FREE_KICK") return "FREE_KICK";
+  if (phase === "SET_PIECE_KICK_IN") return "KICK_IN";
+  if (phase === "PENALTY") return "PENALTY";
+  if (phase === "DOUBLE_PENALTY") return "DOUBLE_PENALTY";
+  return null;
+}
+
+function acceptsFunnelKind(selected: SetPieceFunnelKind, candidate: SetPieceFunnelKind | null): boolean {
+  return candidate !== null && (selected === "ALL" || selected === candidate);
+}
+
+function summarizeFunnelOpportunities(opportunities: ReadonlyMap<string, readonly ThreatRecordedEvent[]>): SetPieceFunnelSide {
+  const entries = Array.from(opportunities.values());
+  return {
+    opportunities: entries.length,
+    withShot: entries.filter((shots) => shots.length > 0).length,
+    withOnTarget: entries.filter((shots) => shots.some((shot) => shot.outcome === "GOL" || shot.outcome === "PARADA")).length,
+    withGoal: entries.filter((shots) => shots.some((shot) => shot.outcome === "GOL")).length,
+    totalShots: entries.reduce((total, shots) => total + shots.length, 0),
+  };
+}
+
+/**
+ * Embudo causal de ABP. Córners y bandas parten del reinicio explícito, por lo que
+ * también conservan oportunidades sin remate. Falta/penalti/doble penalti parten
+ * de la raíz causal del remate porque el modelo histórico no guarda una entidad
+ * de reinicio independiente para esas acciones. Nunca se enlaza por proximidad.
+ */
+export function buildSetPieceFunnel(
+  records: readonly DashboardMatchRecord[],
+  kind: SetPieceFunnelKind = "ALL",
+): SetPieceFunnelResult {
+  const grouped: Record<ThreatSide, Map<string, ThreatRecordedEvent[]>> = {
+    FOR: new Map(),
+    AGAINST: new Map(),
+  };
+
+  for (const record of records) {
+    const active = record.session.events.filter((event) => event.deletedAt === null);
+    for (const event of active) {
+      if (event.type !== "restart_recorded") continue;
+      const restartKind = event.restart === "CORNER" ? "CORNER" : "KICK_IN";
+      if (!acceptsFunnelKind(kind, restartKind)) continue;
+      grouped[event.side].set(`${record.catalog.matchId}:restart:${event.id}`, []);
+    }
+
+    for (const event of active) {
+      if (event.type !== "threat_recorded") continue;
+      const phase = effectiveThreatPhase([...active], event);
+      const eventKind = funnelKindForPhase(phase);
+      if (!acceptsFunnelKind(kind, eventKind)) continue;
+
+      if (eventKind === "CORNER" || eventKind === "KICK_IN") {
+        const restart = linkedRestart(active, event);
+        if (!restart) continue;
+        const key = `${record.catalog.matchId}:restart:${restart.id}`;
+        const shots = grouped[restart.side].get(key);
+        if (shots) shots.push(event);
+        continue;
+      }
+
+      const root = rootThreat(active, event);
+      const rootKind = funnelKindForPhase(effectiveThreatPhase([...active], root));
+      if (!acceptsFunnelKind(kind, rootKind)) continue;
+      const key = `${record.catalog.matchId}:sequence:${root.sequenceId ?? root.id}`;
+      const shots = grouped[root.side].get(key) ?? [];
+      if (!shots.some((shot) => shot.id === event.id)) shots.push(event);
+      grouped[root.side].set(key, shots);
+    }
+  }
+
+  const FOR = summarizeFunnelOpportunities(grouped.FOR);
+  const AGAINST = summarizeFunnelOpportunities(grouped.AGAINST);
+  return { kind, FOR, AGAINST, scaleMaximum: Math.max(1, FOR.opportunities, AGAINST.opportunities) };
+}
+
+export function setPieceFunnelPercentage(value: number, total: number): number | null {
+  return total > 0 ? value / total * 100 : null;
+}
+
+export function setPieceFunnelWidth(value: number, scaleMaximum: number): number {
+  return scaleMaximum > 0 ? Math.max(0, Math.min(100, value / scaleMaximum * 100)) : 0;
+}
+
 function eventMatches(
   event: MatchEvent,
   record: DashboardMatchRecord,
