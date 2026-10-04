@@ -7,26 +7,30 @@ import {
   SET_PIECE_FUNNEL_OPTIONS,
   SetPieceFunnelKind,
   SetPieceFunnelSide,
+  setPieceFunnelOpportunityLabel,
   setPieceFunnelPercentage,
   setPieceFunnelWidth,
 } from "../../lib/dashboardV2";
 
-const STAGES: ReadonlyArray<{ key: keyof Pick<SetPieceFunnelSide, "opportunities" | "withShot" | "withOnTarget" | "withGoal">; label: string }> = [
-  { key: "opportunities", label: "ABP" },
-  { key: "withShot", label: "GENERAN REMATE" },
+const RESULT_STAGES: ReadonlyArray<{ key: keyof Pick<SetPieceFunnelSide, "withShot" | "withOnTarget" | "withGoal">; label: string }> = [
+  { key: "withShot", label: "REMATES" },
   { key: "withOnTarget", label: "A PUERTA" },
   { key: "withGoal", label: "GOL" },
 ];
 
-function FunnelSide({ title, tone, stats, scaleMaximum }: { title: string; tone: "cyan" | "rose"; stats: SetPieceFunnelSide; scaleMaximum: number }) {
+function FunnelSide({ title, tone, stats, scaleMaximum, kind }: { title: string; tone: "cyan" | "rose"; stats: SetPieceFunnelSide; scaleMaximum: number; kind: SetPieceFunnelKind }) {
   const fill = tone === "cyan" ? "bg-cyan-400" : "bg-rose-400";
   const text = tone === "cyan" ? "text-cyan-200" : "text-rose-200";
+  const stages: ReadonlyArray<{ key: keyof Pick<SetPieceFunnelSide, "opportunities" | "withShot" | "withOnTarget" | "withGoal">; label: string }> = [
+    { key: "opportunities", label: setPieceFunnelOpportunityLabel(kind) },
+    ...RESULT_STAGES,
+  ];
   if (stats.opportunities === 0) return <article className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/60 p-5 text-center"><h3 className={`text-sm font-black ${text}`}>{title}</h3><p className="mt-5 text-sm text-slate-500">Sin ABP registradas</p></article>;
 
   return <article data-abp-funnel-side={title} className="rounded-xl bg-slate-950/70 p-3">
     <h3 className={`text-center text-sm font-black tracking-wide ${text}`}>{title}</h3>
     <div className="mt-3 space-y-2">
-      {STAGES.map(({ key, label }) => {
+      {stages.map(({ key, label }) => {
         const value = stats[key];
         const percentage = setPieceFunnelPercentage(value, stats.opportunities);
         const width = setPieceFunnelWidth(value, scaleMaximum);
@@ -45,7 +49,7 @@ export function SetPieceFunnel({ records }: { records: readonly DashboardMatchRe
   const funnel = useMemo(() => buildSetPieceFunnel(records, kind), [kind, records]);
   return <section data-abp-funnel className="rounded-2xl bg-slate-900/50 p-2 sm:p-3">
     <div className="mb-3 flex gap-2 overflow-x-auto pb-1" aria-label="Tipo de ABP">{SET_PIECE_FUNNEL_OPTIONS.map((option) => <button type="button" key={option.value} aria-pressed={kind === option.value} onClick={() => setKind(option.value)} className={`min-h-11 shrink-0 rounded-xl px-3 text-[10px] font-black ${kind === option.value ? "bg-amber-300 text-slate-950" : "bg-slate-800 text-slate-300"}`}>{option.label}</button>)}</div>
-    <div className="grid gap-3 lg:grid-cols-2"><FunnelSide title="ABP A FAVOR" tone="cyan" stats={funnel.FOR} scaleMaximum={funnel.scaleMaximum}/><FunnelSide title="ABP EN CONTRA" tone="rose" stats={funnel.AGAINST} scaleMaximum={funnel.scaleMaximum}/></div>
+    <div className="grid gap-3 lg:grid-cols-2"><FunnelSide title="A FAVOR" tone="cyan" stats={funnel.FOR} scaleMaximum={funnel.scaleMaximum} kind={kind}/><FunnelSide title="EN CONTRA" tone="rose" stats={funnel.AGAINST} scaleMaximum={funnel.scaleMaximum} kind={kind}/></div>
     <p className="mt-2 text-center text-[9px] leading-relaxed text-slate-500">Escala común entre ambos lados. A puerta incluye GOL y PARADA; FUERA y BLOQUEADO no.</p>
   </section>;
 }

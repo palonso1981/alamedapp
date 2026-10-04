@@ -400,16 +400,19 @@ export function linkedRestart(events: readonly MatchEvent[], event: ThreatRecord
   return restart;
 }
 
-export type SetPieceFunnelKind = "ALL" | "CORNER" | "FREE_KICK" | "KICK_IN" | "PENALTY" | "DOUBLE_PENALTY";
+export type SetPieceFunnelKind = "ALL" | "CORNER" | "KICK_IN";
 
 export const SET_PIECE_FUNNEL_OPTIONS: ReadonlyArray<{ value: SetPieceFunnelKind; label: string }> = [
   { value: "ALL", label: "TODAS" },
   { value: "CORNER", label: "CÓRNER" },
-  { value: "FREE_KICK", label: "FALTA / LIBRE" },
   { value: "KICK_IN", label: "BANDA CERCANA" },
-  { value: "PENALTY", label: "PENALTI" },
-  { value: "DOUBLE_PENALTY", label: "DOBLE PENALTI" },
 ];
+
+export function setPieceFunnelOpportunityLabel(kind: SetPieceFunnelKind): string {
+  if (kind === "CORNER") return "CÓRNERS";
+  if (kind === "KICK_IN") return "BANDAS CERCANAS";
+  return "CÓRNER + BANDA CERCANA";
+}
 
 export interface SetPieceFunnelSide {
   opportunities: number;
@@ -428,10 +431,7 @@ export interface SetPieceFunnelResult {
 
 function funnelKindForPhase(phase: ThreatPhase): Exclude<SetPieceFunnelKind, "ALL"> | null {
   if (phase === "SET_PIECE_CORNER") return "CORNER";
-  if (phase === "SET_PIECE_FREE_KICK") return "FREE_KICK";
   if (phase === "SET_PIECE_KICK_IN") return "KICK_IN";
-  if (phase === "PENALTY") return "PENALTY";
-  if (phase === "DOUBLE_PENALTY") return "DOUBLE_PENALTY";
   return null;
 }
 
@@ -451,10 +451,10 @@ function summarizeFunnelOpportunities(opportunities: ReadonlyMap<string, readonl
 }
 
 /**
- * Embudo causal de ABP. Córners y bandas parten del reinicio explícito, por lo que
- * también conservan oportunidades sin remate. Falta/penalti/doble penalti parten
- * de la raíz causal del remate porque el modelo histórico no guarda una entidad
- * de reinicio independiente para esas acciones. Nunca se enlaza por proximidad.
+ * Embudo causal de córners y bandas cercanas. Ambas parten del reinicio explícito,
+ * por lo que también conservan oportunidades sin remate. Faltas y penaltis quedan
+ * deliberadamente fuera porque el histórico no conserva ubicación suficientemente
+ * fiable para este análisis. Nunca se enlaza por proximidad.
  */
 export function buildSetPieceFunnel(
   records: readonly DashboardMatchRecord[],
@@ -480,22 +480,11 @@ export function buildSetPieceFunnel(
       const eventKind = funnelKindForPhase(phase);
       if (!acceptsFunnelKind(kind, eventKind)) continue;
 
-      if (eventKind === "CORNER" || eventKind === "KICK_IN") {
-        const restart = linkedRestart(active, event);
-        if (!restart) continue;
-        const key = `${record.catalog.matchId}:restart:${restart.id}`;
-        const shots = grouped[restart.side].get(key);
-        if (shots) shots.push(event);
-        continue;
-      }
-
-      const root = rootThreat(active, event);
-      const rootKind = funnelKindForPhase(effectiveThreatPhase([...active], root));
-      if (!acceptsFunnelKind(kind, rootKind)) continue;
-      const key = `${record.catalog.matchId}:sequence:${root.sequenceId ?? root.id}`;
-      const shots = grouped[root.side].get(key) ?? [];
-      if (!shots.some((shot) => shot.id === event.id)) shots.push(event);
-      grouped[root.side].set(key, shots);
+      const restart = linkedRestart(active, event);
+      if (!restart) continue;
+      const key = `${record.catalog.matchId}:restart:${restart.id}`;
+      const shots = grouped[restart.side].get(key);
+      if (shots) shots.push(event);
     }
   }
 

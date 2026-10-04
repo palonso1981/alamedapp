@@ -98,10 +98,12 @@ import {
   phaseScaleMaximum,
   playerMetricValue,
   referenceScopeForPreset,
+  SET_PIECE_FUNNEL_OPTIONS,
   scopeFromSearchParams,
   squadAverage,
   stableSortByMetric,
   setPiecePerformance,
+  setPieceFunnelOpportunityLabel,
   setPieceFunnelPercentage,
   setPieceFunnelWidth,
   teamMetricValue,
@@ -1010,21 +1012,23 @@ test("embudo ABP filtra taxonomía canónica y agrega varios partidos sin mezcla
   const records = [makeRecord("abp-one", "one"), makeRecord("abp-two", "two")];
   assert.equal(buildSetPieceFunnel(records, "CORNER").FOR.opportunities, 2);
   assert.equal(buildSetPieceFunnel(records, "KICK_IN").FOR.opportunities, 2);
-  assert.equal(buildSetPieceFunnel(records, "FREE_KICK").FOR.opportunities, 2);
-  assert.equal(buildSetPieceFunnel(records, "PENALTY").FOR.opportunities, 2);
-  assert.equal(buildSetPieceFunnel(records, "DOUBLE_PENALTY").FOR.opportunities, 2);
   const all = buildSetPieceFunnel(records, "ALL");
-  assert.deepEqual(all.FOR, { opportunities: 10, withShot: 10, withOnTarget: 8, withGoal: 4, totalShots: 10 });
+  assert.deepEqual(all.FOR, { opportunities: 4, withShot: 4, withOnTarget: 2, withGoal: 0, totalShots: 4 });
   assert.equal(all.AGAINST.opportunities, 0);
+  assert.deepEqual(SET_PIECE_FUNNEL_OPTIONS.map((option) => option.value), ["ALL", "CORNER", "KICK_IN"]);
+  assert.equal(setPieceFunnelOpportunityLabel("ALL"), "CÓRNER + BANDA CERCANA");
+  assert.equal(setPieceFunnelOpportunityLabel("CORNER"), "CÓRNERS");
+  assert.equal(setPieceFunnelOpportunityLabel("KICK_IN"), "BANDAS CERCANAS");
 });
 
 test("BLOQUEADO legacy suma remate pero no remate a puerta y el vacío es honesto", () => {
   const source = buildDashboardFixture()[0];
   const matchId = "abp-blocked";
-  const captured = createLiveThreatEvent({ id: "blocked-source", matchId, position: { period: 1, minute: 6, order: 1 }, side: "FOR", playerId: "fx-p-4", origin: { x: .8, y: .5 }, outcome: "FUERA", phase: "SET_PIECE_FREE_KICK", now: 1 });
+  const restart = createRestartEvent({ id: "blocked-restart", matchId, position: { period: 1, minute: 6, order: 1 }, side: "FOR", restart: "CORNER", spatialSide: "TOP", now: 1 });
+  const captured = createLiveThreatEvent({ id: "blocked-source", matchId, position: { period: 1, minute: 6, order: 2 }, side: "FOR", playerId: "fx-p-4", origin: { x: .8, y: .5 }, outcome: "FUERA", phase: "SET_PIECE_CORNER", restartEventId: restart.id, now: 2 });
   const blocked: MatchEvent = { ...captured, source: "legacy_import", outcome: "BLOQUEADO" };
-  const record: DashboardMatchRecord = { catalog: { ...source.catalog, matchId }, session: { ...source.session, matchId, events: [blocked] } };
-  assert.deepEqual(buildSetPieceFunnel([record], "FREE_KICK").FOR, { opportunities: 1, withShot: 1, withOnTarget: 0, withGoal: 0, totalShots: 1 });
+  const record: DashboardMatchRecord = { catalog: { ...source.catalog, matchId }, session: { ...source.session, matchId, events: [restart, blocked] } };
+  assert.deepEqual(buildSetPieceFunnel([record], "CORNER").FOR, { opportunities: 1, withShot: 1, withOnTarget: 0, withGoal: 0, totalShots: 1 });
   assert.deepEqual(buildSetPieceFunnel([], "ALL").FOR, { opportunities: 0, withShot: 0, withOnTarget: 0, withGoal: 0, totalShots: 0 });
 });
 
@@ -1037,6 +1041,11 @@ test("embudo ABP conserva selector táctil, escala común y apilado responsive",
   assert.match(source, /data-abp-funnel-bar[^>]+mx-auto/);
   assert.match(source, /data-abp-total-shots/);
   assert.match(source, /scaleMaximum/);
+  assert.match(source, /setPieceFunnelOpportunityLabel/);
+  assert.match(source, /title="A FAVOR"/);
+  assert.match(source, /title="EN CONTRA"/);
+  assert.match(source, /label: "REMATES"/);
+  assert.doesNotMatch(source, /FALTA \/ LIBRE|PENALTI|DOBLE PENALTI|GENERAN REMATE/);
   assert.match(source, /Sin ABP registradas/);
   assert.doesNotMatch(source, /grid-cols-2 lg:grid-cols-1/);
   assert.doesNotMatch(dashboard, /SetPieceCard|FALTA ABP · SIN DENOMINADOR/);
