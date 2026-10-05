@@ -21,7 +21,7 @@ import { useMatchStore } from "../../store/useMatchStore";
 import { useTeamStore } from "../../store/useTeamStore";
 import { MatchVideoAnalysisClip, ThreatOutcome } from "../../types";
 import { useVideoCollections } from "../../hooks/useVideoCollections";
-import { appendCollectionItems, collectionShareHref, createVideoCollection, listedVideoCollections, playableCollectionItems, removeCollectionItem, reorderCollectionItem, VideoCollection, VideoCollectionVisibility } from "../../lib/videoCollections";
+import { appendCollectionItems, collectionShareHref, createVideoCollection, listedVideoCollections, playableCollectionItems, removeCollectionItem, reorderCollectionItem, selectedVideoCollectionItems, toggleVideoCollectionSelection, VideoCollection, VideoCollectionVisibility } from "../../lib/videoCollections";
 
 const EVENT_FILTERS: Array<[VideoLibraryEventKind, string]> = [
   ["SHOTS", "REMATES"],
@@ -96,6 +96,10 @@ function VideoLibraryContent() {
   const [collectionDescription, setCollectionDescription] = useState("");
   const [collectionVisibility, setCollectionVisibility] = useState<VideoCollectionVisibility>("CLUB");
   const [collectionMessage, setCollectionMessage] = useState("");
+  const [collectionDraftItems, setCollectionDraftItems] = useState<VideoLibraryItem[] | null>(null);
+  const [lastCreatedCollectionId, setLastCreatedCollectionId] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const collectionId = searchParams.get("collection");
   const collectionStore = useVideoCollections(currentClubId, !fixture);
 
@@ -113,6 +117,7 @@ function VideoLibraryContent() {
   const openedCollection = useMemo(() => collectionStore.collections.find((item) => item.collectionId === collectionId && item.active && item.deletedAt === null), [collectionId, collectionStore.collections]);
   const collectionPlayback = useMemo(() => openedCollection ? playableCollectionItems(openedCollection, originItems) : null, [openedCollection, originItems]);
   const items = collectionPlayback?.items ?? filteredItems;
+  const selectedItems = useMemo(() => selectedVideoCollectionItems(items, selectedKeys), [items, selectedKeys]);
   const allItems = useMemo(() => buildVideoLibraryItems(visibleRecords, { ...filters, verifiedOnly: false }, { dashboardScope }), [dashboardScope, filters, visibleRecords]);
   const verifiedCount = allItems.filter((item) => item.verified).length;
   const active = items[selected] ?? items[0];
@@ -131,6 +136,13 @@ function VideoLibraryContent() {
   }, [fullscreen, fullscreenFallback, items, selected]);
 
   useEffect(() => { if (selected >= items.length) setSelected(Math.max(0, items.length - 1)); }, [items.length, selected]);
+  useEffect(() => {
+    const visibleKeys = new Set(items.map((item) => item.key));
+    setSelectedKeys((current) => {
+      const next = current.filter((key) => visibleKeys.has(key));
+      return next.length === current.length ? current : next;
+    });
+  }, [itemSignature, items]);
   useEffect(() => {
     setSelected(focusIndex >= 0 ? focusIndex : 0);
     if (focusKey && focusIndex >= 0) window.setTimeout(() => itemRefs.current[focusKey]?.scrollIntoView({ block: "nearest" }), 0);
@@ -300,18 +312,21 @@ function VideoLibraryContent() {
     : [];
   const cinemaMode = fullscreen || fullscreenFallback;
   const visibleCollections = useMemo(() => listedVideoCollections(collectionStore.collections).filter((item) => canWrite || item.visibility === "CLUB"), [canWrite, collectionStore.collections]);
-  const beginCollection = (kind: "COLLECTION" | "SHARED_REEL") => {
+  const beginCollection = (kind: "COLLECTION" | "SHARED_REEL", sourceItems: readonly VideoLibraryItem[] = items) => {
     setCollectionEditor(null);
-    setCollectionName(kind === "COLLECTION" ? `Selección · ${items.length} jugadas` : `Reel · ${items.length} jugadas`);
+    setCollectionDraftItems([...sourceItems]);
+    setCollectionName(kind === "COLLECTION" ? `Selección · ${sourceItems.length} jugadas` : `Reel · ${sourceItems.length} jugadas`);
     setCollectionDescription("");
     setCollectionVisibility(kind === "COLLECTION" ? "CLUB" : "LINK_ONLY");
     setCollectionMessage(kind);
+    setLastCreatedCollectionId(null);
   };
   const editCollection = (value: VideoCollection) => {
     setCollectionEditor(value);
     setCollectionName(value.name);
     setCollectionDescription(value.description ?? "");
     setCollectionVisibility(value.visibility);
+    setCollectionDraftItems(null);
     setCollectionMessage("EDIT");
   };
   const saveCollection = () => {
@@ -319,10 +334,16 @@ function VideoLibraryContent() {
     const now = Date.now();
     const value = collectionEditor
       ? { ...collectionEditor, name: collectionName.trim(), description: collectionDescription.trim() || undefined, visibility: collectionVisibility, updatedAt: now }
-      : createVideoCollection({ collectionId: crypto.randomUUID(), clubId: currentClubId, kind: collectionMessage === "COLLECTION" ? "COLLECTION" : "SHARED_REEL", name: collectionName, description: collectionDescription, visibility: collectionVisibility, items, now });
+      : createVideoCollection({ collectionId: crypto.randomUUID(), clubId: currentClubId, kind: collectionMessage === "COLLECTION" ? "COLLECTION" : "SHARED_REEL", name: collectionName, description: collectionDescription, visibility: collectionVisibility, items: collectionDraftItems ?? items, now });
     collectionStore.upsert(value);
     setCollectionMessage("");
     setCollectionEditor(null);
+    setCollectionDraftItems(null);
+    setLastCreatedCollectionId(value.collectionId);
+    if (selectionMode) {
+      setSelectedKeys([]);
+      setSelectionMode(false);
+    }
     if (typeof window !== "undefined") void navigator.clipboard?.writeText(collectionShareHref(value.collectionId, window.location.origin));
   };
   const copyCollectionLink = (value: VideoCollection) => {
@@ -333,14 +354,15 @@ function VideoLibraryContent() {
     <header className="rounded-3xl border border-slate-800 bg-slate-900 p-4"><p className="text-[10px] font-black tracking-[.18em] text-cyan-300">{openedCollection ? "COLECCIÓN / REEL COMPARTIDO" : "EVENTOS DEPORTIVOS + CLIPS DE ANÁLISIS"}</p><div className="mt-1 flex flex-wrap items-end justify-between gap-3"><div><h1 className="text-2xl font-black">{openedCollection?.name ?? "BIBLIOTECA VIDEO"}</h1><p className="text-xs text-slate-400">{openedCollection?.description ?? (fromDashboard ? "Conjunto heredado del Dashboard." : "Consulta audiovisual del club.")}</p></div><div className="flex flex-wrap gap-2"><span className="rounded-full bg-slate-800 px-3 py-2 text-xs font-black">RESULTADOS {items.length}</span>{collectionPlayback && collectionPlayback.missing.length > 0 && <span className="rounded-full bg-amber-950 px-3 py-2 text-xs font-black text-amber-200">NO DISPONIBLES {collectionPlayback.missing.length}</span>}<span className="rounded-full bg-emerald-950 px-3 py-2 text-xs font-black text-emerald-300">VERIFIED {verifiedCount}</span>{activeFilterCount > 0 && !openedCollection && <span className="rounded-full bg-cyan-950 px-3 py-2 text-xs font-black text-cyan-200">FILTROS · {activeFilterCount}</span>}{openedCollection && <Link href="/video" className="rounded-full bg-cyan-950 px-3 py-2 text-xs font-black text-cyan-200">← VOLVER A VIDEO</Link>}{fromDashboard && !openedCollection && <><Link href={dashboardReturnUrl} className="rounded-full bg-cyan-950 px-3 py-2 text-xs font-black text-cyan-200">← VOLVER AL ANÁLISIS</Link><Link href="/video" className="rounded-full bg-violet-950 px-3 py-2 text-xs font-black text-violet-200">VER TODA LA BIBLIOTECA</Link></>}</div></div></header>
 
     {!openedCollection && <section aria-label="Colecciones de vídeo" className="rounded-3xl border border-violet-900/60 bg-slate-900 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-black tracking-[.16em] text-violet-300">COLECCIONES</p><p className="text-xs text-slate-400">Selecciones guardadas y reels compartibles · {collectionStore.pending ? `${collectionStore.pending} pendiente(s)` : "sin cambios pendientes"}</p></div>{canWrite && <div className="flex flex-wrap gap-2"><button type="button" disabled={items.length === 0} onClick={() => beginCollection("COLLECTION")} className="min-h-11 rounded-xl bg-violet-400 px-4 text-xs font-black text-slate-950 disabled:opacity-40">+ GUARDAR COLECCIÓN</button><button type="button" disabled={items.length === 0} onClick={() => beginCollection("SHARED_REEL")} className="min-h-11 rounded-xl bg-cyan-400 px-4 text-xs font-black text-slate-950 disabled:opacity-40">↗ COMPARTIR REEL</button></div>}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-black tracking-[.16em] text-violet-300">COLECCIONES</p><p className="text-xs text-slate-400">Selecciones guardadas y reels compartibles · {collectionStore.pending ? `${collectionStore.pending} pendiente(s)` : "sin cambios pendientes"}</p></div>{canWrite && <div className="flex flex-wrap gap-2"><button type="button" disabled={items.length === 0} aria-pressed={selectionMode} onClick={() => { setSelectionMode((current) => !current); setSelectedKeys([]); setLastCreatedCollectionId(null); }} className={`min-h-11 rounded-xl px-4 text-xs font-black ${selectionMode ? "bg-amber-400 text-slate-950" : "bg-slate-800 text-white"}`}>{selectionMode ? "CANCELAR SELECCIÓN" : "☑ SELECCIONAR"}</button><button type="button" disabled={items.length === 0} onClick={() => beginCollection("COLLECTION")} className="min-h-11 rounded-xl bg-violet-400 px-4 text-xs font-black text-slate-950 disabled:opacity-40">+ GUARDAR COLECCIÓN</button><button type="button" disabled={items.length === 0} onClick={() => beginCollection("SHARED_REEL")} className="min-h-11 rounded-xl bg-cyan-400 px-4 text-xs font-black text-slate-950 disabled:opacity-40">↗ COMPARTIR REEL</button></div>}</div>
+      {lastCreatedCollectionId && <div role="status" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-emerald-950 p-3 text-xs font-bold text-emerald-200"><span>Colección guardada; la sincronización continúa mediante NUBE.</span><Link href={collectionShareHref(lastCreatedCollectionId)} className="rounded-lg bg-emerald-300 px-3 py-2 font-black text-slate-950">ABRIR COLECCIÓN</Link></div>}
       {visibleCollections.length > 0 && <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{visibleCollections.map((value) => <article key={value.collectionId} className="rounded-2xl bg-slate-950 p-3"><div className="flex items-start justify-between gap-2"><div><strong className="text-sm">{value.name}</strong><p className="text-[10px] text-slate-500">{value.items.length} cortes · {value.visibility === "CLUB" ? "CLUB" : "SOLO ENLACE"}</p></div></div><div className="mt-3 flex flex-wrap gap-2"><Link href={collectionShareHref(value.collectionId)} className="rounded-lg bg-cyan-950 px-3 py-2 text-[10px] font-black text-cyan-200">VER REEL</Link><button type="button" onClick={() => copyCollectionLink(value)} className="rounded-lg bg-slate-800 px-3 py-2 text-[10px] font-black">COPIAR ENLACE</button>{canWrite && <><button type="button" onClick={() => editCollection(value)} className="rounded-lg bg-violet-950 px-3 py-2 text-[10px] font-black text-violet-200">EDITAR</button><button type="button" onClick={() => { if (window.confirm("¿Retirar esta colección? El enlace dejará de abrirla.")) collectionStore.softDelete(value.collectionId); }} className="rounded-lg bg-rose-950 px-3 py-2 text-[10px] font-black text-rose-200">ELIMINAR</button></>}</div></article>)}</div>}
       {collectionStore.conflicts > 0 && <p className="mt-3 rounded-xl bg-amber-950 p-3 text-xs text-amber-200">{collectionStore.conflicts} colección(es) requieren revisión; la versión local se conserva.</p>}
     </section>}
 
     {collectionMessage && canWrite && <section role="dialog" aria-label="Editar colección" className="rounded-3xl border border-violet-700 bg-slate-900 p-4"><div className="grid gap-3 md:grid-cols-[1fr_1.4fr_auto]"><label className="text-[10px] font-black text-slate-400">NOMBRE<input value={collectionName} onChange={(event) => setCollectionName(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl bg-slate-950 px-3 text-sm text-white"/></label><label className="text-[10px] font-black text-slate-400">DESCRIPCIÓN OPCIONAL<input value={collectionDescription} onChange={(event) => setCollectionDescription(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl bg-slate-950 px-3 text-sm text-white"/></label><label className="text-[10px] font-black text-slate-400">VISIBILIDAD<select value={collectionVisibility} onChange={(event) => setCollectionVisibility(event.target.value as VideoCollectionVisibility)} className="mt-1 min-h-11 w-full rounded-xl bg-slate-950 px-3 text-sm text-white"><option value="CLUB">CLUB</option><option value="LINK_ONLY">SOLO ENLACE</option></select></label></div>
       {collectionEditor && <div className="mt-3 space-y-2">{collectionEditor.items.map((item, index) => <div key={item.key} className="flex items-center gap-2 rounded-xl bg-slate-950 p-2"><span className="min-w-0 flex-1 truncate text-xs">{index + 1}. {item.title}</span><button type="button" disabled={index === 0} onClick={() => setCollectionEditor(reorderCollectionItem(collectionEditor, index, index - 1))} className="rounded-lg bg-slate-800 px-3 py-2 text-xs disabled:opacity-30">↑</button><button type="button" disabled={index === collectionEditor.items.length - 1} onClick={() => setCollectionEditor(reorderCollectionItem(collectionEditor, index, index + 1))} className="rounded-lg bg-slate-800 px-3 py-2 text-xs disabled:opacity-30">↓</button><button type="button" onClick={() => setCollectionEditor(removeCollectionItem(collectionEditor, item.key))} className="rounded-lg bg-rose-950 px-3 py-2 text-xs text-rose-200">QUITAR</button></div>)}<button type="button" onClick={() => setCollectionEditor(appendCollectionItems(collectionEditor, filteredItems))} className="min-h-10 rounded-xl bg-cyan-950 px-3 text-[10px] font-black text-cyan-200">AÑADIR RESULTADOS FILTRADOS</button></div>}
-      <div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => { setCollectionMessage(""); setCollectionEditor(null); }} className="min-h-11 rounded-xl bg-slate-800 px-4 text-xs font-black">CANCELAR</button><button type="button" onClick={saveCollection} className="min-h-11 rounded-xl bg-violet-400 px-4 text-xs font-black text-slate-950">GUARDAR Y COPIAR ENLACE</button></div>
+      <div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => { setCollectionMessage(""); setCollectionEditor(null); setCollectionDraftItems(null); }} className="min-h-11 rounded-xl bg-slate-800 px-4 text-xs font-black">CANCELAR</button><button type="button" onClick={saveCollection} className="min-h-11 rounded-xl bg-violet-400 px-4 text-xs font-black text-slate-950">GUARDAR Y COPIAR ENLACE</button></div>
     </section>}
 
     {!openedCollection && <><section aria-label="Fuente de contenido" className="grid gap-2 rounded-3xl border border-slate-800 bg-slate-900 p-2 sm:grid-cols-3">
@@ -409,8 +431,15 @@ function VideoLibraryContent() {
         {fullscreenFallback && <p className="mt-2 text-center text-[10px] font-bold text-amber-300">Pantalla completa no disponible; el reel continúa en modo cine.</p>}
         {!cinemaMode && <><p className="mt-2 text-center text-[10px] font-bold text-slate-500">← / → · ANTERIOR / SIGUIENTE &nbsp;·&nbsp; ESPACIO · PLAY / PAUSA</p><article className="mt-3 rounded-2xl bg-slate-950 p-4"><div className="flex items-start justify-between gap-3"><div><span className={`text-[9px] font-black ${active.source === "EVENT" ? "text-cyan-300" : "text-violet-300"}`}>{active.source === "EVENT" ? "EVENTO DEPORTIVO" : "CLIP DE ANÁLISIS"}</span><h2 className="text-xl font-black">{labelFor(active)}</h2><p className="text-xs text-slate-400">{active.opponent} · {active.date}</p></div><span className={`rounded-full px-3 py-2 text-[10px] font-black ${active.verified ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>{active.verified ? "VERIFIED" : "AUTO"}</span></div>{active.source === "EVENT" ? <p className="mt-2 text-sm text-slate-300">P{active.event.period} · min {active.event.minute} · {eventDescription(active.event, visibleRecords.find((record) => record.catalog.matchId === active.matchId)?.session.players ?? [])}</p> : <><p className="mt-2 text-sm text-slate-300">{active.clip.tags.join(" · ") || "Sin etiquetas"}</p>{active.clip.comment && <p className="mt-2 text-sm text-slate-400">{active.clip.comment}</p>}</>} {writeActions.canEdit && <div className="mt-3 flex flex-wrap gap-2"><Link href={editHref} className="inline-grid min-h-11 place-items-center rounded-xl bg-violet-500 px-4 text-xs font-black text-slate-950">EDITAR</Link>{active.source === "CLIP" && <button type="button" onClick={() => { if (window.confirm("¿Eliminar este clip de análisis?")) { ensureMatch(active.matchId); window.setTimeout(() => { removeClip(active.matchId, active.clip.id); setRecords(readLocalRecords()); }, 0); } }} className="min-h-11 rounded-xl bg-rose-950 px-4 text-xs font-black text-rose-200">ELIMINAR</button>}</div>}</article></>}
       </section>
-      {!cinemaMode && <section className="max-h-[75vh] space-y-2 overflow-y-auto rounded-3xl border border-slate-800 bg-slate-900 p-2">{items.map((item, index) => <button ref={(node) => { itemRefs.current[item.key] = node; }} key={item.key} type="button" onClick={() => { setSelected(index); setReel(false); setAutoPlaySelection(false); setReelFinished(false); }} className={`w-full rounded-2xl border p-3 text-left ${index === selected ? "border-cyan-400 bg-cyan-950/30" : "border-transparent bg-slate-950"}`}><div className="flex justify-between gap-2"><strong className="truncate text-sm">{labelFor(item)}</strong><span className="font-mono text-[10px] text-cyan-300">{formatVideoTimestamp(item.startSecond)}</span></div><p className="mt-1 text-[10px] text-slate-400">{item.opponent} · {item.date}</p><div className="mt-2 flex gap-2"><span className={`rounded-full px-2 py-1 text-[9px] font-black ${item.source === "EVENT" ? "bg-cyan-950 text-cyan-300" : "bg-violet-950 text-violet-300"}`}>{item.source}</span><span className={`rounded-full px-2 py-1 text-[9px] font-black ${item.verified ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>{item.verified ? "VERIFIED" : "AUTO"}</span></div></button>)}</section>}
+      {!cinemaMode && <section className="max-h-[75vh] space-y-2 overflow-y-auto rounded-3xl border border-slate-800 bg-slate-900 p-2">{items.map((item, index) => {
+        const marked = selectedKeys.includes(item.key);
+        return <article key={item.key} className={`flex items-stretch gap-1 rounded-2xl border ${marked ? "border-amber-400 bg-amber-950/30" : index === selected ? "border-cyan-400 bg-cyan-950/30" : "border-transparent bg-slate-950"}`}>
+          {selectionMode && canWrite && <label className="grid min-h-14 min-w-14 cursor-pointer place-items-center rounded-l-2xl" aria-label={`Seleccionar ${labelFor(item)}`}><input type="checkbox" checked={marked} onChange={() => setSelectedKeys((current) => toggleVideoCollectionSelection(current, item.key))} className="h-6 w-6 accent-amber-400"/></label>}
+          <button ref={(node) => { itemRefs.current[item.key] = node; }} type="button" onClick={() => { setSelected(index); setReel(false); setAutoPlaySelection(false); setReelFinished(false); }} className="min-w-0 flex-1 rounded-2xl p-3 text-left"><div className="flex justify-between gap-2"><strong className="truncate text-sm">{labelFor(item)}</strong><span className="font-mono text-[10px] text-cyan-300">{formatVideoTimestamp(item.startSecond)}</span></div><p className="mt-1 text-[10px] text-slate-400">{item.opponent} · {item.date}</p><div className="mt-2 flex gap-2"><span className={`rounded-full px-2 py-1 text-[9px] font-black ${item.source === "EVENT" ? "bg-cyan-950 text-cyan-300" : "bg-violet-950 text-violet-300"}`}>{item.source}</span><span className={`rounded-full px-2 py-1 text-[9px] font-black ${item.verified ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>{item.verified ? "VERIFIED" : "AUTO"}</span></div></button>
+        </article>;
+      })}</section>}
     </div>}
+    {selectionMode && canWrite && !openedCollection && <aside aria-label="Acciones de selección" className="sticky bottom-3 z-40 mx-auto flex max-w-xl flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-400/60 bg-slate-950/95 p-3 shadow-2xl backdrop-blur"><strong className="text-xs text-amber-200">{selectedItems.length} SELECCIONADA{selectedItems.length === 1 ? "" : "S"}</strong><div className="flex flex-wrap gap-2"><button type="button" disabled={items.length === 0 || selectedItems.length === items.length} onClick={() => setSelectedKeys(items.map((item) => item.key))} className="min-h-11 rounded-xl bg-slate-800 px-3 text-[10px] font-black disabled:opacity-40">SELECCIONAR TODO</button><button type="button" onClick={() => { setSelectedKeys([]); setSelectionMode(false); }} className="min-h-11 rounded-xl bg-slate-800 px-3 text-[10px] font-black">CANCELAR</button><button type="button" disabled={selectedItems.length === 0} onClick={() => beginCollection("COLLECTION", selectedItems)} className="min-h-11 rounded-xl bg-violet-400 px-4 text-xs font-black text-slate-950 disabled:opacity-40">CREAR COLECCIÓN · {selectedItems.length}</button></div></aside>}
   </main></div>;
 }
 

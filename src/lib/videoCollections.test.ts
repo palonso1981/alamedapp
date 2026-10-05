@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appendCollectionItems, collectionShareHref, createVideoCollection, listedVideoCollections, playableCollectionItems, removeCollectionItem, reorderCollectionItem } from "./videoCollections";
+import { readFileSync } from "node:fs";
+import { appendCollectionItems, collectionShareHref, createVideoCollection, listedVideoCollections, playableCollectionItems, removeCollectionItem, reorderCollectionItem, selectedVideoCollectionItems, toggleVideoCollectionSelection } from "./videoCollections";
 import { VideoLibraryItem } from "./videoLibrary";
 
 function item(key: string, startSecond: number): VideoLibraryItem {
@@ -11,6 +12,20 @@ function item(key: string, startSecond: number): VideoLibraryItem {
     playerIds: ["p1"], dominantFeet: [],
     clip: { id: key, clubId: "club-1", matchId: "match-1", segmentId: "segment-1", videoId: "youtube-1", referenceSecond: startSecond + 2, startSecond, endSecond: startSecond + 8, category: `Clip ${key}`, tags: [], playerIds: ["p1"], createdAt: 1, updatedAt: 1 },
     title: `Clip ${key}`,
+  };
+}
+
+function eventItem(key: string, startSecond: number): VideoLibraryItem {
+  return {
+    key, source: "EVENT", matchId: "match-1", opponent: "Rival", date: "2026-10-01", seasonId: "s1",
+    venue: "HOME", competition: "LEAGUE", segmentId: "segment-1", videoId: "youtube-1",
+    startSecond, endSecond: startSecond + 8, referenceSecond: startSecond + 2, verified: true,
+    playerIds: ["p1"], dominantFeet: [], title: `Evento ${key}`,
+    event: {
+      id: key, matchId: "match-1", schemaVersion: 1, period: 1, minute: 4, order: 2,
+      createdAt: 1, updatedAt: 1, deletedAt: null, pendingReview: false,
+      type: "foul_recorded", side: "FOR", source: "live", playerId: "p1",
+    },
   };
 }
 
@@ -52,4 +67,34 @@ test("solo las colecciones activas y listadas aparecen en la zona normal", () =>
   const hidden = createVideoCollection({ collectionId: "c2", clubId: "club-1", kind: "SHARED_REEL", name: "Enlace", visibility: "LINK_ONLY", items: [] });
   assert.deepEqual(listedVideoCollections([listed, hidden, { ...listed, collectionId: "c3", active: false }]).map((entry) => entry.collectionId), ["c1"]);
   assert.equal(collectionShareHref("c 1", "https://app.example"), "https://app.example/video?collection=c%201");
+});
+
+test("multiselección añade, deselecciona y conserva exactamente el orden visual", () => {
+  const visible = [item("c", 60), item("a", 20), item("b", 40)];
+  let selected = toggleVideoCollectionSelection([], "a");
+  selected = toggleVideoCollectionSelection(selected, "c");
+  assert.deepEqual(selectedVideoCollectionItems(visible, selected).map((entry) => entry.key), ["c", "a"]);
+  selected = toggleVideoCollectionSelection(selected, "a");
+  assert.deepEqual(selected, ["c"]);
+  assert.deepEqual(selectedVideoCollectionItems(visible, []), []);
+});
+
+test("crear colección desde selección captura solo los cortes marcados en orden", () => {
+  const visible = [item("loss-3", 60), eventItem("foul-1", 50), item("loss-1", 20), item("loss-2", 40)];
+  const selected = selectedVideoCollectionItems(visible, new Set(["loss-3", "foul-1", "loss-2"]));
+  const value = createVideoCollection({ collectionId: "selected", clubId: "club-1", kind: "COLLECTION", name: "Pérdidas", visibility: "CLUB", items: selected, now: 100 });
+  assert.deepEqual(value.items.map((entry) => entry.key), ["loss-3", "foul-1", "loss-2"]);
+  assert.deepEqual(value.items.map((entry) => entry.source), ["CLIP", "EVENT", "CLIP"]);
+  assert.deepEqual(value.items.map((entry) => entry.startSecond), [60, 50, 40]);
+  assert.equal(value.items[1].eventId, "foul-1");
+});
+
+test("UI limita creación a escritura y mantiene reproducción y edición separadas", () => {
+  const source = readFileSync("src/app/video/page.tsx", "utf8");
+  assert.match(source, /selectionMode && canWrite/);
+  assert.match(source, /CREAR COLECCIÓN · \{selectedItems\.length\}/);
+  assert.match(source, /onClick=\{\(\) => \{ setSelected\(index\); setReel\(false\)/);
+  assert.match(source, />EDITAR<\/Link>/);
+  assert.match(source, /min-h-14 min-w-14/);
+  assert.match(source, /collectionStore\.upsert\(value\)/);
 });
