@@ -139,3 +139,18 @@ export function appendCollectionItems(collection: VideoCollection, items: readon
   const known = new Set(collection.items.map((item) => item.key));
   return { ...collection, items: [...collection.items, ...items.filter((item) => !known.has(item.key)).map(videoCollectionItem)], updatedAt: now };
 }
+
+/** Mantiene el orden visible actual y nunca reconstruye la selección desde el filtro. */
+export function selectedVideoCollectionItems(
+  visibleItems: readonly VideoLibraryItem[],
+  selectedKeys: ReadonlySet<string> | readonly string[],
+): VideoLibraryItem[] {
+  const keys = selectedKeys instanceof Set ? selectedKeys : new Set(selectedKeys);
+  return visibleItems.filter((item) => keys.has(item.key));
+}
+
+export function toggleVideoCollectionSelection(selectedKeys: readonly string[], key: string): string[] {
+  return selectedKeys.includes(key)
+    ? selectedKeys.filter((selectedKey) => selectedKey !== key)
+    : [...selectedKeys, key];
+}
