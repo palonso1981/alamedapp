@@ -233,6 +233,7 @@ export interface EventEditChanges {
   period?: number;
   minute?: number;
   pendingReview?: boolean;
+  reviewState?: "PENDING_REVIEW" | null;
   lineup?: Partial<
     Pick<LineupInitializedEvent, "squadPlayerIds" | "onCourtPlayerIds">
   >;
@@ -436,7 +437,9 @@ function sequenceRootThreat(
   const sequenceId = event.sequenceId ?? event.id;
   const canonicalRoot = events.find(
     (candidate): candidate is ThreatRecordedEvent =>
-      candidate.type === "threat_recorded" && candidate.id === sequenceId,
+      candidate.type === "threat_recorded" &&
+      candidate.id === sequenceId &&
+      isActiveMatchEvent(candidate),
   );
   if (canonicalRoot) return canonicalRoot;
 
@@ -447,7 +450,8 @@ function sequenceRootThreat(
     const parent = events.find(
       (candidate): candidate is ThreatRecordedEvent =>
         candidate.type === "threat_recorded" &&
-        candidate.id === current?.parentEventId,
+        candidate.id === current?.parentEventId &&
+        isActiveMatchEvent(candidate),
     );
     if (!parent) break;
     current = parent;
@@ -502,6 +506,11 @@ export function getNextOrder(
       )
       .reduce((highest, event) => Math.max(highest, event.order), 0) + 1
   );
+}
+
+/** Verdad canónica de participación deportiva de un evento. */
+export function isActiveMatchEvent(event: MatchEvent): boolean {
+  return event.deletedAt === null && event.reviewState !== "PENDING_REVIEW";
 }
 
 function unique(values: string[]): boolean {
@@ -776,7 +785,7 @@ export function replayMatch(
   const issues: ReplayIssue[] = [];
   const activeEvents = sortEvents(events).filter(
     (candidate) =>
-      candidate.deletedAt === null &&
+      isActiveMatchEvent(candidate) &&
       (!options.throughClock ||
         candidate.period < options.throughClock.period ||
         (candidate.period === options.throughClock.period &&
@@ -1127,7 +1136,7 @@ export function replayMatch(
             : null;
         if (
           !parent ||
-          parent.deletedAt !== null ||
+          !isActiveMatchEvent(parent) ||
           parent.type !== "threat_recorded" ||
           parent.matchId !== event.matchId ||
           compareEventPosition(parent, event) >= 0 ||
@@ -1171,7 +1180,7 @@ export function replayMatch(
           (restart.restart === "CORNER" && event.phase === "SET_PIECE_CORNER") ||
           (restart.restart === "DANGEROUS_KICK_IN" && event.phase === "SET_PIECE_KICK_IN")
         );
-        if (!restart || restart.deletedAt !== null || restart.type !== "restart_recorded" || restart.side !== event.side || compareEventPosition(restart, event) >= 0 || !compatiblePhase) {
+        if (!restart || !isActiveMatchEvent(restart) || restart.type !== "restart_recorded" || restart.side !== event.side || compareEventPosition(restart, event) >= 0 || !compatiblePhase) {
           issue(issues, event, "INVALID_EVENT_LINK", "La amenaza debe vincularse a un reinicio anterior compatible del mismo lado.");
         }
       }
@@ -1511,6 +1520,11 @@ export function editEvent(
     period: changes.period ?? current.period,
     minute: changes.minute ?? current.minute,
     pendingReview: changes.pendingReview ?? current.pendingReview,
+    ...(changes.reviewState === null
+      ? { reviewState: undefined }
+      : changes.reviewState
+        ? { reviewState: changes.reviewState }
+        : {}),
     updatedAt: now,
   };
 
@@ -1631,7 +1645,12 @@ export function editEvent(
   const next = reconcileDefensiveGoalkeepers(players, normalizeOrders(
     editedEvents,
   ));
-  assertValidChronology(players, next);
+  // Un evento puesto en revisión se aparta de forma provisional. La ausencia
+  // de un evento estructural puede revelar incidencias posteriores, pero no
+  // debe impedir conservar la duda para resolverla desde Video Lab.
+  if (edited.reviewState !== "PENDING_REVIEW") {
+    assertValidChronology(players, next);
+  }
   return sortEvents(next);
 }
 

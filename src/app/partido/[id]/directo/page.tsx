@@ -282,7 +282,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     (event) => event.type !== "lineup_initialized" && event.deletedAt === null,
   ).length;
   const pendingEventCount = session.events.filter(
-    (event) => event.type !== "lineup_initialized" && event.deletedAt === null && event.pendingReview,
+    (event) => event.type !== "lineup_initialized" && event.deletedAt === null && (event.pendingReview || event.reviewState === "PENDING_REVIEW"),
   ).length;
   const selectedPlayerId =
     interaction.kind === "PLAYER_SELECTED"

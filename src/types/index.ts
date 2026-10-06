@@ -343,6 +343,12 @@ interface MatchEventBase extends EventPosition {
   deletedAt: number | null;
   /** Marca operativa: el evento sigue siendo válido y computable. */
   pendingReview: boolean;
+  /**
+   * Revisión deportiva explícita. A diferencia de `pendingReview`, que marca
+   * datos incompletos (asistencia, portero, etc.), este estado excluye
+   * provisionalmente el evento del replay y de las estadísticas.
+   */
+  reviewState?: "PENDING_REVIEW";
   /** Ausente en eventos legacy cuya procedencia no puede afirmarse. */
   provenance?: EventProvenance;
 }

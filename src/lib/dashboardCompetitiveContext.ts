@@ -1,6 +1,6 @@
 import { MatchEvent, MatchSession } from "../types";
 import { DashboardPeriod } from "./dashboardAnalytics";
-import { compareEventPosition, deriveGlobalMinute, goalkeeperAtPosition, REGULATION_MATCH_CLOCK, replayMatch } from "./matchEngine";
+import { compareEventPosition, deriveGlobalMinute, goalkeeperAtPosition, isActiveMatchEvent, REGULATION_MATCH_CLOCK, replayMatch } from "./matchEngine";
 
 export type CompetitiveContext = "ALL" | "KEY" | "GOLD";
 export type PlayingStateContext = "ALL" | "PJ_CDA" | "PJ_RIVAL";
@@ -78,7 +78,7 @@ export function derivePlayingStateIntervals(
   for (const currentPeriod of periods) {
     const endMinute = periodEnd(session, currentPeriod);
     const changes = session.events
-      .filter((event) => event.deletedAt === null && event.period === currentPeriod && isPlayingStateEvent(event, context))
+      .filter((event) => isActiveMatchEvent(event) && event.period === currentPeriod && isPlayingStateEvent(event, context))
       .sort(compareEventPosition);
     let start: MatchEvent | null = null;
     for (const change of changes) {

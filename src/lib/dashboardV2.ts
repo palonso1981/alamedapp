@@ -22,7 +22,7 @@ import {
   ResultFilter,
   VenueFilter,
 } from "./dashboardAnalysis";
-import { effectiveThreatPhase, replayMatch } from "./matchEngine";
+import { effectiveThreatPhase, isActiveMatchEvent, replayMatch } from "./matchEngine";
 import { deriveGoalZoneV1, GoalZoneV1 } from "./spatialZones";
 import { GOAL_FRAME } from "./goalTarget";
 import { CompetitiveContext, competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, PlayingStateContext, ScoreStateContext } from "./dashboardCompetitiveContext";
@@ -95,7 +95,7 @@ export interface DerivedThreatSummary {
 }
 
 export function derivedThreatSummary(events: readonly MatchEvent[], side: "FOR" | "AGAINST"): DerivedThreatSummary {
-  const threats = events.filter((event): event is ThreatRecordedEvent => event.type === "threat_recorded" && event.deletedAt === null && event.side === side);
+  const threats = events.filter((event): event is ThreatRecordedEvent => event.type === "threat_recorded" && isActiveMatchEvent(event) && event.side === side);
   const onTarget = threats.filter((event) => event.outcome === "GOL" || event.outcome === "PARADA").length;
   const near = threats.filter((event) => ["Z1", "Z2", "Z3"].includes(originZone(event))).length;
   return { total: threats.length, onTarget, onTargetPercentage: threats.length ? onTarget / threats.length * 100 : null, near, nearPercentage: threats.length ? near / threats.length * 100 : null };
@@ -271,7 +271,7 @@ export interface TeamThreatProfile {
 }
 
 export function teamThreatProfile(events: readonly MatchEvent[], side: ThreatSide): TeamThreatProfile {
-  const threats = events.filter((event): event is ThreatRecordedEvent => event.type === "threat_recorded" && event.deletedAt === null && event.side === side);
+  const threats = events.filter((event): event is ThreatRecordedEvent => event.type === "threat_recorded" && isActiveMatchEvent(event) && event.side === side);
   const count = (outcome: ThreatOutcome) => threats.filter((event) => event.outcome === outcome).length;
   const goals = count("GOL");
   const saves = count("PARADA");
@@ -344,7 +344,7 @@ export function setPiecePerformance(
   const threats: Array<{ event: ThreatRecordedEvent; events: readonly MatchEvent[] }> = [];
   const opportunityIds = new Set<string>();
   for (const record of records) {
-    const active = record.session.events.filter((event) => event.deletedAt === null);
+    const active = record.session.events.filter(isActiveMatchEvent);
     if (phase !== "SET_PIECE_FREE_KICK") {
       const kind = phase === "SET_PIECE_CORNER" ? "CORNER" : "DANGEROUS_KICK_IN";
       active.forEach((event) => { if (event.type === "restart_recorded" && event.side === side && event.restart === kind) opportunityIds.add(event.id); });
@@ -393,7 +393,7 @@ export function linkedRestart(events: readonly MatchEvent[], event: ThreatRecord
   const root = rootThreat(events, event);
   if (!root.restartEventId) return null;
   const restart = events.find((candidate) => candidate.id === root.restartEventId);
-  if (!restart || restart.deletedAt !== null || restart.type !== "restart_recorded" || restart.side !== root.side) return null;
+  if (!restart || !isActiveMatchEvent(restart) || restart.type !== "restart_recorded" || restart.side !== root.side) return null;
   const phase = effectiveThreatPhase([...events], root);
   if (restart.restart === "CORNER" && phase !== "SET_PIECE_CORNER") return null;
   if (restart.restart === "DANGEROUS_KICK_IN" && phase !== "SET_PIECE_KICK_IN") return null;
@@ -466,7 +466,7 @@ export function buildSetPieceFunnel(
   };
 
   for (const record of records) {
-    const active = record.session.events.filter((event) => event.deletedAt === null);
+    const active = record.session.events.filter(isActiveMatchEvent);
     for (const event of active) {
       if (event.type !== "restart_recorded") continue;
       const restartKind = event.restart === "CORNER" ? "CORNER" : "KICK_IN";
@@ -725,7 +725,7 @@ function summarizePlayingState(
     minutes += projection.observed;
     if (projection.observed > 0) matchesWithState += 1;
     for (const event of record.session.events) {
-      if (event.deletedAt !== null || !projection.eventIds.has(event.id) || event.type !== "threat_recorded" || !eventMatches(event, record, scope)) continue;
+      if (!isActiveMatchEvent(event) || !projection.eventIds.has(event.id) || event.type !== "threat_recorded" || !eventMatches(event, record, scope)) continue;
       if (event.side === "FOR") {
         threatsFor += 1;
         if (event.outcome === "GOL") goalsFor += 1;
@@ -826,7 +826,7 @@ export function teamPlayerTableMetricValue(
   if (metric === "plusMinus") return normalizeCount(analysis.analytics.goalsFor - analysis.analytics.goalsAgainst);
   if (metric === "assists") {
     const assists = analysis.records.flatMap((record) => record.session.events).filter((event) =>
-      event.deletedAt === null
+      isActiveMatchEvent(event)
       && event.type === "threat_recorded"
       && event.side === "FOR"
       && event.outcome === "GOL"

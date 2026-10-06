@@ -241,6 +241,11 @@ interface MatchState {
     eventId: string,
     pendingReview: boolean,
   ) => void;
+  setEventReviewPending: (
+    matchId: string,
+    eventId: string,
+    pending: boolean,
+  ) => void;
   swapPlayer: (matchId: string, playerOutId: string, playerInId: string, observedAt?: number) => void;
   editEvent: (
     matchId: string,
@@ -1114,6 +1119,17 @@ export const useMatchStore = create<MatchState>((set) => ({
         command(session, () =>
           editChronologyEvent(session.players, session.events, eventId, {
             pendingReview,
+          }),
+        ),
+      ),
+    ),
+
+  setEventReviewPending: (matchId, eventId, pending) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) =>
+        command(session, () =>
+          editChronologyEvent(session.players, session.events, eventId, {
+            reviewState: pending ? "PENDING_REVIEW" : null,
           }),
         ),
       ),
