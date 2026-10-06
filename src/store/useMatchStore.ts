@@ -26,7 +26,7 @@ import {
   softDeleteEvent as softDeleteChronologyEvent,
 } from "../lib/matchEngine";
 import { browserMatchRepository } from "../lib/sync/localMatchRepository";
-import { removeVideoAnalysisClip as withoutVideoAnalysisClip } from "../lib/videoLab";
+import { removeVideoAnalysisClip as withoutVideoAnalysisClip, upsertVideoEventAnalysisDetail as withVideoEventAnalysisDetail } from "../lib/videoLab";
 import { MATCH_UNDO_HISTORY_LIMIT } from "../lib/matchPersistence";
 import {
   CardColor,
@@ -42,6 +42,7 @@ import {
   MatchEvent,
   MatchSession,
   MatchVideoAnalysisClip,
+  MatchVideoAnalysisTheme,
   MatchVideoEventOverride,
   MatchVideoSegment,
   NormalizedCoordinates,
@@ -275,6 +276,7 @@ interface MatchState {
   addVideoLabEvent: (matchId: string, event: MatchEvent, override: MatchVideoEventOverride) => void;
   upsertVideoAnalysisClip: (matchId: string, clip: MatchVideoAnalysisClip) => void;
   removeVideoAnalysisClip: (matchId: string, clipId: string) => void;
+  upsertVideoEventAnalysisDetail: (matchId: string, eventId: string, detail: { category?: MatchVideoAnalysisTheme; tags: string[]; comment?: string }) => void;
 }
 
 export function createSession(matchId: string): MatchSession {
@@ -1341,6 +1343,14 @@ export const useMatchStore = create<MatchState>((set) => ({
   removeVideoAnalysisClip: (matchId, clipId) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) => ({ ...withoutVideoAnalysisClip(session, clipId), lastError: null })),
+    ),
+
+  upsertVideoEventAnalysisDetail: (matchId, eventId, detail) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => ({
+        ...withVideoEventAnalysisDetail(session, eventId, detail),
+        lastError: null,
+      })),
     ),
 
   resetDemo: (matchId) =>

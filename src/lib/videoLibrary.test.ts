@@ -15,6 +15,7 @@ function libraryRecords() {
     const playerId = record.session.players[recordIndex]?.id ?? record.session.players[0].id;
     const clip: MatchVideoAnalysisClip = { id: `clip-${recordIndex}`, clubId: record.catalog.clubId ?? "", matchId: record.catalog.matchId, segmentId: `${segment.id}:P1`, videoId: segment.videoId, referenceSecond: 80, startSecond: 77, endSecond: 86, category: recordIndex ? "DEFENSIVO" : "ESTRATEGIA", tags: recordIndex ? ["rival"] : ["presión alta", "ABP"], playerIds: [playerId], comment: "Detalle", createdAt: 2, updatedAt: 2 };
     record.session.videoAnalysisClips = [clip];
+    if (reviewable[0]) record.session.videoEventAnalysisDetails = [{ matchId: record.catalog.matchId, eventId: reviewable[0].id, category: recordIndex ? "DEFENSIVO" : "OFENSIVO", tags: recordIndex ? ["bloque bajo"] : ["presión alta"], comment: "Lectura del evento", createdAt: 3, updatedAt: 3 }];
   });
   return records;
 }
@@ -52,6 +53,19 @@ test("Biblioteca combina jugador, evento, categoría, etiqueta, rival, partido, 
     assert.ok(events.length > 0);
     assert.ok(events.every((item) => item.source === "EVENT" && item.event.type === "possession_lost"));
   }
+});
+
+test("eventos enriquecidos participan en filtros de temática y etiquetas sin contaminar el evento deportivo", () => {
+  const records = libraryRecords();
+  const detail = records[0].session.videoEventAnalysisDetails![0];
+  const immutable = structuredClone(records[0].session.events.find((event) => event.id === detail.eventId));
+  const filtered = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT", themes: [detail.category!], tags: [detail.tags[0]] });
+  assert.deepEqual(filtered.map((item) => item.source === "EVENT" ? item.event.id : ""), [detail.eventId]);
+  assert.equal(filtered[0].source, "EVENT");
+  if (filtered[0].source === "EVENT") assert.deepEqual(filtered[0].analysisDetail, detail);
+  assert.deepEqual(records[0].session.events.find((event) => event.id === detail.eventId), immutable);
+  const absent = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT", themes: [detail.category!], tags: ["no existe"] });
+  assert.deepEqual(absent, []);
 });
 
 test("los ocho filtros principales son multiselección OR dentro y AND entre dimensiones", () => {
