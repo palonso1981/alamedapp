@@ -1351,7 +1351,7 @@ test("segmentos, verificaciones y clips Video Lab viajan como metadata MATCH a u
   const segment = createVideoSegment({ id: "video-1", urlOrVideoId: "abcdefghijk", periods: [1, 2], now: 10 });
   const indexed = upsertVideoSegment(session, { ...segment, anchors: [{ id: "anchor-1", eventId: session.events[0].id, videoSecond: 20 }] });
   const immutableEvents = structuredClone(indexed.events);
-  const withVideo = { ...upsertVideoEventOverride(indexed, { eventId: session.events[0].id, segmentId: segment.id, syncSegmentId: `${segment.id}:P1`, videoSecond: 17, status: "VERIFIED", timeSource: "manual", now: 11 }), videoAnalysisClips: [{ id: "clip-sync", clubId: "club", matchId: session.matchId, segmentId: `${segment.id}:P1`, videoId: "abcdefghijk", referenceSecond: 20, startSecond: 17, endSecond: 26, tags: ["presión"], playerIds: [session.players[0].id], createdAt: 12, updatedAt: 12 }] };
+  const withVideo = { ...upsertVideoEventOverride(indexed, { eventId: session.events[0].id, segmentId: segment.id, syncSegmentId: `${segment.id}:P1`, videoSecond: 17, status: "VERIFIED", timeSource: "manual", now: 11 }), videoAnalysisClips: [{ id: "clip-sync", clubId: "club", matchId: session.matchId, segmentId: `${segment.id}:P1`, videoId: "abcdefghijk", referenceSecond: 20, startSecond: 17, endSecond: 26, tags: ["presión"], playerIds: [session.players[0].id], createdAt: 12, updatedAt: 12 }], videoEventAnalysisDetails: [{ matchId: session.matchId, eventId: session.events[0].id, category: "ESTRATEGIA" as const, tags: ["salida"], comment: "Detalle remoto", createdAt: 13, updatedAt: 13 }] };
   assert.deepEqual(withVideo.events, immutableEvents);
   local.save(withVideo);
   const queued = local.getSyncState(session.matchId).outbox;
@@ -1359,11 +1359,13 @@ test("segmentos, verificaciones y clips Video Lab viajan como metadata MATCH a u
   assert.equal((queued[0].payload as ReturnType<typeof matchRemoteMetadata>).videoSegments?.[0].anchors[0].eventId, session.events[0].id);
   assert.equal((queued[0].payload as ReturnType<typeof matchRemoteMetadata>).videoEventOverrides?.[0].videoSecond, 17);
   assert.equal((queued[0].payload as ReturnType<typeof matchRemoteMetadata>).videoAnalysisClips?.[0].id, "clip-sync");
+  assert.equal((queued[0].payload as ReturnType<typeof matchRemoteMetadata>).videoEventAnalysisDetails?.[0].eventId, session.events[0].id);
   await coordinator.syncMatch(session.matchId);
   const remotePayload = remote.documents.get(`${session.matchId}:match`)?.payload as ReturnType<typeof matchRemoteMetadata>;
   assert.equal(remotePayload.videoSegments?.[0].videoId, "abcdefghijk");
   assert.equal(remotePayload.videoEventOverrides?.[0].eventId, session.events[0].id);
   assert.equal(remotePayload.videoAnalysisClips?.[0].tags[0], "presión");
+  assert.equal(remotePayload.videoEventAnalysisDetails?.[0].comment, "Detalle remoto");
   assert.equal(local.getSummary(session.matchId).pending, 0);
   const secondStorage = new MemoryStorage();
   const secondBrowser = new LocalMatchRepository({ storage: secondStorage, idFactory: idFactory() });
@@ -1372,6 +1374,7 @@ test("segmentos, verificaciones y clips Video Lab viajan como metadata MATCH a u
   assert.equal(secondBrowser.load(session.matchId)?.videoEventOverrides?.[0].status, "VERIFIED");
   assert.equal(secondBrowser.load(session.matchId)?.videoEventOverrides?.[0].videoSecond, 17);
   assert.equal(secondBrowser.load(session.matchId)?.videoAnalysisClips?.[0].id, "clip-sync");
+  assert.equal(secondBrowser.load(session.matchId)?.videoEventAnalysisDetails?.[0].tags[0], "salida");
   assert.equal(secondBrowser.getSummary(session.matchId).pending, 0);
 });
 

@@ -306,6 +306,19 @@ export interface MatchVideoAnalysisClip {
   updatedAt: number;
 }
 
+export type MatchVideoAnalysisTheme = "OFENSIVO" | "DEFENSIVO" | "INDIVIDUAL" | "ESTRATEGIA" | "RIVAL";
+
+/** Metadata de análisis audiovisual de un evento; nunca modifica el evento deportivo. */
+export interface MatchVideoEventAnalysisDetail {
+  matchId: string;
+  eventId: string;
+  category?: MatchVideoAnalysisTheme;
+  tags: string[];
+  comment?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export const MATCH_EVENT_SCHEMA_VERSION = 1 as const;
 export const INFERIORITY_SLOT_ID = "slot:inferiority" as const;
 
@@ -685,6 +698,8 @@ export interface MatchSession {
   videoEventOverrides?: MatchVideoEventOverride[];
   /** Clips tácticos separados de MatchEvent y preparados para una futura biblioteca. */
   videoAnalysisClips?: MatchVideoAnalysisClip[];
+  /** Comentario, temática y etiquetas audiovisuales por evento deportivo. */
+  videoEventAnalysisDetails?: MatchVideoEventAnalysisDetail[];
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];

@@ -14,12 +14,12 @@ import { emptyDashboardScope, hasDashboardScopeSearchParams, matchCompetition, s
 import { eventDescription, phaseLabel } from "../../lib/eventPresentation";
 import { listMatchCatalog } from "../../lib/matchCatalog";
 import { loadMatchSession } from "../../lib/matchPersistence";
-import { VIDEO_CLIP_SUGGESTED_CATEGORIES, videoClipTagSuggestions } from "../../lib/videoLab";
+import { removeVideoEventAnalysisTag, renameVideoEventAnalysisTag, upsertVideoEventAnalysisDetail, VIDEO_CLIP_SUGGESTED_CATEGORIES, VIDEO_EVENT_ANALYSIS_COMMENT_MAX, VIDEO_EVENT_ANALYSIS_TAG_MAX, videoAnalysisTagSuggestions } from "../../lib/videoLab";
 import { formatVideoTimestamp } from "../../lib/videoIndex";
-import { activeVideoLibraryRecords, buildVideoLibraryItems, canonicalVideoRival, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, reelCutCompletion, removeVideoTag, renameVideoTag, videoLabNavigationHref, videoLibraryFiltersFromSearchParams, videoLibraryFiltersToSearchParams, videoLibraryKeyboardAction, videoLibraryWriteActionState, VideoLibraryEventKind, VideoLibraryFilters, VideoLibraryItem, VideoLibrarySourceFilter, videoTagUsage } from "../../lib/videoLibrary";
+import { activeVideoLibraryRecords, buildVideoLibraryItems, canonicalVideoRival, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, reelCutCompletion, removeVideoTag, renameVideoTag, videoAnalysisTagUsage, videoLabNavigationHref, videoLibraryFiltersFromSearchParams, videoLibraryFiltersToSearchParams, videoLibraryKeyboardAction, videoLibraryWriteActionState, VideoLibraryEventKind, VideoLibraryFilters, VideoLibraryItem, VideoLibrarySourceFilter } from "../../lib/videoLibrary";
 import { useMatchStore } from "../../store/useMatchStore";
 import { useTeamStore } from "../../store/useTeamStore";
-import { MatchVideoAnalysisClip, ThreatOutcome } from "../../types";
+import { MatchVideoAnalysisClip, MatchVideoAnalysisTheme, MatchVideoEventAnalysisDetail, ThreatOutcome } from "../../types";
 import { useVideoCollections } from "../../hooks/useVideoCollections";
 import { appendCollectionItems, collectionShareHref, createVideoCollection, listedVideoCollections, playableCollectionItems, removeCollectionItem, reorderCollectionItem, selectedVideoCollectionItems, toggleVideoCollectionSelection, VideoCollection, VideoCollectionVisibility } from "../../lib/videoCollections";
 
@@ -71,6 +71,7 @@ function VideoLibraryContent() {
   const ensureMatch = useMatchStore((state) => state.ensureMatch);
   const upsertClip = useMatchStore((state) => state.upsertVideoAnalysisClip);
   const removeClip = useMatchStore((state) => state.removeVideoAnalysisClip);
+  const saveEventAnalysisDetail = useMatchStore((state) => state.upsertVideoEventAnalysisDetail);
   const playerRef = useRef<YouTubeLabPlayerHandle>(null);
   const reelContainerRef = useRef<HTMLElement>(null);
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -91,6 +92,11 @@ function VideoLibraryContent() {
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [manageTags, setManageTags] = useState(false);
   const [tagDrafts, setTagDrafts] = useState<Record<string, string>>({});
+  const [editingEventDetails, setEditingEventDetails] = useState(false);
+  const [eventComment, setEventComment] = useState("");
+  const [eventCategory, setEventCategory] = useState<MatchVideoAnalysisTheme | "">("");
+  const [eventTags, setEventTags] = useState<string[]>([]);
+  const [eventTagDraft, setEventTagDraft] = useState("");
   const [collectionEditor, setCollectionEditor] = useState<VideoCollection | null>(null);
   const [collectionName, setCollectionName] = useState("");
   const [collectionDescription, setCollectionDescription] = useState("");
@@ -165,6 +171,7 @@ function VideoLibraryContent() {
   useEffect(() => {
     if (!active) return;
     lastCompletedCutRef.current = null;
+    setEditingEventDetails(false);
   }, [active]);
 
   useEffect(() => {
@@ -198,9 +205,10 @@ function VideoLibraryContent() {
   const players = useMemo(() => Array.from(new Map(visibleRecords.flatMap((record) => record.session.players).map((player) => [player.id, player])).values()).sort((a, b) => a.name.localeCompare(b.name)), [visibleRecords]);
   const availableItems = useMemo(() => buildVideoLibraryItems(visibleRecords, EMPTY_VIDEO_LIBRARY_FILTERS, { dashboardScope, includeClips: true }), [dashboardScope, visibleRecords]);
   const allClips = useMemo(() => visibleRecords.flatMap((record) => record.session.videoAnalysisClips ?? []), [visibleRecords]);
+  const allEventDetails = useMemo(() => visibleRecords.flatMap((record) => record.session.videoEventAnalysisDetails ?? []), [visibleRecords]);
   const rivals = useMemo(() => Array.from(new Map(visibleRecords.map((record) => [canonicalVideoRival(record.catalog.opponent), record.catalog.opponent])).entries()).sort((a, b) => a[1].localeCompare(b[1])), [visibleRecords]);
   const seasons = useMemo(() => Array.from(new Set(visibleRecords.map((record) => record.catalog.seasonId).filter(Boolean) as string[])).sort(), [visibleRecords]);
-  const tags = useMemo(() => videoClipTagSuggestions(allClips), [allClips]);
+  const tags = useMemo(() => videoAnalysisTagSuggestions(allClips, allEventDetails), [allClips, allEventDetails]);
   const categories = useMemo(() => Array.from(new Set([...VIDEO_CLIP_SUGGESTED_CATEGORIES, ...allClips.flatMap((clip) => clip.category ? [clip.category] : [])])).sort(), [allClips]);
   const outcomes = useMemo(() => Array.from(new Set(availableItems.flatMap((item) => item.source === "EVENT" && item.event.type === "threat_recorded" ? [item.event.outcome] : []))) as ThreatOutcome[], [availableItems]);
   const competitions = useMemo(() => Array.from(new Set(visibleRecords.map(matchCompetition))).sort(), [visibleRecords]);
@@ -273,33 +281,64 @@ function VideoLibraryContent() {
     ...current,
     source,
     ...(source === "CLIP" ? { side: "ALL" as const, eventKinds: [], phases: [], outcomes: [], goalkeeperIds: [], originZones: [], targetZones: [] } : {}),
-    ...(source === "EVENT" ? { themes: [], tags: [] } : {}),
   }));
   const clearFilters = () => setFilters({ ...EMPTY_VIDEO_LIBRARY_FILTERS, source: defaultSource });
-  const persistTagChange = (transform: (clips: readonly MatchVideoAnalysisClip[]) => MatchVideoAnalysisClip[]) => {
+  const persistTagChange = (
+    clipTransform: (clips: readonly MatchVideoAnalysisClip[]) => MatchVideoAnalysisClip[],
+    detailTransform: (details: readonly MatchVideoEventAnalysisDetail[]) => MatchVideoEventAnalysisDetail[],
+  ) => {
     const visibleMatchIds = new Set(visibleRecords.map((record) => record.catalog.matchId));
     const nextRecords = records.map((record) => {
       if (!visibleMatchIds.has(record.catalog.matchId)) return record;
       const previous = record.session.videoAnalysisClips ?? [];
-      const next = transform(previous);
+      const next = clipTransform(previous);
+      const previousDetails = record.session.videoEventAnalysisDetails ?? [];
+      const nextDetails = detailTransform(previousDetails);
       const changed = next.filter((clip, index) => clip !== previous[index]);
-      if (changed.length === 0) return record;
+      const changedDetails = nextDetails.filter((detail, index) => detail !== previousDetails[index]);
+      if (changed.length === 0 && changedDetails.length === 0) return record;
       ensureMatch(record.catalog.matchId);
       changed.forEach((clip) => upsertClip(record.catalog.matchId, clip));
-      return { ...record, session: { ...record.session, videoAnalysisClips: next } };
+      changedDetails.forEach((detail) => saveEventAnalysisDetail(record.catalog.matchId, detail.eventId, detail));
+      return { ...record, session: { ...record.session, videoAnalysisClips: next, videoEventAnalysisDetails: nextDetails } };
     });
     setRecords(nextRecords);
   };
   const renameTag = (tag: string) => {
     const next = tagDrafts[tag]?.trim();
     if (!next || next.toLocaleLowerCase("es") === tag.toLocaleLowerCase("es")) return;
-    persistTagChange((clips) => renameVideoTag(clips, tag, next));
+    persistTagChange((clips) => renameVideoTag(clips, tag, next), (details) => renameVideoEventAnalysisTag(details, tag, next));
     setTagDrafts((current) => ({ ...current, [tag]: "" }));
   };
   const deleteTag = (tag: string) => {
-    const usage = videoTagUsage(allClips, tag);
+    const usage = videoAnalysisTagUsage(allClips, allEventDetails, tag);
     if (!window.confirm(`La etiqueta “${tag}” se utiliza en ${usage} elemento${usage === 1 ? "" : "s"}. ¿Retirarla sin borrar clips ni eventos?`)) return;
-    persistTagChange((clips) => removeVideoTag(clips, tag));
+    persistTagChange((clips) => removeVideoTag(clips, tag), (details) => removeVideoEventAnalysisTag(details, tag));
+  };
+
+  const beginEventDetails = () => {
+    if (active?.source !== "EVENT" || !writeActions.canEdit) return;
+    setEventComment(active.analysisDetail?.comment ?? "");
+    setEventCategory(active.analysisDetail?.category ?? "");
+    setEventTags(active.analysisDetail?.tags ?? []);
+    setEventTagDraft("");
+    setEditingEventDetails(true);
+  };
+  const addEventTag = () => {
+    const value = eventTagDraft.trim().replace(/\s+/g, " ");
+    if (!value) return;
+    setEventTags((current) => current.some((tag) => tag.toLocaleLowerCase("es") === value.toLocaleLowerCase("es")) ? current : [...current, value]);
+    setEventTagDraft("");
+  };
+  const persistEventDetails = () => {
+    if (active?.source !== "EVENT" || !writeActions.canEdit) return;
+    ensureMatch(active.matchId);
+    saveEventAnalysisDetail(active.matchId, active.event.id, { ...(eventCategory ? { category: eventCategory } : {}), tags: eventTags, comment: eventComment });
+    setRecords((current) => current.map((record) => record.catalog.matchId !== active.matchId ? record : ({
+      ...record,
+      session: upsertVideoEventAnalysisDetail(record.session, active.event.id, { ...(eventCategory ? { category: eventCategory } : {}), tags: eventTags, comment: eventComment }),
+    })));
+    setEditingEventDetails(false);
   };
   const dashboardReturnUrl = useMemo(() => dashboardReturnHref(searchParams.toString()), [searchParams]);
   const editHref = active ? videoLabNavigationHref(active, searchParams.toString(), "EDIT") : "#";
@@ -408,7 +447,7 @@ function VideoLibraryContent() {
           />}
         </div>
       </details>
-      {manageTags && canWrite && <div className="mt-3 rounded-2xl border border-violet-900 bg-slate-950 p-3"><div className="mb-2 flex items-center justify-between"><div><strong className="text-xs">GESTIONAR ETIQUETAS</strong><p className="text-[10px] text-slate-500">Renombrar fusiona duplicados. Eliminar solo retira la etiqueta.</p></div><button type="button" onClick={() => setManageTags(false)} className="rounded-lg px-3 py-2 text-xs">✕</button></div><div className="grid gap-2 sm:grid-cols-2">{tags.map((tag) => <div key={tag} className="rounded-xl bg-slate-900 p-2"><div className="flex items-center justify-between gap-2"><span className="truncate text-xs font-black">{tag}</span><span className="text-[9px] text-slate-500">{videoTagUsage(allClips, tag)} usos</span></div><div className="mt-2 flex gap-2"><input aria-label={`Nuevo nombre para ${tag}`} value={tagDrafts[tag] ?? ""} onChange={(event) => setTagDrafts((current) => ({ ...current, [tag]: event.target.value }))} placeholder="Nuevo nombre" className="min-h-10 min-w-0 flex-1 rounded-lg bg-slate-800 px-3 text-xs"/><button type="button" onClick={() => renameTag(tag)} className="rounded-lg bg-cyan-950 px-3 text-[9px] font-black text-cyan-200">RENOMBRAR</button><button type="button" onClick={() => deleteTag(tag)} className="rounded-lg bg-rose-950 px-3 text-[9px] font-black text-rose-200">ELIMINAR</button></div></div>)}</div></div>}
+      {manageTags && canWrite && <div className="mt-3 rounded-2xl border border-violet-900 bg-slate-950 p-3"><div className="mb-2 flex items-center justify-between"><div><strong className="text-xs">GESTIONAR ETIQUETAS</strong><p className="text-[10px] text-slate-500">Renombrar fusiona duplicados. Eliminar solo retira la etiqueta.</p></div><button type="button" onClick={() => setManageTags(false)} className="rounded-lg px-3 py-2 text-xs">✕</button></div><div className="grid gap-2 sm:grid-cols-2">{tags.map((tag) => <div key={tag} className="rounded-xl bg-slate-900 p-2"><div className="flex items-center justify-between gap-2"><span className="truncate text-xs font-black">{tag}</span><span className="text-[9px] text-slate-500">{videoAnalysisTagUsage(allClips, allEventDetails, tag)} usos</span></div><div className="mt-2 flex gap-2"><input aria-label={`Nuevo nombre para ${tag}`} value={tagDrafts[tag] ?? ""} onChange={(event) => setTagDrafts((current) => ({ ...current, [tag]: event.target.value }))} placeholder="Nuevo nombre" className="min-h-10 min-w-0 flex-1 rounded-lg bg-slate-800 px-3 text-xs"/><button type="button" onClick={() => renameTag(tag)} className="rounded-lg bg-cyan-950 px-3 text-[9px] font-black text-cyan-200">RENOMBRAR</button><button type="button" onClick={() => deleteTag(tag)} className="rounded-lg bg-rose-950 px-3 text-[9px] font-black text-rose-200">ELIMINAR</button></div></div>)}</div></div>}
     </section></>}
 
     {!ready ? <p className="p-10 text-center text-slate-500">Preparando vídeos…</p> : !active ? <section className="rounded-3xl border border-dashed border-slate-700 p-10 text-center"><strong>Sin vídeos para esta combinación</strong><p className="mt-2 text-sm text-slate-500">Retira un filtro o verifica la calibración del partido.</p></section> : <div className="grid gap-3 lg:grid-cols-[minmax(0,1.55fr)_minmax(340px,.85fr)]">
@@ -429,7 +468,24 @@ function VideoLibraryContent() {
         {autoplayBlocked && <p role="status" className="mt-2 rounded-xl bg-amber-950 px-3 py-2 text-center text-xs font-bold text-amber-200">El navegador ha bloqueado el autoplay. Pulsa ▶ para continuar el reel.</p>}
         {reelFinished && <div role="status" className={`${cinemaMode ? "absolute inset-0 z-10 grid place-items-center bg-black/75" : "mt-3"}`}><div className="rounded-3xl border border-cyan-400/50 bg-slate-950 p-6 text-center shadow-2xl"><p className="text-sm font-black tracking-[.18em] text-cyan-300">FIN DEL REEL</p><div className="mt-4 flex flex-wrap justify-center gap-2"><button type="button" onClick={restartReel} className="min-h-12 rounded-xl bg-cyan-400 px-5 text-xs font-black text-slate-950">↺ VOLVER AL PRIMERO</button>{cinemaMode && <button type="button" onClick={leaveFullscreen} className="min-h-12 rounded-xl bg-slate-800 px-5 text-xs font-black">SALIR</button>}</div></div></div>}
         {fullscreenFallback && <p className="mt-2 text-center text-[10px] font-bold text-amber-300">Pantalla completa no disponible; el reel continúa en modo cine.</p>}
-        {!cinemaMode && <><p className="mt-2 text-center text-[10px] font-bold text-slate-500">← / → · ANTERIOR / SIGUIENTE &nbsp;·&nbsp; ESPACIO · PLAY / PAUSA</p><article className="mt-3 rounded-2xl bg-slate-950 p-4"><div className="flex items-start justify-between gap-3"><div><span className={`text-[9px] font-black ${active.source === "EVENT" ? "text-cyan-300" : "text-violet-300"}`}>{active.source === "EVENT" ? "EVENTO DEPORTIVO" : "CLIP DE ANÁLISIS"}</span><h2 className="text-xl font-black">{labelFor(active)}</h2><p className="text-xs text-slate-400">{active.opponent} · {active.date}</p></div><span className={`rounded-full px-3 py-2 text-[10px] font-black ${active.verified ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>{active.verified ? "VERIFIED" : "AUTO"}</span></div>{active.source === "EVENT" ? <p className="mt-2 text-sm text-slate-300">P{active.event.period} · min {active.event.minute} · {eventDescription(active.event, visibleRecords.find((record) => record.catalog.matchId === active.matchId)?.session.players ?? [])}</p> : <><p className="mt-2 text-sm text-slate-300">{active.clip.tags.join(" · ") || "Sin etiquetas"}</p>{active.clip.comment && <p className="mt-2 text-sm text-slate-400">{active.clip.comment}</p>}</>} {writeActions.canEdit && <div className="mt-3 flex flex-wrap gap-2"><Link href={editHref} className="inline-grid min-h-11 place-items-center rounded-xl bg-violet-500 px-4 text-xs font-black text-slate-950">EDITAR</Link>{active.source === "CLIP" && <button type="button" onClick={() => { if (window.confirm("¿Eliminar este clip de análisis?")) { ensureMatch(active.matchId); window.setTimeout(() => { removeClip(active.matchId, active.clip.id); setRecords(readLocalRecords()); }, 0); } }} className="min-h-11 rounded-xl bg-rose-950 px-4 text-xs font-black text-rose-200">ELIMINAR</button>}</div>}</article></>}
+        {!cinemaMode && <>
+          <p className="mt-2 text-center text-[10px] font-bold text-slate-500">← / → · ANTERIOR / SIGUIENTE &nbsp;·&nbsp; ESPACIO · PLAY / PAUSA</p>
+          <article className="mt-3 rounded-2xl bg-slate-950 p-4">
+            <div className="flex items-start justify-between gap-3"><div><span className={`text-[9px] font-black ${active.source === "EVENT" ? "text-cyan-300" : "text-violet-300"}`}>{active.source === "EVENT" ? "EVENTO DEPORTIVO" : "CLIP DE ANÁLISIS"}</span><h2 className="text-xl font-black">{labelFor(active)}</h2><p className="text-xs text-slate-400">{active.opponent} · {active.date}</p></div><span className={`rounded-full px-3 py-2 text-[10px] font-black ${active.verified ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>{active.verified ? "VERIFIED" : "AUTO"}</span></div>
+            {active.source === "EVENT" ? <>
+              <p className="mt-2 text-sm text-slate-300">P{active.event.period} · min {active.event.minute} · {eventDescription(active.event, visibleRecords.find((record) => record.catalog.matchId === active.matchId)?.session.players ?? [])}</p>
+              {active.analysisDetail && <div className="mt-3 rounded-xl border border-cyan-900/60 bg-cyan-950/20 p-3"><div className="flex flex-wrap gap-2">{active.analysisDetail.category && <span className="rounded-full bg-violet-950 px-2 py-1 text-[9px] font-black text-violet-200">{active.analysisDetail.category}</span>}{active.analysisDetail.tags.map((tag) => <span key={tag} className="rounded-full bg-slate-800 px-2 py-1 text-[9px] font-bold text-slate-200">{tag}</span>)}</div>{active.analysisDetail.comment && <p className="mt-2 text-sm text-slate-300">{active.analysisDetail.comment}</p>}</div>}
+            </> : <><p className="mt-2 text-sm text-slate-300">{active.clip.tags.join(" · ") || "Sin etiquetas"}</p>{active.clip.comment && <p className="mt-2 text-sm text-slate-400">{active.clip.comment}</p>}</>}
+            {writeActions.canEdit && <div className="mt-3 flex flex-wrap gap-2"><Link href={editHref} className="inline-grid min-h-11 place-items-center rounded-xl bg-violet-500 px-4 text-xs font-black text-slate-950">EDITAR</Link>{active.source === "EVENT" && <button type="button" onClick={beginEventDetails} className="min-h-11 rounded-xl bg-cyan-950 px-4 text-xs font-black text-cyan-200">DETALLES</button>}{active.source === "CLIP" && <button type="button" onClick={() => { if (window.confirm("¿Eliminar este clip de análisis?")) { ensureMatch(active.matchId); window.setTimeout(() => { removeClip(active.matchId, active.clip.id); setRecords(readLocalRecords()); }, 0); } }} className="min-h-11 rounded-xl bg-rose-950 px-4 text-xs font-black text-rose-200">ELIMINAR</button>}</div>}
+          </article>
+          {editingEventDetails && active.source === "EVENT" && <section role="dialog" aria-label="Detalles de análisis del evento" className="mt-3 rounded-2xl border border-cyan-800 bg-slate-950 p-4">
+            <div className="flex items-center justify-between gap-3"><div><strong className="text-xs text-cyan-200">DETALLES DE ANÁLISIS</strong><p className="text-[10px] text-slate-500">Metadata audiovisual; no modifica el evento deportivo.</p></div><button type="button" onClick={() => setEditingEventDetails(false)} className="min-h-10 rounded-lg px-3 text-xs">✕</button></div>
+            <label className="mt-3 block text-[10px] font-black text-slate-400">TEMÁTICA<select value={eventCategory} onChange={(event) => setEventCategory(event.target.value as MatchVideoAnalysisTheme | "")} className="mt-1 min-h-11 w-full rounded-xl bg-slate-900 px-3 text-sm"><option value="">SIN TEMÁTICA</option>{VIDEO_CLIP_SUGGESTED_CATEGORIES.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+            <label className="mt-3 block text-[10px] font-black text-slate-400">COMENTARIO<textarea value={eventComment} maxLength={VIDEO_EVENT_ANALYSIS_COMMENT_MAX} onChange={(event) => setEventComment(event.target.value)} rows={3} className="mt-1 w-full rounded-xl bg-slate-900 p-3 text-sm" placeholder="Observación de análisis"/></label>
+            <div className="mt-3"><span className="text-[10px] font-black text-slate-400">ETIQUETAS</span><div className="mt-2 flex flex-wrap gap-2">{eventTags.map((tag) => <button type="button" key={tag} onClick={() => setEventTags((current) => current.filter((item) => item !== tag))} className="rounded-full bg-violet-950 px-3 py-2 text-[10px] font-bold text-violet-200">{tag} ✕</button>)}</div><div className="mt-2 flex gap-2"><input list="video-analysis-tags" value={eventTagDraft} maxLength={VIDEO_EVENT_ANALYSIS_TAG_MAX} onChange={(event) => setEventTagDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addEventTag(); } }} className="min-h-11 min-w-0 flex-1 rounded-xl bg-slate-900 px-3 text-sm" placeholder="Añadir etiqueta"/><datalist id="video-analysis-tags">{tags.map((tag) => <option key={tag} value={tag}/>)}</datalist><button type="button" onClick={addEventTag} className="min-h-11 rounded-xl bg-slate-800 px-4 text-xs font-black">AÑADIR</button></div></div>
+            <div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setEditingEventDetails(false)} className="min-h-11 rounded-xl bg-slate-800 px-4 text-xs font-black">CANCELAR</button><button type="button" onClick={persistEventDetails} className="min-h-11 rounded-xl bg-cyan-400 px-4 text-xs font-black text-slate-950">GUARDAR</button></div>
+          </section>}
+        </>}
       </section>
       {!cinemaMode && <section className="max-h-[75vh] space-y-2 overflow-y-auto rounded-3xl border border-slate-800 bg-slate-900 p-2">{items.map((item, index) => {
         const marked = selectedKeys.includes(item.key);

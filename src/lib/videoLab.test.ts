@@ -23,6 +23,8 @@ import {
   proposeVideoSportsInsertion,
   removeVideoAnalysisClip,
   shiftVideoSecond,
+  upsertVideoEventAnalysisDetail,
+  videoAnalysisTagSuggestions,
   videoClipTagSuggestions,
   verifyVideoLabEvent,
   videoLabEventActionState,
@@ -275,6 +277,32 @@ test("editar clip conserva identidad y creación; eliminarlo no altera MatchEven
   const removed = removeVideoAnalysisClip(withClip, original.id);
   assert.deepEqual(removed.videoAnalysisClips, []);
   assert.deepEqual(removed.events, events);
+});
+
+test("detalles audiovisuales de evento añaden, editan y limpian comentario, tags y temática sin tocar MatchEvent", () => {
+  const session = buildSession([video("first", "abcdefghijk", [1], [{ id: "a1", eventId: "p1-shot", videoSecond: 100 }])]);
+  const immutableEvent = structuredClone(session.events.find((event) => event.id === "p1-shot"));
+  const created = upsertVideoEventAnalysisDetail(session, "p1-shot", { category: "OFENSIVO", tags: [" presión ", "Presión"], comment: " Buena salida " }, 10);
+  assert.deepEqual(created.videoEventAnalysisDetails, [{ matchId: session.matchId, eventId: "p1-shot", category: "OFENSIVO", tags: ["Presión"], comment: "Buena salida", createdAt: 10, updatedAt: 10 }]);
+  const edited = upsertVideoEventAnalysisDetail(created, "p1-shot", { category: "INDIVIDUAL", tags: ["técnica"], comment: "Segundo análisis" }, 20);
+  assert.equal(edited.videoEventAnalysisDetails?.length, 1);
+  assert.equal(edited.videoEventAnalysisDetails?.[0].createdAt, 10);
+  assert.equal(edited.videoEventAnalysisDetails?.[0].updatedAt, 20);
+  assert.deepEqual(edited.events.find((event) => event.id === "p1-shot"), immutableEvent);
+  const cleared = upsertVideoEventAnalysisDetail(edited, "p1-shot", { tags: [], comment: "" }, 30);
+  assert.deepEqual(cleared.videoEventAnalysisDetails, []);
+  assert.deepEqual(cleared.events.find((event) => event.id === "p1-shot"), immutableEvent);
+});
+
+test("detalle de evento persiste en reload y comparte sugerencias con clips", () => {
+  const session = buildSession([video("first", "abcdefghijk", [1], [{ id: "a1", eventId: "p1-shot", videoSecond: 100 }])]);
+  const withDetail = upsertVideoEventAnalysisDetail(session, "p1-shot", { category: "RIVAL", tags: ["presión rival"], comment: "Cerrar segundo palo" }, 40);
+  const values = new Map<string, string>();
+  const storage: LocalStorageAdapter = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); } };
+  assert.equal(saveMatchSession(withDetail, storage, 50).ok, true);
+  const reloaded = loadMatchSession(session.matchId, storage)!;
+  assert.deepEqual(reloaded.videoEventAnalysisDetails, withDetail.videoEventAnalysisDetails);
+  assert.deepEqual(videoAnalysisTagSuggestions([], reloaded.videoEventAnalysisDetails ?? []), ["presión rival"]);
 });
 
 test("filtros de trabajo del Video Lab combinan jugador, evento, periodo, lado y VERIFIED", () => {

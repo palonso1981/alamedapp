@@ -48,6 +48,7 @@ export function remoteMatchSession(metadata: MatchRemoteMetadata, events: MatchE
     videoSegments: metadata.videoSegments ?? [],
     videoEventOverrides: metadata.videoEventOverrides ?? [],
     videoAnalysisClips: metadata.videoAnalysisClips ?? [],
+    videoEventAnalysisDetails: metadata.videoEventAnalysisDetails ?? [],
     events,
     past: [],
     future: [],
