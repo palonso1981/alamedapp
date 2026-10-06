@@ -25,6 +25,7 @@
     "src/lib/contextualPlacement.ts",
     "src/lib/courtGeometry.ts",
     "src/lib/matchReview.ts",
+    "src/lib/eventReview.test.ts",
     "src/lib/sync/syncTypes.ts",
     "src/lib/sync/localMatchRepository.ts",
     "src/lib/sync/matchVideoConflict.ts",

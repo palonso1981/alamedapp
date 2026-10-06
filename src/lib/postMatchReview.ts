@@ -42,7 +42,7 @@ export function reviewEventCounts(events: readonly MatchEvent[]): ReviewEventCou
     fouls: active.filter((event) => event.type === "foul_recorded").length,
     possessionLosses: active.filter((event) => event.type === "possession_lost").length,
     cards: active.filter((event) => event.type === "card_recorded").length,
-    pending: active.filter((event) => event.pendingReview).length,
+    pending: active.filter((event) => event.pendingReview || event.reviewState === "PENDING_REVIEW").length,
     manualReview: active.filter((event) => event.provenance === "MANUAL_REVIEW").length,
   };
 }

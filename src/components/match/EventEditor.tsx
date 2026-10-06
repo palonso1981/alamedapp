@@ -37,7 +37,10 @@ export function EventEditor({ event, events, entry, players, staff, onSave, onCl
   );
 
   const save = () => {
-    const changes: EventEditChanges = { pendingReview: draft.pendingReview };
+    const changes: EventEditChanges = {
+      pendingReview: draft.pendingReview,
+      reviewState: draft.reviewState === "PENDING_REVIEW" ? "PENDING_REVIEW" : null,
+    };
     if (draft.type === "substitution") changes.substitution = { playerOutId: draft.playerOutId, playerInId: draft.playerInId };
     if (draft.type === "threat_recorded") changes.threat = { side: draft.side, playerId: draft.playerId, origin: draft.origin, ...(!draft.parentEventId ? { phase: draft.phase as LiveThreatPhase } : {}), outcome: draft.outcome, sequenceId: draft.sequenceId, parentEventId: draft.parentEventId, restartEventId: draft.restartEventId, assist: draft.side === "FOR" && draft.outcome === "GOL" ? draft.assist ?? { status: "NONE" } : null, defensive: draft.side === "AGAINST" ? draft.defensive ?? null : null };
     if (draft.type === "foul_recorded") changes.foul = { side: draft.side, playerId: draft.playerId, origin: draft.origin };
@@ -110,7 +113,8 @@ export function EventEditor({ event, events, entry, players, staff, onSave, onCl
         {draft.type === "restart_recorded" && <div className="mt-4 grid grid-cols-3 gap-2"><Select label="Equipo" value={draft.side} onChange={(side) => setDraft({ ...draft, side: side as "FOR" | "AGAINST" })} options={[{ value: "FOR", label: "CDA" }, { value: "AGAINST", label: "Rival" }]} /><Select label="Reinicio" value={draft.restart} onChange={(restart) => setDraft({ ...draft, restart: restart as typeof draft.restart })} options={[{ value: "CORNER", label: "Córner" }, { value: "DANGEROUS_KICK_IN", label: "Banda cercana" }]} /><Select label="Lado" value={draft.spatialSide} onChange={(spatialSide) => setDraft({ ...draft, spatialSide: spatialSide as typeof draft.spatialSide })} options={[{ value: "TOP", label: "Superior" }, { value: "BOTTOM", label: "Inferior" }]} /></div>}
         {draft.type === "foul_count_adjusted" && <div className="mt-4 grid grid-cols-2 gap-2"><Select label="Equipo" value={draft.side} onChange={(side) => setDraft({ ...draft, side: side as "FOR" | "AGAINST" })} options={[{ value: "FOR", label: "CDA" }, { value: "AGAINST", label: "Rival" }]} /><Select label="Ajuste" value={String(draft.delta)} onChange={(delta) => setDraft({ ...draft, delta: Number(delta) as 1 | -1 })} options={[{ value: "1", label: "+1" }, { value: "-1", label: "−1" }]} /></div>}
 
-        <label className="mt-4 flex min-h-12 items-center gap-3 rounded-xl border border-amber-900 bg-amber-950/30 px-3"><input type="checkbox" checked={draft.pendingReview} onChange={(change) => setDraft({ ...draft, pendingReview: change.target.checked })} className="h-5 w-5" /><span className="font-bold text-amber-200">? Pendiente de revisión</span></label>
+        <label className="mt-4 flex min-h-12 items-center gap-3 rounded-xl border border-amber-900 bg-amber-950/30 px-3"><input type="checkbox" checked={draft.pendingReview} onChange={(change) => setDraft({ ...draft, pendingReview: change.target.checked })} className="h-5 w-5" /><span><strong className="block text-sm text-amber-200">DATOS INCOMPLETOS</strong><span className="block text-[10px] text-amber-300">La acción sigue computando; falta resolver algún dato deportivo.</span></span></label>
+        <label className="mt-2 flex min-h-12 items-center gap-3 rounded-xl border border-orange-700 bg-orange-950/40 px-3"><input type="checkbox" checked={draft.reviewState === "PENDING_REVIEW"} onChange={(change) => setDraft({ ...draft, reviewState: change.target.checked ? "PENDING_REVIEW" : undefined })} className="h-5 w-5" /><span><strong className="block text-sm text-orange-100">? PENDIENTE · NO COMPUTA</strong><span className="block text-[10px] text-orange-300">Se conserva para revisión, pero queda fuera del replay y las estadísticas.</span></span></label>
         <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={onClose} className="min-h-12 rounded-xl bg-slate-800 px-5 font-bold">Cancelar</button><button type="button" onClick={save} className="min-h-12 rounded-xl bg-cyan-600 px-6 font-black">Guardar y recalcular</button></div>
       </div>
     </div>

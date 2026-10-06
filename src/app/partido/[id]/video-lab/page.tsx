@@ -66,6 +66,7 @@ export default function VideoLabPage() {
   const [composer, setComposer] = useState<"EVENT" | "CLIP" | null>(null);
   const [editingClipId, setEditingClipId] = useState<string | null>(null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [pendingOnly, setPendingOnly] = useState(false);
   const [workFilters, setWorkFilters] = useState<VideoLibraryFilters>(() => videoLibraryFiltersFromSearchParams(searchParams, "ALL"));
 
   useEffect(() => { if (!fixtureSession) ensureMatch(matchId); }, [ensureMatch, fixtureSession, matchId]);
@@ -74,7 +75,11 @@ export default function VideoLabPage() {
     if (!segments.some((segment) => segment.id === segmentId)) setSegmentId(segments[0]?.id ?? "");
   }, [segmentId, segments]);
   const rows = useMemo(() => session ? buildVideoLabTimeline(session) : [], [session]);
-  const filteredRows = useMemo(() => filterVideoLabTimeline(rows, workFilters), [rows, workFilters]);
+  const baseFilteredRows = useMemo(() => filterVideoLabTimeline(rows, workFilters), [rows, workFilters]);
+  const filteredRows = useMemo(
+    () => pendingOnly ? baseFilteredRows.filter((row) => row.event.reviewState === "PENDING_REVIEW") : baseFilteredRows,
+    [baseFilteredRows, pendingOnly],
+  );
   const visibleSegments = useMemo(() => segments.filter((candidate) => workFilters.periods.length === 0 || workFilters.periods.includes(candidate.period)), [segments, workFilters.periods]);
   const segment = segments.find((candidate) => candidate.id === segmentId);
   const segmentRows = filteredRows.filter((row) => row.syncSegmentId === segmentId);
@@ -134,6 +139,8 @@ export default function VideoLabPage() {
   const upsertVideoAnalysisClip = useMatchStore((state) => state.upsertVideoAnalysisClip);
   const removeVideoAnalysisClip = useMatchStore((state) => state.removeVideoAnalysisClip);
   const editAndReorderEvent = useMatchStore((state) => state.editAndReorderEvent);
+  const setEventReviewPending = useMatchStore((state) => state.setEventReviewPending);
+  const softDeleteEvent = useMatchStore((state) => state.softDeleteEvent);
   const readPlayerSecond = useCallback(() => playerRef.current?.currentSecond() ?? currentSecond, [currentSecond]);
   const verifySelected = (videoSecond?: number, timeSource?: "manual", advance = false) => {
     if (!session || !selectedRow || !canWrite) return;
@@ -171,7 +178,9 @@ export default function VideoLabPage() {
       editorIntentAppliedRef.current = true;
     }
   }, [canWrite, clips, searchParams, session?.events]);
-  const editingEntry = useMemo(() => session && editingEvent ? replayMatch(session.players, session.events).timeline.find((entry) => entry.event.id === editingEvent.id) : undefined, [editingEvent, session]);
+  const editingEntry = useMemo(() => session && editingEvent
+    ? replayMatch(session.players, session.events.map((event) => event.id === editingEvent.id ? { ...event, reviewState: undefined } : event)).timeline.find((entry) => entry.event.id === editingEvent.id)
+    : undefined, [editingEvent, session]);
   const returnToVideo = safeVideoLibraryReturnHref(searchParams.get("returnTo"));
   const updateFilter = <K extends keyof VideoLibraryFilters>(key: K, value: VideoLibraryFilters[K]) => setWorkFilters((current) => ({ ...current, [key]: value }));
   const playerOptions = useMemo(() => (session?.players ?? []).map((player) => option(player.id, `#${player.number} ${player.name}`)), [session?.players]);
@@ -230,6 +239,7 @@ export default function VideoLabPage() {
                 </div>
                 <button type="button" role="switch" aria-checked={workFilters.verifiedOnly} onClick={() => updateFilter("verifiedOnly", !workFilters.verifiedOnly)} className={`min-h-11 rounded-xl px-4 text-xs font-black ${workFilters.verifiedOnly ? "bg-emerald-400 text-slate-950" : "bg-slate-800"}`}>SOLO VERIFICADOS · {workFilters.verifiedOnly ? "ON" : "OFF"}</button>
                 <CompactMultiSelect label="PERIODO" allLabel="P1 + P2" values={workFilters.periods.map(String)} options={[option("1", "P1"), option("2", "P2")]} onChange={(values) => updateFilter("periods", values.map(Number))}/>
+                <button type="button" role="switch" aria-checked={pendingOnly} onClick={() => setPendingOnly((current) => !current)} className={`min-h-11 rounded-xl px-4 text-xs font-black ${pendingOnly ? "bg-orange-400 text-slate-950" : "bg-slate-800 text-orange-200"}`}>? PENDIENTES · {pendingOnly ? "ON" : "OFF"}</button>
                 <button type="button" onClick={() => setWorkFilters({ ...EMPTY_VIDEO_LIBRARY_FILTERS })} className="min-h-11 rounded-xl border border-slate-700 px-4 text-xs font-black text-slate-300">LIMPIAR</button>
               </div>
             </section>
@@ -247,6 +257,7 @@ export default function VideoLabPage() {
                 {composer === "EVENT" && selectedRow && <div className="mt-3"><VideoSportsEventComposer session={session} referenceEventId={selectedRow.event.id} segment={segment} videoSecond={readPlayerSecond()} onSave={(event, override) => { addVideoLabEvent(matchId, event, override); setSelectedEventId(event.id); setComposer(null); }} onCancel={() => setComposer(null)}/></div>}
                 {composer === "CLIP" && <div className="mt-3"><VideoClipComposer session={session} segment={segment} currentSecond={readPlayerSecond} onSave={(clip) => { upsertVideoAnalysisClip(matchId, clip); setComposer(null); }} onCancel={() => setComposer(null)}/></div>}
                 {editingClip && segment?.id === editingClip.segmentId && <div className="mt-3"><VideoClipComposer session={session} segment={segment} initialClip={editingClip} currentSecond={readPlayerSecond} onSave={(clip) => { upsertVideoAnalysisClip(matchId, clip); setEditingClipId(null); }} onCancel={() => setEditingClipId(null)}/></div>}
+                {selectedRow && <section aria-label="Revisión deportiva del evento" className="mt-3 rounded-2xl border border-orange-900/70 bg-orange-950/20 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[10px] font-black tracking-wide text-orange-300">REVISIÓN DEPORTIVA</p><p className="text-xs text-slate-300">Corrige el evento canónico sin alterar su vínculo audiovisual.</p></div>{selectedRow.event.reviewState === "PENDING_REVIEW" && <span className="rounded-full bg-orange-400 px-3 py-1 text-[10px] font-black text-slate-950">? PENDIENTE · NO COMPUTA</span>}</div>{canWrite && <div className="mt-3 grid gap-2 sm:grid-cols-3"><button type="button" onClick={() => { setComposer(null); setEditingEventId(selectedRow.event.id); }} className="min-h-11 rounded-xl bg-cyan-700 px-3 text-xs font-black">EDITAR EVENTO</button><button type="button" onClick={() => setEventReviewPending(matchId, selectedRow.event.id, selectedRow.event.reviewState !== "PENDING_REVIEW")} className={`min-h-11 rounded-xl px-3 text-xs font-black ${selectedRow.event.reviewState === "PENDING_REVIEW" ? "bg-emerald-600" : "bg-orange-500 text-slate-950"}`}>{selectedRow.event.reviewState === "PENDING_REVIEW" ? "✓ CONFIRMAR EVENTO" : "? MARCAR PENDIENTE"}</button><button type="button" onClick={() => { if (window.confirm("¿Eliminar este evento deportivo? Se conservará un tombstone y no se borrarán sus referencias audiovisuales.")) { softDeleteEvent(matchId, selectedRow.event.id); setEditingEventId(null); setSelectedEventId(null); } }} className="min-h-11 rounded-xl bg-rose-950 px-3 text-xs font-black text-rose-200">ELIMINAR EVENTO</button></div>}</section>}
                 <section className="mt-3 rounded-2xl border border-violet-900/70 bg-violet-950/20 p-3">
                   <div className="flex items-center justify-between"><p className="text-xs font-black text-violet-200">CLIPS GUARDADOS ({filteredClips.length}/{clips.length})</p><Link href={`/video?vMatch=${encodeURIComponent(matchId)}&vSource=all`} className="text-[10px] font-black text-cyan-300">VER EN BIBLIOTECA →</Link></div>
                   {filteredClips.length === 0 ? <p className="mt-2 text-xs text-slate-500">No hay clips para estos filtros.</p> : <div className="mt-2 grid gap-2 sm:grid-cols-2">{filteredClips.map((clip) => <article key={clip.id} className="rounded-xl bg-slate-900 p-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-sm">{clip.category || clip.tags[0] || "Clip de análisis"}</strong><span className="font-mono text-[10px] text-cyan-300">{formatVideoTimestamp(clip.startSecond)}–{formatVideoTimestamp(clip.endSecond)}</span></div><span className="rounded-full bg-violet-950 px-2 py-1 text-[9px] font-black text-violet-200">{clip.endSecond - clip.startSecond}s</span></div>{clip.tags.length > 0 && <p className="mt-1 truncate text-[10px] text-slate-400">{clip.tags.join(" · ")}</p>}{clip.comment && <p className="mt-1 line-clamp-2 text-xs text-slate-300">{clip.comment}</p>}<div className="mt-2 grid grid-cols-3 gap-1"><button type="button" onClick={() => { setSegmentId(clip.segmentId); setEditingClipId(null); window.setTimeout(() => playerRef.current?.seekTo(clip.startSecond), 50); }} className="min-h-10 rounded-lg bg-cyan-950 text-[10px] font-black text-cyan-200">▶ ABRIR</button>{canWrite && <button type="button" onClick={() => { setComposer(null); setEditingClipId(clip.id); }} className="min-h-10 rounded-lg bg-slate-800 text-[10px] font-black">EDITAR</button>}{canWrite && <button type="button" onClick={() => { if (window.confirm("¿Eliminar este clip de análisis? No se modificará ningún evento deportivo.")) removeVideoAnalysisClip(matchId, clip.id); }} className="min-h-10 rounded-lg bg-rose-950 text-[10px] font-black text-rose-200">ELIMINAR</button>}</div></article>)}</div>}
@@ -264,9 +275,9 @@ export default function VideoLabPage() {
                     const active = row.event.id === activeRow?.event.id;
                     const selected = row.event.id === selectedRow?.event.id;
                     const past = (row.estimatedSecond ?? Infinity) < currentSecond && !active;
-                    return <button ref={(node) => { rowRefs.current[row.event.id] = node; }} key={row.event.id} type="button" onClick={() => chooseRow(row.event.id)} className={`grid min-h-14 w-full grid-cols-[52px_1fr_auto] items-center gap-2 rounded-xl border px-2 text-left transition ${selected ? "border-amber-300 bg-amber-300/10" : active ? "border-cyan-400 bg-cyan-400/10" : "border-transparent bg-slate-950/60"} ${past ? "opacity-45" : "opacity-100"}`}>
+                    return <button ref={(node) => { rowRefs.current[row.event.id] = node; }} key={row.event.id} type="button" onClick={() => chooseRow(row.event.id)} className={`grid min-h-14 w-full grid-cols-[52px_1fr_auto] items-center gap-2 rounded-xl border px-2 text-left transition ${selected ? "border-amber-300 bg-amber-300/10" : active ? "border-cyan-400 bg-cyan-400/10" : row.event.reviewState === "PENDING_REVIEW" ? "border-orange-700 bg-orange-950/30" : "border-transparent bg-slate-950/60"} ${past ? "opacity-45" : "opacity-100"}`}>
                       <span className="text-center text-[10px] font-black text-slate-400">P{row.event.period}<br />{row.event.minute}&apos;</span>
-                      <span><span className="block text-xs font-bold">{eventDescription(row.event, session.players, undefined, session.staff)}</span><span className="mt-1 block text-[9px] font-black tracking-wide text-slate-500">{row.temporalFamily === "LANDMARK" ? "HITO · SIN CLIP" : row.temporalFamily === "PREPARATORY_RESTART" ? "PREPARACIÓN" : row.clipEligible ? "CLIP" : "CONTEXTO"}</span></span>
+                      <span><span className="block text-xs font-bold">{eventDescription(row.event, session.players, undefined, session.staff)}</span><span className={`mt-1 block text-[9px] font-black tracking-wide ${row.event.reviewState === "PENDING_REVIEW" ? "text-orange-300" : "text-slate-500"}`}>{row.event.reviewState === "PENDING_REVIEW" ? "? PENDIENTE · NO COMPUTA" : row.temporalFamily === "LANDMARK" ? "HITO · SIN CLIP" : row.temporalFamily === "PREPARATORY_RESTART" ? "PREPARACIÓN" : row.clipEligible ? "CLIP" : "CONTEXTO"}</span></span>
                       <span className="text-right"><span className={`block text-[9px] font-black ${row.status === "VERIFIED" ? "text-emerald-300" : "text-amber-300"}`}>{row.status}</span><span className="font-mono text-[10px] text-slate-400">{row.estimatedSecond === undefined ? "—" : formatVideoTimestamp(row.estimatedSecond)}</span>{row.diagnostic.status === "DRIFT_WARNING" && <span className="block text-[9px] font-black text-rose-300">DERIVA</span>}</span>
                     </button>;
                   })}

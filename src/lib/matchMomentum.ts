@@ -1,7 +1,7 @@
 import { MatchEvent, MatchSession, ThreatPhase, ThreatRecordedEvent } from "../types";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
 import { deriveThreatOriginZone } from "./dashboardAnalysis";
-import { effectiveThreatPhase, REGULATION_MATCH_CLOCK, replayMatch, sortEvents } from "./matchEngine";
+import { effectiveThreatPhase, isActiveMatchEvent, REGULATION_MATCH_CLOCK, replayMatch, sortEvents } from "./matchEngine";
 
 export type MomentumDanger = "NORMAL" | "NEAR" | "HIGH" | "GOAL";
 export type MomentumDangerFilter = "ALL" | "NEAR" | "HIGH" | "GOAL";
@@ -188,7 +188,7 @@ export function buildMatchMomentum(
     replay.timeline.map((entry) => [entry.event.id, entry.lineupPlayerIds]),
   );
   const allActions = sortEvents(session.events).flatMap((event): MomentumAction[] => {
-    if (event.deletedAt !== null || event.type !== "threat_recorded") return [];
+    if (!isActiveMatchEvent(event) || event.type !== "threat_recorded") return [];
     const phase = effectiveThreatPhase(session.events, event);
     const danger = classifyMomentumDanger(event);
     const lineupPlayerIds = eventFitsRecordedPeriod(event, durations)

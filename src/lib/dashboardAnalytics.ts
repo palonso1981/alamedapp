@@ -15,6 +15,7 @@ import {
   deriveGlobalMinute,
   effectiveThreatPhase,
   goalkeeperAtPosition,
+  isActiveMatchEvent,
   REGULATION_MATCH_CLOCK,
   replayMatch,
 } from "./matchEngine";
@@ -192,7 +193,7 @@ function emptySaveOutcomes(): Record<SaveOutcome, number> {
 
 function activeEvents(session: MatchSession, period: DashboardPeriod): MatchEvent[] {
   return session.events.filter(
-    (event) => event.deletedAt === null && (period === "ALL" || event.period === period),
+    (event) => isActiveMatchEvent(event) && (period === "ALL" || event.period === period),
   );
 }
 
@@ -497,7 +498,7 @@ export function buildDashboardAnalytics(
       opponent: catalog.opponent,
       status: session.matchFinished ? "FINISHED" : catalog.status,
       reviewStatus: session.reviewStatus,
-      pendingReview: qualityEvents.filter((event) => event.pendingReview).length,
+      pendingReview: qualityEvents.filter((event) => event.pendingReview || event.reviewState === "PENDING_REVIEW").length,
       manualReviewEvents: qualityEvents.filter(
         (event) => event.provenance === "MANUAL_REVIEW",
       ).length,
