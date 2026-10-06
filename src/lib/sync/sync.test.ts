@@ -53,6 +53,7 @@ import { resetRuntimeCaptureContextsForTests, setRuntimeCaptureContext } from ".
 import { buildDashboardV2, emptyDashboardScope } from "../dashboardV2";
 import { listMatchCatalog, visibleMatchCatalog } from "../matchCatalog";
 import { remoteEnvelopePayload, remoteMatchSession } from "../access/accessRemoteHydration";
+import { MatchEvent } from "../../types";
 
 class MemoryStorage implements LocalStorageAdapter {
   protected readonly values = new Map<string, string>();
@@ -1137,6 +1138,65 @@ test("crear y editar dos veces offline sincroniza solo la versión final", async
   const remoteEvent = remote.documents.get(`${session.matchId}:event:${foul.id}`)?.payload as typeof foul;
   assert.equal(remoteEvent.minute, 6);
   assert.equal(remoteEvent.updatedAt, 12);
+});
+
+test("PENDING_REVIEW conserva eventId, outbox y revisión tras reload, retry y confirmación", async () => {
+  const storage = new MemoryStorage();
+  const local = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  const remote = new InMemoryRemoteMatchRepository();
+  const coordinator = new MatchSyncCoordinator(local, remote, { isOnline: () => true });
+  const session = createSession("pending-review-sync");
+  const event = createPossessionLostEvent({
+    id: "pending-review-event",
+    matchId: session.matchId,
+    position: { period: 1, minute: 4, order: 1 },
+    playerId: "p1",
+    now: 10,
+  });
+  const active = { ...session, events: [...session.events, event] };
+  local.save(active);
+  await coordinator.syncMatch(session.matchId);
+
+  const pendingEvents = editEvent(
+    session.players,
+    active.events,
+    event.id,
+    { reviewState: "PENDING_REVIEW" },
+    11,
+  );
+  local.save({ ...session, events: pendingEvents });
+  const eventOperations = local.getSyncState(session.matchId).outbox.filter(
+    (operation) => operation.entityType === "EVENT" && operation.entityId === event.id,
+  );
+  assert.equal(eventOperations.length, 1);
+  assert.equal((eventOperations[0].payload as MatchEvent).reviewState, "PENDING_REVIEW");
+
+  const reopened = new LocalMatchRepository({ storage, idFactory: idFactory() });
+  assert.equal(
+    reopened.load(session.matchId)?.events.find((candidate) => candidate.id === event.id)?.reviewState,
+    "PENDING_REVIEW",
+  );
+  await new MatchSyncCoordinator(reopened, remote, { isOnline: () => true }).syncMatch(session.matchId);
+  const remoteKey = `${session.matchId}:event:${event.id}`;
+  assert.equal((remote.documents.get(remoteKey)?.payload as MatchEvent).reviewState, "PENDING_REVIEW");
+  assert.equal(remote.documents.get(remoteKey)?.revision, 2);
+  assert.equal(reopened.getSummary(session.matchId).pending, 0);
+  assert.equal(reopened.getSummary(session.matchId).conflicts, 0);
+
+  const confirmedEvents = editEvent(
+    session.players,
+    reopened.load(session.matchId)!.events,
+    event.id,
+    { reviewState: null },
+    12,
+  );
+  reopened.save({ ...reopened.load(session.matchId)!, events: confirmedEvents });
+  await new MatchSyncCoordinator(reopened, remote, { isOnline: () => true }).syncMatch(session.matchId);
+  const confirmed = remote.documents.get(remoteKey);
+  assert.equal((confirmed?.payload as MatchEvent).reviewState, undefined);
+  assert.equal(confirmed?.revision, 3);
+  assert.equal(reopened.getSummary(session.matchId).pending, 0);
+  assert.equal(reopened.getSummary(session.matchId).conflicts, 0);
 });
 
 test("conflicto conserva payload local y remoto sin sobrescribir", async () => {

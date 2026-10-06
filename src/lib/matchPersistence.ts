@@ -267,6 +267,7 @@ function hasEventBase(value: Record<string, unknown>, matchId: string): boolean 
     typeof value.updatedAt === "number" &&
     (value.deletedAt === null || typeof value.deletedAt === "number") &&
     typeof value.pendingReview === "boolean" &&
+    (value.reviewState === undefined || value.reviewState === "PENDING_REVIEW") &&
     (value.provenance === undefined ||
       ["LIVE", "MANUAL_REVIEW", "IMPORT", "VIDEO", "OFFICIAL_ACT"].includes(
         String(value.provenance),

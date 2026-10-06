@@ -19,6 +19,7 @@ import {
 } from "./dashboardAnalytics";
 import {
   deriveGlobalMinute,
+  isActiveMatchEvent,
   REGULATION_MATCH_CLOCK,
   replayMatch,
 } from "./matchEngine";
@@ -296,7 +297,7 @@ function observedMinutes(session: MatchSession, period: DashboardPeriod): number
 }
 
 function eventsFor(session: MatchSession, period: DashboardPeriod): MatchEvent[] {
-  return session.events.filter((event) => event.deletedAt === null && (period === "ALL" || event.period === period));
+  return session.events.filter((event) => isActiveMatchEvent(event) && (period === "ALL" || event.period === period));
 }
 
 function resultFor(record: DashboardMatchRecord): Exclude<ResultFilter, "ALL"> | null {
@@ -481,7 +482,7 @@ export function buildDashboardAnalysis(
 
   const trends = selected.map((record) => {
     const one = buildDashboardAnalytics([record], { ...dashboardScope, matchId: record.catalog.matchId });
-    const threats = record.session.events.filter((event): event is ThreatRecordedEvent => event.type === "threat_recorded" && event.deletedAt === null && (period === "ALL" || event.period === period));
+    const threats = record.session.events.filter((event): event is ThreatRecordedEvent => event.type === "threat_recorded" && isActiveMatchEvent(event) && (period === "ALL" || event.period === period));
     const shotsOnTarget = threats.filter((event) => event.side === "FOR" && (event.outcome === "GOL" || event.outcome === "PARADA")).length;
     const threatsOnTarget = threats.filter((event) => event.side === "AGAINST" && (event.outcome === "GOL" || event.outcome === "PARADA")).length;
     const shotsNear = threats.filter((event) => event.side === "FOR" && ["Z1", "Z2", "Z3"].includes(deriveThreatOriginZone(event.origin, event.side))).length;
@@ -658,7 +659,7 @@ export function buildDashboardAnalysis(
       goalsAgainst40: per40(analytics.goalsAgainst, totalMinutes),
       foulsFor40: per40(analytics.discipline.for.fouls, totalMinutes),
       foulsAgainst40: per40(analytics.discipline.against.fouls, totalMinutes),
-      possessionLosses40: per40(selected.flatMap((record) => record.session.events).filter((event) => event.deletedAt === null && event.type === "possession_lost").length, totalMinutes),
+      possessionLosses40: per40(selected.flatMap((record) => record.session.events).filter((event) => isActiveMatchEvent(event) && event.type === "possession_lost").length, totalMinutes),
     },
     players: players.sort((a, b) => b.minutes - a.minutes || a.number - b.number),
     goalkeepers,
@@ -668,7 +669,7 @@ export function buildDashboardAnalysis(
     pitchZones,
     goalZones,
     criticalFouls,
-    possessionLosses: selected.flatMap((record) => record.session.events).filter((event) => event.deletedAt === null && event.type === "possession_lost").length,
+    possessionLosses: selected.flatMap((record) => record.session.events).filter((event) => isActiveMatchEvent(event) && event.type === "possession_lost").length,
     flyingGoalkeeper,
   };
 }

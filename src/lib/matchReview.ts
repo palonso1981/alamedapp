@@ -14,7 +14,7 @@ export function filterTimelineEvents(
 ): MatchEvent[] {
   const visible = events.filter((event) => event.type !== "lineup_initialized");
   const filtered = filter === "PENDING"
-    ? visible.filter((event) => event.pendingReview && event.deletedAt === null)
+    ? visible.filter((event) => (event.pendingReview || event.reviewState === "PENDING_REVIEW") && event.deletedAt === null)
     : filter === "DELETED"
       ? visible.filter((event) => event.deletedAt !== null)
       : visible.filter((event) => event.deletedAt === null);
