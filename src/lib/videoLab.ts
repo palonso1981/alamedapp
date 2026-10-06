@@ -15,12 +15,17 @@ import {
   MatchEvent,
   MatchSession,
   MatchVideoAnalysisClip,
+  MatchVideoAnalysisTheme,
+  MatchVideoEventAnalysisDetail,
   MatchVideoEventOverride,
   MatchVideoPeriod,
   MatchVideoSegment,
 } from "../types";
 
 export const VIDEO_CLIP_SUGGESTED_CATEGORIES = ["OFENSIVO", "DEFENSIVO", "ESTRATEGIA", "RIVAL", "INDIVIDUAL"] as const;
+export const VIDEO_EVENT_ANALYSIS_COMMENT_MAX = 1000;
+export const VIDEO_EVENT_ANALYSIS_TAG_MAX = 60;
+export const VIDEO_EVENT_ANALYSIS_TAGS_MAX = 20;
 
 export interface VideoLabEventActionState {
   visible: boolean;
@@ -145,6 +150,68 @@ export function videoClipTagSuggestions(clips: readonly MatchVideoAnalysisClip[]
   return Array.from(stats.entries())
     .sort((a, b) => b[1].count - a[1].count || b[1].updatedAt - a[1].updatedAt || a[0].localeCompare(b[0]))
     .map(([tag]) => tag);
+}
+
+export function videoAnalysisTagSuggestions(
+  clips: readonly MatchVideoAnalysisClip[],
+  details: readonly MatchVideoEventAnalysisDetail[],
+): string[] {
+  const combined = [
+    ...clips.map((item) => ({ tags: item.tags, updatedAt: item.updatedAt })),
+    ...details.map((item) => ({ tags: item.tags, updatedAt: item.updatedAt })),
+  ];
+  const stats = new Map<string, { label: string; count: number; updatedAt: number }>();
+  combined.forEach((item) => item.tags.forEach((rawTag) => {
+    const label = rawTag.trim().replace(/\s+/g, " ");
+    const key = label.toLocaleLowerCase("es");
+    if (!key) return;
+    const current = stats.get(key) ?? { label, count: 0, updatedAt: 0 };
+    stats.set(key, { label: current.label, count: current.count + 1, updatedAt: Math.max(current.updatedAt, item.updatedAt) });
+  }));
+  return Array.from(stats.values())
+    .sort((a, b) => b.count - a.count || b.updatedAt - a.updatedAt || a.label.localeCompare(b.label))
+    .map((item) => item.label);
+}
+
+export function upsertVideoEventAnalysisDetail(
+  session: MatchSession,
+  eventId: string,
+  input: { category?: MatchVideoAnalysisTheme; tags: readonly string[]; comment?: string },
+  now = Date.now(),
+): MatchSession {
+  if (!session.events.some((event) => event.id === eventId)) return session;
+  const previous = (session.videoEventAnalysisDetails ?? []).find((item) => item.eventId === eventId);
+  const tags = Array.from(new Map(input.tags.map((tag) => tag.trim().replace(/\s+/g, " ").slice(0, VIDEO_EVENT_ANALYSIS_TAG_MAX)).filter(Boolean).map((tag) => [tag.toLocaleLowerCase("es"), tag])).values()).slice(0, VIDEO_EVENT_ANALYSIS_TAGS_MAX);
+  const comment = input.comment?.trim().slice(0, VIDEO_EVENT_ANALYSIS_COMMENT_MAX);
+  const meaningful = Boolean(input.category || tags.length > 0 || comment);
+  const remaining = (session.videoEventAnalysisDetails ?? []).filter((item) => item.eventId !== eventId);
+  if (!meaningful) return { ...session, videoEventAnalysisDetails: remaining };
+  const detail: MatchVideoEventAnalysisDetail = {
+    matchId: session.matchId,
+    eventId,
+    ...(input.category ? { category: input.category } : {}),
+    tags,
+    ...(comment ? { comment } : {}),
+    createdAt: previous?.createdAt ?? now,
+    updatedAt: now,
+  };
+  return { ...session, videoEventAnalysisDetails: [...remaining, detail] };
+}
+
+export function renameVideoEventAnalysisTag(details: readonly MatchVideoEventAnalysisDetail[], from: string, to: string, now = Date.now()): MatchVideoEventAnalysisDetail[] {
+  const source = from.trim().replace(/\s+/g, " ").toLocaleLowerCase("es");
+  const target = to.trim().replace(/\s+/g, " ");
+  if (!source || !target) return [...details];
+  return details.map((detail) => detail.tags.some((tag) => tag.toLocaleLowerCase("es") === source)
+    ? { ...detail, tags: Array.from(new Map(detail.tags.map((tag) => tag.toLocaleLowerCase("es") === source ? target : tag).map((tag) => [tag.toLocaleLowerCase("es"), tag])).values()), updatedAt: now }
+    : detail);
+}
+
+export function removeVideoEventAnalysisTag(details: readonly MatchVideoEventAnalysisDetail[], tag: string, now = Date.now()): MatchVideoEventAnalysisDetail[] {
+  const key = tag.trim().replace(/\s+/g, " ").toLocaleLowerCase("es");
+  return details.map((detail) => detail.tags.some((candidate) => candidate.toLocaleLowerCase("es") === key)
+    ? { ...detail, tags: detail.tags.filter((candidate) => candidate.toLocaleLowerCase("es") !== key), updatedAt: now }
+    : detail);
 }
 
 export function removeVideoAnalysisClip(session: MatchSession, clipId: string): MatchSession {

@@ -10,11 +10,13 @@ import {
   MatchPreparation,
   MatchSession,
   MatchVideoAnalysisClip,
+  MatchVideoEventAnalysisDetail,
   MatchVideoEventOverride,
   MatchVideoSegment,
   Player,
   StaffMember,
 } from "../types";
+import { VIDEO_EVENT_ANALYSIS_COMMENT_MAX, VIDEO_EVENT_ANALYSIS_TAG_MAX, VIDEO_EVENT_ANALYSIS_TAGS_MAX } from "./videoLab";
 import {
   emptyMatchSyncState,
   migrateMatchSyncState,
@@ -58,6 +60,7 @@ interface PersistedMatchSession {
   videoSegments?: MatchVideoSegment[];
   videoEventOverrides?: MatchVideoEventOverride[];
   videoAnalysisClips?: MatchVideoAnalysisClip[];
+  videoEventAnalysisDetails?: MatchVideoEventAnalysisDetail[];
   events: MatchEvent[];
   past: MatchEvent[][];
   future: MatchEvent[][];
@@ -249,6 +252,17 @@ function isVideoAnalysisClip(value: unknown, expectedMatchId: string): value is 
     typeof value.createdAt === "number" &&
     typeof value.updatedAt === "number"
   );
+}
+
+function isVideoEventAnalysisDetail(value: unknown, expectedMatchId: string): value is MatchVideoEventAnalysisDetail {
+  if (!isObject(value)) return false;
+  return value.matchId === expectedMatchId &&
+    typeof value.eventId === "string" &&
+    (value.category === undefined || ["OFENSIVO", "DEFENSIVO", "INDIVIDUAL", "ESTRATEGIA", "RIVAL"].includes(String(value.category))) &&
+    isStringArray(value.tags) && value.tags.length <= VIDEO_EVENT_ANALYSIS_TAGS_MAX && value.tags.every((tag) => tag.length <= VIDEO_EVENT_ANALYSIS_TAG_MAX) &&
+    (value.comment === undefined || (typeof value.comment === "string" && value.comment.length <= VIDEO_EVENT_ANALYSIS_COMMENT_MAX)) &&
+    typeof value.createdAt === "number" &&
+    typeof value.updatedAt === "number";
 }
 
 function hasEventBase(value: Record<string, unknown>, matchId: string): boolean {
@@ -553,6 +567,7 @@ function migratePersistedSession(value: unknown): unknown {
     videoSegments: Array.isArray(value.videoSegments) ? value.videoSegments : [],
     videoEventOverrides: Array.isArray(value.videoEventOverrides) ? value.videoEventOverrides : [],
     videoAnalysisClips: Array.isArray(value.videoAnalysisClips) ? value.videoAnalysisClips : [],
+    videoEventAnalysisDetails: Array.isArray(value.videoEventAnalysisDetails) ? value.videoEventAnalysisDetails : [],
     events: migrateChronology(value.events, value.matchId),
     past: Array.isArray(value.past)
       ? value.past
@@ -692,6 +707,8 @@ function validPersistedSession(
       (!Array.isArray(value.videoEventOverrides) || !value.videoEventOverrides.every((item) => isVideoEventOverride(item, expectedMatchId)))) ||
     (value.videoAnalysisClips !== undefined &&
       (!Array.isArray(value.videoAnalysisClips) || !value.videoAnalysisClips.every((item) => isVideoAnalysisClip(item, expectedMatchId)))) ||
+    (value.videoEventAnalysisDetails !== undefined &&
+      (!Array.isArray(value.videoEventAnalysisDetails) || !value.videoEventAnalysisDetails.every((item) => isVideoEventAnalysisDetail(item, expectedMatchId)))) ||
     !isEventList(value.events, expectedMatchId) ||
     !Array.isArray(value.past) ||
     !value.past.every((events) => isEventList(events, expectedMatchId)) ||
@@ -706,9 +723,13 @@ function validPersistedSession(
     const past = value.past as MatchEvent[][];
     const future = value.future as MatchEvent[][];
     const videoOverrides = (value.videoEventOverrides ?? []) as MatchVideoEventOverride[];
+    const videoEventDetails = (value.videoEventAnalysisDetails ?? []) as MatchVideoEventAnalysisDetail[];
     const eventIds = new Set(events.map((event) => event.id));
     const overrideKeys = videoOverrides.map((item) => `${item.eventId}:${item.syncSegmentId ?? item.segmentId}`);
     if (overrideKeys.length !== new Set(overrideKeys).size || videoOverrides.some((item) => !eventIds.has(item.eventId))) {
+      return false;
+    }
+    if (videoEventDetails.length !== new Set(videoEventDetails.map((item) => item.eventId)).size || videoEventDetails.some((item) => !eventIds.has(item.eventId))) {
       return false;
     }
     const staffIds = new Set((value.staff as StaffMember[]).map((member) => member.id));
@@ -788,6 +809,7 @@ export function saveMatchRecord(
       videoSegments: session.videoSegments ?? [],
       videoEventOverrides: session.videoEventOverrides ?? [],
       videoAnalysisClips: session.videoAnalysisClips ?? [],
+      videoEventAnalysisDetails: session.videoEventAnalysisDetails ?? [],
       events: session.events,
       past: session.past,
       future: session.future,

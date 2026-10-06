@@ -1,4 +1,4 @@
-import { MatchEvent, MatchPreparation, MatchReviewStatus, MatchVideoAnalysisClip, MatchVideoEventOverride, MatchVideoSegment, Player, StaffMember } from "../../types";
+import { MatchEvent, MatchPreparation, MatchReviewStatus, MatchVideoAnalysisClip, MatchVideoEventAnalysisDetail, MatchVideoEventOverride, MatchVideoSegment, Player, StaffMember } from "../../types";
 
 export const MATCH_SYNC_SCHEMA_VERSION = 1 as const;
 export const MATCH_REMOTE_SCHEMA_VERSION = 1 as const;
@@ -35,6 +35,7 @@ export interface MatchRemoteMetadata {
   videoSegments?: MatchVideoSegment[];
   videoEventOverrides?: MatchVideoEventOverride[];
   videoAnalysisClips?: MatchVideoAnalysisClip[];
+  videoEventAnalysisDetails?: MatchVideoEventAnalysisDetail[];
   preparation?: MatchPreparation;
 }
 

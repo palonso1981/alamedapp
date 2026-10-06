@@ -6,7 +6,7 @@ import { GOAL_FRAME } from "./goalTarget";
 import { deriveGoalZoneV1, GoalZoneV1 } from "./spatialZones";
 import { isVideoReviewableEvent } from "./videoReview";
 import { resolveEventVideoPosition } from "./videoIndex";
-import { DominantFoot, MatchEvent, MatchVenue, MatchVideoAnalysisClip, ThreatOutcome, ThreatPhase, ThreatSide } from "../types";
+import { DominantFoot, MatchEvent, MatchVenue, MatchVideoAnalysisClip, MatchVideoEventAnalysisDetail, ThreatOutcome, ThreatPhase, ThreatSide } from "../types";
 
 export type VideoLibrarySource = "EVENT" | "CLIP";
 export type VideoLibrarySourceFilter = "ALL" | VideoLibrarySource;
@@ -72,6 +72,7 @@ interface BaseVideoLibraryItem {
 export interface VideoLibraryEventItem extends BaseVideoLibraryItem {
   source: "EVENT";
   event: MatchEvent;
+  analysisDetail?: MatchVideoEventAnalysisDetail;
   title: string;
 }
 
@@ -221,6 +222,7 @@ function eventItems(records: readonly DashboardMatchRecord[], scope?: DashboardS
     const resolution = resolveEventVideoPosition(record.session, event.id);
     if (resolution.status !== "RESOLVED") return [];
     const verified = (record.session.videoEventOverrides ?? []).some((override) => override.eventId === event.id && override.status === "VERIFIED");
+    const analysisDetail = (record.session.videoEventAnalysisDetails ?? []).find((detail) => detail.eventId === event.id);
     return [{
       key: `EVENT:${record.catalog.matchId}:${event.id}`,
       source: "EVENT" as const,
@@ -241,6 +243,7 @@ function eventItems(records: readonly DashboardMatchRecord[], scope?: DashboardS
       playerIds: videoEventPlayerIds(event),
       dominantFeet: playerFeet(record, videoEventPlayerIds(event)),
       event,
+      ...(analysisDetail ? { analysisDetail } : {}),
       title: eventDescription(event, record.session.players, undefined, record.session.staff),
     }];
   }));
@@ -323,8 +326,10 @@ function filterItems(items: VideoLibraryItem[], filters: VideoLibraryFilters): V
       const zone = deriveGoalZoneV1(item.event.defensive.goalTarget, GOAL_FRAME);
       if (zone.startsWith("OUT_") || !filters.targetZones.includes(zone as GoalZoneV1)) return false;
     }
-    if (filters.themes.length > 0 && (item.source !== "CLIP" || !item.clip.category || !filters.themes.includes(item.clip.category))) return false;
-    if (filters.tags.length > 0 && (item.source !== "CLIP" || !filters.tags.some((tag) => item.clip.tags.some((candidate) => candidate.toLocaleLowerCase("es") === tag.toLocaleLowerCase("es"))))) return false;
+    const category = item.source === "CLIP" ? item.clip.category : item.analysisDetail?.category;
+    const tags = item.source === "CLIP" ? item.clip.tags : item.analysisDetail?.tags ?? [];
+    if (filters.themes.length > 0 && (!category || !filters.themes.includes(category))) return false;
+    if (filters.tags.length > 0 && !filters.tags.some((tag) => tags.some((candidate) => candidate.toLocaleLowerCase("es") === tag.toLocaleLowerCase("es")))) return false;
     return true;
   });
 }
@@ -356,6 +361,11 @@ function normalizedTag(value: string): string {
 export function videoTagUsage(clips: readonly MatchVideoAnalysisClip[], tag: string): number {
   const key = normalizedTag(tag).toLocaleLowerCase("es");
   return clips.filter((clip) => clip.tags.some((candidate) => normalizedTag(candidate).toLocaleLowerCase("es") === key)).length;
+}
+
+export function videoAnalysisTagUsage(clips: readonly MatchVideoAnalysisClip[], details: readonly MatchVideoEventAnalysisDetail[], tag: string): number {
+  const key = normalizedTag(tag).toLocaleLowerCase("es");
+  return videoTagUsage(clips, tag) + details.filter((detail) => detail.tags.some((candidate) => normalizedTag(candidate).toLocaleLowerCase("es") === key)).length;
 }
 
 export function renameVideoTag(clips: readonly MatchVideoAnalysisClip[], from: string, to: string, now = Date.now()): MatchVideoAnalysisClip[] {
