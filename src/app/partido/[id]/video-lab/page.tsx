@@ -18,10 +18,14 @@ import { replayMatch } from "../../../../lib/matchEngine";
 import { formatVideoTimestamp } from "../../../../lib/videoIndex";
 import {
   buildVideoLabSyncSegments,
+  buildVideoLabSyncAudit,
   buildVideoLabTimeline,
+  calibrateVideoLabFromEvent,
+  confirmVideoLabControl,
   currentVideoLabRow,
   filterVideoLabClips,
   filterVideoLabTimeline,
+  isReliableVideoSyncEvent,
   nextVideoLabRow,
   persistVideoLabVerification,
   videoLabEventActionState,
@@ -85,6 +89,7 @@ export default function VideoLabPage() {
   const segmentRows = filteredRows.filter((row) => row.syncSegmentId === segmentId);
   const activeRow = currentVideoLabRow(filteredRows, segmentId, currentSecond);
   const selectedRow = rows.find((row) => row.event.id === selectedEventId) ?? activeRow;
+  const syncAudit = useMemo(() => session && segment ? buildVideoLabSyncAudit(session, segment) : undefined, [segment, session]);
   const eventAction = videoLabEventActionState(canWrite, selectedRow?.event.id);
   useEffect(() => {
     if (visibleSegments.length > 0 && !visibleSegments.some((candidate) => candidate.id === segmentId)) setSegmentId(visibleSegments[0].id);
@@ -135,6 +140,7 @@ export default function VideoLabPage() {
     navigationAppliedRef.current = true;
   }, [rows, searchParams, segments, session]);
   const setOverrides = useMatchStore((state) => state.setVideoEventOverrides);
+  const setVideoSyncState = useMatchStore((state) => state.setVideoSyncState);
   const addVideoLabEvent = useMatchStore((state) => state.addVideoLabEvent);
   const upsertVideoAnalysisClip = useMatchStore((state) => state.upsertVideoAnalysisClip);
   const removeVideoAnalysisClip = useMatchStore((state) => state.removeVideoAnalysisClip);
@@ -144,15 +150,21 @@ export default function VideoLabPage() {
   const readPlayerSecond = useCallback(() => playerRef.current?.currentSecond() ?? currentSecond, [currentSecond]);
   const verifySelected = (videoSecond?: number, timeSource?: "manual", advance = false) => {
     if (!session || !selectedRow || !canWrite) return;
-    const nextSession = persistVideoLabVerification(session, selectedRow, {
-      videoSecond,
-      timeSource: timeSource ?? selectedRow.timeSource,
-    });
-    setOverrides(matchId, nextSession.videoEventOverrides ?? []);
+    const isRecommendedControl = Boolean(syncAudit?.controlEventIds.includes(selectedRow.event.id));
+    const nextSession = advance && videoSecond === undefined && isRecommendedControl
+      ? confirmVideoLabControl(session, selectedRow)
+      : persistVideoLabVerification(session, selectedRow, { videoSecond, timeSource: timeSource ?? selectedRow.timeSource });
+    if (isRecommendedControl && advance && videoSecond === undefined) setVideoSyncState(matchId, nextSession);
+    else setOverrides(matchId, nextSession.videoEventOverrides ?? []);
     if (advance && selectedRow.syncSegmentId) {
       const next = nextVideoLabRow(rows, selectedRow.syncSegmentId, selectedRow.event.id);
       if (next) chooseRow(next.event.id);
     }
+  };
+  const calibrateSelected = (kind: "INITIAL" | "RECALIBRATION") => {
+    if (!session || !selectedRow || !canWrite) return;
+    const nextSession = calibrateVideoLabFromEvent(session, selectedRow, readPlayerSecond(), kind);
+    setVideoSyncState(matchId, nextSession);
   };
   const goNext = () => {
     if (segmentRows.length === 0) return;
@@ -224,6 +236,13 @@ export default function VideoLabPage() {
             <nav className="flex gap-2 overflow-x-auto pb-1" aria-label="Segmentos de sincronización">
               {visibleSegments.map((item) => <button key={item.id} type="button" onClick={() => { setSegmentId(item.id); setSelectedEventId(null); setFollowVideo(true); }} className={`min-h-11 shrink-0 rounded-xl px-4 text-xs font-black ${item.id === segmentId ? "bg-cyan-400 text-slate-950" : "bg-slate-800"}`}>{item.label}</button>)}
             </nav>
+            {segment && syncAudit && <section aria-label={`Estado de sincronización P${segment.period}`} className={`rounded-2xl border p-3 ${syncAudit.checked ? "border-emerald-600 bg-emerald-950/30" : "border-cyan-900 bg-cyan-950/20"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[10px] font-black tracking-wide text-cyan-300">VIDEO SYNC V2 · P{segment.period}</p><p className="text-sm font-black">{syncAudit.checked ? `P${segment.period} · SINCRONIZACIÓN COMPROBADA ✓` : syncAudit.calibrated ? "CALIBRADA · COMPRUEBA DOS PUNTOS" : "CALIBRACIÓN INICIAL PENDIENTE"}</p></div><span className="rounded-full bg-slate-950 px-3 py-2 text-[10px] font-black">CONTROLES {syncAudit.confirmedControlEventIds.length}/{syncAudit.controlEventIds.length}</span></div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {!syncAudit.calibrated && syncAudit.initialEventId && <button type="button" onClick={() => chooseRow(syncAudit.initialEventId!)} className="min-h-10 rounded-xl bg-amber-400 px-3 text-[10px] font-black text-slate-950">1 · ABRIR CALIBRACIÓN INICIAL</button>}
+                {syncAudit.controlEventIds.map((eventId, index) => <button key={eventId} type="button" onClick={() => chooseRow(eventId)} className={`min-h-10 rounded-xl px-3 text-[10px] font-black ${syncAudit.confirmedControlEventIds.includes(eventId) ? "bg-emerald-700 text-white" : "bg-slate-800 text-cyan-200"}`}>{syncAudit.confirmedControlEventIds.includes(eventId) ? "✓" : "○"} CONTROL {index + 1}</button>)}
+              </div>
+            </section>}
             <section aria-label="Filtros de trabajo de Video Lab" className="rounded-2xl border border-slate-800 bg-slate-900 p-3">
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 <CompactMultiSelect label="JUGADORES" allLabel="TODOS LOS JUGADORES" values={workFilters.playerIds} options={playerOptions} onChange={(values) => updateFilter("playerIds", values)}/>
@@ -247,11 +266,13 @@ export default function VideoLabPage() {
             {segment && <div className="grid gap-3 lg:grid-cols-[minmax(0,1.55fr)_minmax(340px,.85fr)]">
               <section className="rounded-3xl border border-slate-800 bg-slate-900 p-3 sm:p-4">
                 <YouTubeLabPlayer ref={playerRef} videoId={segment.videoId} onTimeChange={handleTimeChange} actionDisabled={!canWrite} onActionHere={(second) => verifySelected(second, "manual", true)} />
-                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
                   <button type="button" disabled={!canWrite || selectedRow?.estimatedSecond === undefined} onClick={() => verifySelected(undefined, undefined, true)} className="min-h-12 rounded-xl bg-emerald-500 px-3 text-sm font-black text-slate-950 disabled:opacity-40">✓ CORRECTA</button>
                   <button type="button" onClick={goNext} className="min-h-12 rounded-xl bg-slate-700 px-3 text-sm font-black">SIGUIENTE →</button>
-                  {!followVideo && <button type="button" onClick={() => setFollowVideo(true)} className="col-span-2 min-h-12 rounded-xl bg-cyan-400 px-3 text-sm font-black text-slate-950 sm:col-span-1">◎ SEGUIR VÍDEO</button>}
-                </div>
+                   {!followVideo && <button type="button" onClick={() => setFollowVideo(true)} className="col-span-2 min-h-12 rounded-xl bg-cyan-400 px-3 text-sm font-black text-slate-950 sm:col-span-1">◎ SEGUIR VÍDEO</button>}
+                 </div>
+                 {canWrite && selectedRow && syncAudit && selectedRow.event.id === syncAudit.initialEventId && !syncAudit.calibrated && <button type="button" onClick={() => calibrateSelected("INITIAL")} className="mt-2 min-h-12 w-full rounded-xl bg-amber-400 px-3 text-sm font-black text-slate-950">◎ CALIBRAR PERIODO AQUÍ</button>}
+                 {canWrite && selectedRow && syncAudit?.calibrated && isReliableVideoSyncEvent(selectedRow.event) && <button type="button" onClick={() => calibrateSelected("RECALIBRATION")} className="mt-2 min-h-12 w-full rounded-xl border border-violet-400 bg-violet-950 px-3 text-sm font-black text-violet-100">↻ RECALIBRAR DESDE AQUÍ</button>}
                 {eventAction.visible && <div className={`mt-2 grid gap-2 ${selectedRow ? "grid-cols-2" : "grid-cols-1"}`}><button type="button" disabled={!eventAction.enabled} aria-describedby={!eventAction.enabled ? "video-lab-event-hint" : undefined} onClick={() => setComposer(composer === "EVENT" ? null : "EVENT")} className="min-h-12 rounded-xl bg-cyan-400 px-3 text-sm font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">+ EVENTO</button>{selectedRow && <button type="button" onClick={() => setComposer(composer === "CLIP" ? null : "CLIP")} className="min-h-12 rounded-xl bg-violet-400 px-3 text-sm font-black text-slate-950">+ CLIP</button>}</div>}
                 {eventAction.visible && !eventAction.enabled && <p id="video-lab-event-hint" className="mt-2 text-[10px] font-bold text-cyan-200">Selecciona una jugada de la cronología para insertar el nuevo evento después de ella.</p>}
                 {composer === "EVENT" && selectedRow && <div className="mt-3"><VideoSportsEventComposer session={session} referenceEventId={selectedRow.event.id} segment={segment} videoSecond={readPlayerSecond()} onSave={(event, override) => { addVideoLabEvent(matchId, event, override); setSelectedEventId(event.id); setComposer(null); }} onCancel={() => setComposer(null)}/></div>}
@@ -262,7 +283,7 @@ export default function VideoLabPage() {
                   <div className="flex items-center justify-between"><p className="text-xs font-black text-violet-200">CLIPS GUARDADOS ({filteredClips.length}/{clips.length})</p><Link href={`/video?vMatch=${encodeURIComponent(matchId)}&vSource=all`} className="text-[10px] font-black text-cyan-300">VER EN BIBLIOTECA →</Link></div>
                   {filteredClips.length === 0 ? <p className="mt-2 text-xs text-slate-500">No hay clips para estos filtros.</p> : <div className="mt-2 grid gap-2 sm:grid-cols-2">{filteredClips.map((clip) => <article key={clip.id} className="rounded-xl bg-slate-900 p-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-sm">{clip.category || clip.tags[0] || "Clip de análisis"}</strong><span className="font-mono text-[10px] text-cyan-300">{formatVideoTimestamp(clip.startSecond)}–{formatVideoTimestamp(clip.endSecond)}</span></div><span className="rounded-full bg-violet-950 px-2 py-1 text-[9px] font-black text-violet-200">{clip.endSecond - clip.startSecond}s</span></div>{clip.tags.length > 0 && <p className="mt-1 truncate text-[10px] text-slate-400">{clip.tags.join(" · ")}</p>}{clip.comment && <p className="mt-1 line-clamp-2 text-xs text-slate-300">{clip.comment}</p>}<div className="mt-2 grid grid-cols-3 gap-1"><button type="button" onClick={() => { setSegmentId(clip.segmentId); setEditingClipId(null); window.setTimeout(() => playerRef.current?.seekTo(clip.startSecond), 50); }} className="min-h-10 rounded-lg bg-cyan-950 text-[10px] font-black text-cyan-200">▶ ABRIR</button>{canWrite && <button type="button" onClick={() => { setComposer(null); setEditingClipId(clip.id); }} className="min-h-10 rounded-lg bg-slate-800 text-[10px] font-black">EDITAR</button>}{canWrite && <button type="button" onClick={() => { if (window.confirm("¿Eliminar este clip de análisis? No se modificará ningún evento deportivo.")) removeVideoAnalysisClip(matchId, clip.id); }} className="min-h-10 rounded-lg bg-rose-950 text-[10px] font-black text-rose-200">ELIMINAR</button>}</div></article>)}</div>}
                 </section>
-                <p className="mt-3 text-xs text-slate-400">AUTO usa el primer anchor válido del periodo. Los anchors adicionales solo señalan coherencia o deriva; no desplazan la jugada silenciosamente.</p>
+                <p className="mt-3 text-xs text-slate-400">AUTO usa una calibración por tramo. ACCIÓN AQUÍ corrige solo la jugada; RECALIBRAR DESDE AQUÍ cambia únicamente las AUTO posteriores del periodo.</p>
               </section>
 
               <section className="flex min-h-[420px] max-h-[72vh] flex-col overflow-hidden rounded-3xl border border-slate-800 bg-slate-900">
@@ -277,7 +298,7 @@ export default function VideoLabPage() {
                     const past = (row.estimatedSecond ?? Infinity) < currentSecond && !active;
                     return <button ref={(node) => { rowRefs.current[row.event.id] = node; }} key={row.event.id} type="button" onClick={() => chooseRow(row.event.id)} className={`grid min-h-14 w-full grid-cols-[52px_1fr_auto] items-center gap-2 rounded-xl border px-2 text-left transition ${selected ? "border-amber-300 bg-amber-300/10" : active ? "border-cyan-400 bg-cyan-400/10" : row.event.reviewState === "PENDING_REVIEW" ? "border-orange-700 bg-orange-950/30" : "border-transparent bg-slate-950/60"} ${past ? "opacity-45" : "opacity-100"}`}>
                       <span className="text-center text-[10px] font-black text-slate-400">P{row.event.period}<br />{row.event.minute}&apos;</span>
-                      <span><span className="block text-xs font-bold">{eventDescription(row.event, session.players, undefined, session.staff)}</span><span className={`mt-1 block text-[9px] font-black tracking-wide ${row.event.reviewState === "PENDING_REVIEW" ? "text-orange-300" : "text-slate-500"}`}>{row.event.reviewState === "PENDING_REVIEW" ? "? PENDIENTE · NO COMPUTA" : row.temporalFamily === "LANDMARK" ? "HITO · SIN CLIP" : row.temporalFamily === "PREPARATORY_RESTART" ? "PREPARACIÓN" : row.clipEligible ? "CLIP" : "CONTEXTO"}</span></span>
+                      <span><span className="block text-xs font-bold">{eventDescription(row.event, session.players, undefined, session.staff)}</span><span className={`mt-1 block text-[9px] font-black tracking-wide ${row.event.videoTiming === "RETROSPECTIVE" ? "text-amber-300" : row.event.reviewState === "PENDING_REVIEW" ? "text-orange-300" : "text-slate-500"}`}>{row.event.videoTiming === "RETROSPECTIVE" ? `⏱ JUGADA ANTERIOR · P${row.event.period} · min ${row.event.minute} · ${row.status === "VERIFIED" ? "VERIFIED" : "VÍDEO PENDIENTE"}` : row.event.reviewState === "PENDING_REVIEW" ? "? PENDIENTE · NO COMPUTA" : row.temporalFamily === "LANDMARK" ? "HITO · SIN CLIP" : row.temporalFamily === "PREPARATORY_RESTART" ? "PREPARACIÓN" : row.clipEligible ? "CLIP" : "CONTEXTO"}</span></span>
                       <span className="text-right"><span className={`block text-[9px] font-black ${row.status === "VERIFIED" ? "text-emerald-300" : "text-amber-300"}`}>{row.status}</span><span className="font-mono text-[10px] text-slate-400">{row.estimatedSecond === undefined ? "—" : formatVideoTimestamp(row.estimatedSecond)}</span>{row.diagnostic.status === "DRIFT_WARNING" && <span className="block text-[9px] font-black text-rose-300">DERIVA</span>}</span>
                     </button>;
                   })}

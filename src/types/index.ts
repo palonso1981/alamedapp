@@ -288,6 +288,39 @@ export interface MatchVideoEventOverride {
   updatedAt: number;
 }
 
+export type MatchVideoCalibrationKind = "INITIAL" | "RECALIBRATION";
+
+/**
+ * Calibración explícita del eje temporal de un periodo. Es metadata audiovisual:
+ * nunca modifica el evento deportivo ni se interpreta como una corrección puntual.
+ */
+export interface MatchVideoCalibration {
+  id: string;
+  matchId: string;
+  segmentId: string;
+  /** Incluye el periodo para mantener P1/P2 independientes en un mismo vídeo. */
+  syncSegmentId: string;
+  period: MatchVideoPeriod;
+  eventId: string;
+  videoSecond: number;
+  kind: MatchVideoCalibrationKind;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Confirmación de que un punto de control AUTO seguía alineado. */
+export interface MatchVideoSyncCheck {
+  id: string;
+  matchId: string;
+  segmentId: string;
+  syncSegmentId: string;
+  period: MatchVideoPeriod;
+  eventId: string;
+  status: "CONFIRMED";
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** Anotación audiovisual independiente: nunca participa en replay ni estadísticas. */
 export interface MatchVideoAnalysisClip {
   id: string;
@@ -339,6 +372,8 @@ interface MatchEventBase extends EventPosition {
    * tiempo deportivo ni sustituye a createdAt.
    */
   observedAt?: number;
+  /** La captura se introdujo tarde y su timestamp no es fiable para sincronizar vídeo. */
+  videoTiming?: "RETROSPECTIVE";
   updatedAt: number;
   deletedAt: number | null;
   /** Marca operativa: el evento sigue siendo válido y computable. */
@@ -702,6 +737,10 @@ export interface MatchSession {
   videoSegments?: MatchVideoSegment[];
   /** Correcciones puntuales de vídeo, separadas de eventos y anchors globales. */
   videoEventOverrides?: MatchVideoEventOverride[];
+  /** Calibraciones V2 opcionales. Las anchors legacy continúan siendo compatibles. */
+  videoCalibrations?: MatchVideoCalibration[];
+  /** Controles AUTO confirmados por periodo; no convierten el resto en VERIFIED. */
+  videoSyncChecks?: MatchVideoSyncCheck[];
   /** Clips tácticos separados de MatchEvent y preparados para una futura biblioteca. */
   videoAnalysisClips?: MatchVideoAnalysisClip[];
   /** Comentario, temática y etiquetas audiovisuales por evento deportivo. */

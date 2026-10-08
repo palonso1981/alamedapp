@@ -171,6 +171,7 @@ interface RecordThreatInput {
   restartEventId?: string;
   assist?: GoalAssist;
   observedAt?: number;
+  videoTiming?: "RETROSPECTIVE";
   defensiveCapture?: {
     goalTarget: GoalTargetCoordinates;
     keeperBodyPart?: KeeperBodyPart;
@@ -205,6 +206,7 @@ interface MatchState {
     playerId?: string,
     side?: DisciplineSide,
     observedAt?: number,
+    videoTiming?: "RETROSPECTIVE",
   ) => void;
   recordRestart: (
     matchId: string,
@@ -212,6 +214,7 @@ interface MatchState {
     restart: RestartKind,
     spatialSide: RestartSpatialSide,
     observedAt?: number,
+    videoTiming?: "RETROSPECTIVE",
   ) => void;
   adjustFoulCount: (matchId: string, side: DisciplineSide, delta: 1 | -1) => void;
   recordFoul: (
@@ -220,8 +223,9 @@ interface MatchState {
     playerId?: string | null,
     origin?: NormalizedCoordinates,
     observedAt?: number,
+    videoTiming?: "RETROSPECTIVE",
   ) => void;
-  recordPossessionLost: (matchId: string, playerId: string, observedAt?: number) => void;
+  recordPossessionLost: (matchId: string, playerId: string, observedAt?: number, videoTiming?: "RETROSPECTIVE") => void;
   recordCard: (
     matchId: string,
     side: DisciplineSide,
@@ -229,12 +233,14 @@ interface MatchState {
     playerId?: string,
     causesInferiority?: boolean,
     observedAt?: number,
+    videoTiming?: "RETROSPECTIVE",
   ) => void;
   recordStaffCard: (
     matchId: string,
     staffId: string,
     color: CardColor,
     observedAt?: number,
+    videoTiming?: "RETROSPECTIVE",
   ) => void;
   setPendingReview: (
     matchId: string,
@@ -246,7 +252,7 @@ interface MatchState {
     eventId: string,
     pending: boolean,
   ) => void;
-  swapPlayer: (matchId: string, playerOutId: string, playerInId: string, observedAt?: number) => void;
+  swapPlayer: (matchId: string, playerOutId: string, playerInId: string, observedAt?: number, videoTiming?: "RETROSPECTIVE") => void;
   editEvent: (
     matchId: string,
     eventId: string,
@@ -278,6 +284,7 @@ interface MatchState {
   resetDemo: (matchId: string) => void;
   setVideoSegments: (matchId: string, segments: MatchVideoSegment[]) => void;
   setVideoEventOverrides: (matchId: string, overrides: MatchVideoEventOverride[]) => void;
+  setVideoSyncState: (matchId: string, state: Pick<MatchSession, "videoEventOverrides" | "videoCalibrations" | "videoSyncChecks">) => void;
   addVideoLabEvent: (matchId: string, event: MatchEvent, override: MatchVideoEventOverride) => void;
   upsertVideoAnalysisClip: (matchId: string, clip: MatchVideoAnalysisClip) => void;
   removeVideoAnalysisClip: (matchId: string, clipId: string) => void;
@@ -867,13 +874,14 @@ export const useMatchStore = create<MatchState>((set) => ({
             defensive,
             provenance: captureProvenance(session),
             observedAt: input.observedAt,
+            videoTiming: input.videoTiming,
           });
           return appendEvent(session.players, session.events, event);
         }),
       ),
     ),
 
-  toggleGameState: (matchId, stateKind, playerId, side = "FOR", observedAt) =>
+  toggleGameState: (matchId, stateKind, playerId, side = "FOR", observedAt, videoTiming) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -920,13 +928,14 @@ export const useMatchStore = create<MatchState>((set) => ({
             side: stateKind === "FLYING_GOALKEEPER" ? side : undefined,
             provenance: captureProvenance(session),
             observedAt,
+            videoTiming,
           });
           return appendEvent(session.players, session.events, event);
         }),
       ),
     ),
 
-  recordRestart: (matchId, side, restart, spatialSide, observedAt) =>
+  recordRestart: (matchId, side, restart, spatialSide, observedAt, videoTiming) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -940,6 +949,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             spatialSide,
             provenance: captureProvenance(session),
             observedAt,
+            videoTiming,
           }));
         }),
       ),
@@ -965,7 +975,7 @@ export const useMatchStore = create<MatchState>((set) => ({
       ),
     ),
 
-  recordFoul: (matchId, side, playerId, origin, observedAt) =>
+  recordFoul: (matchId, side, playerId, origin, observedAt, videoTiming) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -987,13 +997,14 @@ export const useMatchStore = create<MatchState>((set) => ({
             origin,
             provenance: captureProvenance(session),
             observedAt,
+            videoTiming,
           });
           return appendEvent(session.players, session.events, event);
         }),
       ),
     ),
 
-  recordPossessionLost: (matchId, playerId, observedAt) =>
+  recordPossessionLost: (matchId, playerId, observedAt, videoTiming) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -1009,6 +1020,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             position: { ...clock, order: getNextOrder(session.events, clock.period, clock.minute) },
             provenance: captureProvenance(session),
             observedAt,
+            videoTiming,
           }));
         }),
       ),
@@ -1021,6 +1033,7 @@ export const useMatchStore = create<MatchState>((set) => ({
     playerId,
     causesInferiority = false,
     observedAt,
+    videoTiming,
   ) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
@@ -1044,6 +1057,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             playerId,
             provenance: captureProvenance(session),
             observedAt,
+            videoTiming,
           });
 
           if (!causesInferiority) {
@@ -1077,6 +1091,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             relatedCardEventId: card.id,
             provenance: captureProvenance(session),
             observedAt,
+            videoTiming,
           });
           return appendEvents(session.players, session.events, [
             card,
@@ -1086,7 +1101,7 @@ export const useMatchStore = create<MatchState>((set) => ({
       ),
     ),
 
-  recordStaffCard: (matchId, staffId, color, observedAt) =>
+  recordStaffCard: (matchId, staffId, color, observedAt, videoTiming) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -1107,6 +1122,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             staffId,
             provenance: captureProvenance(session),
             observedAt,
+            videoTiming,
           });
           return appendEvent(session.players, session.events, card);
         }),
@@ -1135,7 +1151,7 @@ export const useMatchStore = create<MatchState>((set) => ({
       ),
     ),
 
-  swapPlayer: (matchId, playerOutId, playerInId, observedAt) =>
+  swapPlayer: (matchId, playerOutId, playerInId, observedAt, videoTiming) =>
     set((state) =>
       updateAndPersistSession(state, matchId, (session) =>
         command(session, () => {
@@ -1155,6 +1171,7 @@ export const useMatchStore = create<MatchState>((set) => ({
             playerInId,
             provenance: captureProvenance(session),
             observedAt,
+            videoTiming,
           });
           return appendEvent(session.players, session.events, event);
         }),
@@ -1319,6 +1336,17 @@ export const useMatchStore = create<MatchState>((set) => ({
       updateAndPersistSession(state, matchId, (session) => ({
         ...session,
         videoEventOverrides: overrides,
+        lastError: null,
+      })),
+    ),
+
+  setVideoSyncState: (matchId, video) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => ({
+        ...session,
+        videoEventOverrides: video.videoEventOverrides ?? [],
+        videoCalibrations: video.videoCalibrations ?? [],
+        videoSyncChecks: video.videoSyncChecks ?? [],
         lastError: null,
       })),
     ),

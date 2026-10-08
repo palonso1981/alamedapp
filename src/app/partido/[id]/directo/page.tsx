@@ -166,6 +166,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const [attackDirection, setAttackDirection] = useState<AttackDirection>("RIGHT");
   const [orientationReady, setOrientationReady] = useState(false);
   const [devQuotaFailureArmed, setDevQuotaFailureArmed] = useState(false);
+  const [retrospectiveCapture, setRetrospectiveCapture] = useState(false);
+  const videoTiming = retrospectiveCapture ? "RETROSPECTIVE" as const : undefined;
 
   useEffect(() => {
     const savedSide = window.localStorage.getItem(CLOCK_SIDE_STORAGE_KEY);
@@ -186,6 +188,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     setSelectedStaffId(null);
     setSelectingFlyingGoalkeeper(false);
     setSecondPeriodSetupOpen(false);
+    setRetrospectiveCapture(false);
   }, [ensureMatch, matchId]);
 
   useEffect(() => {
@@ -362,6 +365,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         effect.playerOutId,
         effect.playerInId,
         effect.observedAt,
+        videoTiming,
       );
       const playerOut = session.players.find(
         (player) => player.id === effect.playerOutId,
@@ -374,7 +378,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       );
       setBenchMode("CLOSED");
     } else if (effect?.type === "RECORD_THREAT") {
-      recordThreat(matchId, effect);
+      recordThreat(matchId, { ...effect, videoTiming });
       const actor = effect.playerId
         ? session.players.find(
             (player) => player.id === effect.playerId,
@@ -382,6 +386,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
         : "RIV";
       setFeedback(`✓ ${effect.outcome} · ${actor ?? "CDA"}`);
     }
+    if (effect) setRetrospectiveCapture(false);
   };
 
   const handleCourtClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -405,7 +410,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const quickRestart = (end: "LEFT" | "RIGHT", spatialSide: "TOP" | "BOTTOM", restart: "CORNER" | "DANGEROUS_KICK_IN") => {
     if (captureBlocked) return blockedAction();
     const inferred = visualRestartToCanonical({ end, band: spatialSide, direction: attackDirection });
-    recordRestart(matchId, inferred.side, restart, inferred.spatialSide, Date.now());
+    recordRestart(matchId, inferred.side, restart, inferred.spatialSide, Date.now(), videoTiming);
+    setRetrospectiveCapture(false);
     setFeedback(`✓ ${restart === "CORNER" ? "CÓRNER" : "BANDA CERCANA"} ${inferred.side === "FOR" ? "CDA" : "RIV"}`);
   };
 
@@ -417,7 +423,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   };
 
   const handleStaffCard = (staffId: string, color: "YELLOW" | "RED") => {
-    recordStaffCard(matchId, staffId, color, selectedStaffObservedAt ?? Date.now());
+    recordStaffCard(matchId, staffId, color, selectedStaffObservedAt ?? Date.now(), videoTiming);
+    setRetrospectiveCapture(false);
     setSelectedStaffId(null);
     setSelectedStaffObservedAt(null);
     setFeedback(color === "YELLOW" ? "✓ Amarilla cuerpo técnico" : "✓ Roja cuerpo técnico");
@@ -431,13 +438,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
 
   const recordPlayerFoul = (playerId: string, received: boolean) => {
     const observedAt = interaction.kind === "PLAYER_SELECTED" ? interaction.observedAt : Date.now();
-    recordFoul(matchId, received ? "AGAINST" : "FOR", playerId, undefined, observedAt);
+    recordFoul(matchId, received ? "AGAINST" : "FOR", playerId, undefined, observedAt, videoTiming);
+    setRetrospectiveCapture(false);
     finishPlayerAction(received ? "✓ Falta recibida" : "✓ Falta cometida");
   };
 
   const recordPlayerPossessionLost = (playerId: string) => {
     const observedAt = interaction.kind === "PLAYER_SELECTED" ? interaction.observedAt : Date.now();
-    recordPossessionLost(matchId, playerId, observedAt);
+    recordPossessionLost(matchId, playerId, observedAt, videoTiming);
+    setRetrospectiveCapture(false);
     finishPlayerAction("✓ Pérdida");
   };
 
@@ -447,7 +456,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       setGenericFoulConfirm({ side, observedAt: Date.now() });
       return;
     }
-    recordFoul(matchId, side, null, undefined, genericFoulConfirm.observedAt);
+    recordFoul(matchId, side, null, undefined, genericFoulConfirm.observedAt, videoTiming);
+    setRetrospectiveCapture(false);
     setGenericFoulConfirm(null);
     setFeedback(side === "FOR" ? "✓ Falta CDA · sin asignar" : "✓ Falta recibida · sin asignar");
   };
@@ -458,7 +468,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     causesInferiority = false,
   ) => {
     const observedAt = interaction.kind === "PLAYER_SELECTED" ? interaction.observedAt : Date.now();
-    recordCard(matchId, "FOR", color, playerId, causesInferiority, observedAt);
+    recordCard(matchId, "FOR", color, playerId, causesInferiority, observedAt, videoTiming);
+    setRetrospectiveCapture(false);
     finishPlayerAction(
       color === "YELLOW"
         ? "✓ Amarilla CDA"
@@ -588,13 +599,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             onRivalYellow={() => {
               if (captureBlocked) return blockedAction();
               setInteraction(IDLE_LIVE_INTERACTION);
-              recordCard(matchId, "AGAINST", "YELLOW");
+              recordCard(matchId, "AGAINST", "YELLOW", undefined, false, Date.now(), videoTiming);
+              setRetrospectiveCapture(false);
               setFeedback("✓ Amarilla RIV");
             }}
             onRivalRed={() => {
               if (captureBlocked) return blockedAction();
               setInteraction(IDLE_LIVE_INTERACTION);
-              recordCard(matchId, "AGAINST", "RED");
+              recordCard(matchId, "AGAINST", "RED", undefined, false, Date.now(), videoTiming);
+              setRetrospectiveCapture(false);
               setFeedback("✓ Roja RIV");
             }}
           />
@@ -625,6 +638,16 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             {session.persistenceStatus === "saved" ? "●" : session.persistenceStatus === "error" ? "!" : "○"}
           </span>
           <SyncStatusBadge matchId={matchId} matchFinished={session.matchFinished} />
+          <button
+            type="button"
+            aria-pressed={retrospectiveCapture}
+            disabled={captureBlocked}
+            onClick={() => setRetrospectiveCapture((current) => !current)}
+            className={`min-h-10 rounded-lg border px-3 text-[10px] font-black ${retrospectiveCapture ? "border-amber-300 bg-amber-400 text-slate-950" : "border-slate-600 bg-slate-900 text-slate-300"} disabled:opacity-40`}
+            title="Marca la próxima acción como registrada tarde; seguirá contando deportivamente"
+          >
+            {retrospectiveCapture ? "⏱ REGISTRANDO JUGADA ANTERIOR" : "⏱ JUGADA ANTERIOR"}
+          </button>
           {devPersistenceFaultAvailable() && (
             <button
               type="button"
@@ -660,19 +683,22 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           if (captureBlocked) return blockedAction();
           setInteraction(IDLE_LIVE_INTERACTION);
           if (replay.flyingGoalkeeperActive) {
-            toggleGameState(matchId, "FLYING_GOALKEEPER");
+            toggleGameState(matchId, "FLYING_GOALKEEPER", undefined, "FOR", Date.now(), videoTiming);
+            setRetrospectiveCapture(false);
             setSelectingFlyingGoalkeeper(false);
           } else setSelectingFlyingGoalkeeper((visible) => !visible);
         }}
         onFlyingGoalkeeperAgainst={() => {
           if (captureBlocked) return blockedAction();
-          toggleGameState(matchId, "FLYING_GOALKEEPER", undefined, "AGAINST");
+          toggleGameState(matchId, "FLYING_GOALKEEPER", undefined, "AGAINST", Date.now(), videoTiming);
+          setRetrospectiveCapture(false);
           setFeedback(activeReplay.flyingGoalkeeperAgainstActive ? "PJ RIVAL OFF" : "PJ RIVAL ON");
         }}
         onSuperiority={() => {
           if (captureBlocked || activeReplay.inferiorityActive) return blockedAction();
           setInteraction(IDLE_LIVE_INTERACTION);
-          toggleGameState(matchId, "SUPERIORITY");
+          toggleGameState(matchId, "SUPERIORITY", undefined, "FOR", Date.now(), videoTiming);
+          setRetrospectiveCapture(false);
           setFeedback(activeReplay.superiorityActive ? "5v4 OFF" : "5v4 ON");
         }}
         onChange={() => { setInteraction(IDLE_LIVE_INTERACTION); setBenchMode("CHANGE_OUT"); }}
@@ -724,7 +750,8 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   key={player.id}
                   type="button"
                   onClick={() => {
-                    toggleGameState(matchId, "FLYING_GOALKEEPER", player.id);
+                    toggleGameState(matchId, "FLYING_GOALKEEPER", player.id, "FOR", Date.now(), videoTiming);
+                    setRetrospectiveCapture(false);
                     setSelectingFlyingGoalkeeper(false);
                     setFeedback(`◇⁺ ${player.name}`);
                   }}

@@ -14,6 +14,8 @@ import {
   removeVideoAnchor,
   removeVideoEventOverride,
   removeVideoSegment,
+  confirmVideoSyncCheck,
+  upsertVideoCalibration,
   upsertVideoEventOverride,
   upsertVideoSegment,
   youtubeBaseUrl,
@@ -149,17 +151,17 @@ test("anchor 432 con margen 6 comparte openSecond 426 entre player y YouTube ext
   assert.equal(current.videoSegments?.[0].leadSeconds, 6);
 });
 
-test("varios anchors usan mediana robusta y avisan si discrepan", () => {
+test("anchors legacy conservan la primera referencia y las posteriores solo diagnostican deriva", () => {
   const events = [event("a", 100_000), event("b", 110_000), event("c", 120_000), event("target", 115_000)];
   let current = session(events);
   current = upsertVideoSegment(current, createVideoSegment({ id: "s1", urlOrVideoId: "abcdefghijk", periods: [1], now: 1 }));
   current = addVideoAnchor(current, "s1", { id: "aa", eventId: "a", videoSecond: 40 });
-  current = addVideoAnchor(current, "s1", { id: "ab", eventId: "b", videoSecond: 50 });
+  current = addVideoAnchor(current, "s1", { id: "ab", eventId: "b", videoSecond: 80 });
   current = addVideoAnchor(current, "s1", { id: "ac", eventId: "c", videoSecond: 90 });
   const result = resolveEventVideoPosition(current, "target");
   assert.equal(result.status, "RESOLVED");
   if (result.status === "RESOLVED") {
-    assert.equal(result.estimatedSecond, 55);
+    assert.equal(result.estimatedSecond, 55, "mantiene el offset de la primera referencia, no la mediana posterior");
     assert.equal(result.quality, "MULTI_ANCHOR_WARNING");
     assert.equal(result.anchorSpreadSeconds, 30);
   }
@@ -284,17 +286,21 @@ test("un segmento completo resuelve eventos de ambas partes sin modificar evento
   assert.deepEqual(current.events.slice(1), originalEvents);
 });
 
-test("persistencia V3 conserva segmentos anchors y overrides y acepta sesiones sin vídeo", () => {
+test("persistencia conserva segmentos, calibraciones, controles y overrides", () => {
   const values = new Map<string, string>();
   const storage: LocalStorageAdapter = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); } };
   const events = [event("a", 100_000)];
   let current = session(events);
   current = upsertVideoSegment(current, createVideoSegment({ id: "s1", urlOrVideoId: "abcdefghijk", periods: [1, 2], now: 1 }));
   current = addVideoAnchor(current, "s1", { id: "a1", eventId: "a", videoSecond: 20 });
+  current = upsertVideoCalibration(current, { id: "cal-a", segmentId: "s1", syncSegmentId: "s1:P1", period: 1, eventId: "a", videoSecond: 20, kind: "INITIAL", now: 2 });
+  current = confirmVideoSyncCheck(current, { id: "check-a", segmentId: "s1", syncSegmentId: "s1:P1", period: 1, eventId: "a", now: 3 });
   current = upsertVideoEventOverride(current, { eventId: "a", segmentId: "s1", videoSecond: 17, now: 2 });
   assert.equal(saveMatchSession(current, storage, 10).ok, true);
   assert.deepEqual(loadMatchSession("m1", storage)?.videoSegments, current.videoSegments);
   assert.deepEqual(loadMatchSession("m1", storage)?.videoEventOverrides, current.videoEventOverrides);
+  assert.deepEqual(loadMatchSession("m1", storage)?.videoCalibrations, current.videoCalibrations);
+  assert.deepEqual(loadMatchSession("m1", storage)?.videoSyncChecks, current.videoSyncChecks);
   assert.equal(saveMatchSession({ ...current, videoSegments: undefined }, storage, 11).ok, true);
   assert.deepEqual(loadMatchSession("m1", storage)?.videoSegments, []);
 });

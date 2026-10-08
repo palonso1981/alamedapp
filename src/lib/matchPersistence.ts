@@ -10,9 +10,11 @@ import {
   MatchPreparation,
   MatchSession,
   MatchVideoAnalysisClip,
+  MatchVideoCalibration,
   MatchVideoEventAnalysisDetail,
   MatchVideoEventOverride,
   MatchVideoSegment,
+  MatchVideoSyncCheck,
   Player,
   StaffMember,
 } from "../types";
@@ -59,6 +61,8 @@ interface PersistedMatchSession {
   reviewReopenedAt?: number;
   videoSegments?: MatchVideoSegment[];
   videoEventOverrides?: MatchVideoEventOverride[];
+  videoCalibrations?: MatchVideoCalibration[];
+  videoSyncChecks?: MatchVideoSyncCheck[];
   videoAnalysisClips?: MatchVideoAnalysisClip[];
   videoEventAnalysisDetails?: MatchVideoEventAnalysisDetail[];
   events: MatchEvent[];
@@ -234,6 +238,22 @@ function isVideoEventOverride(value: unknown, expectedMatchId: string): value is
     typeof value.updatedAt === "number";
 }
 
+function isVideoCalibration(value: unknown, expectedMatchId: string): value is MatchVideoCalibration {
+  return isObject(value) && value.matchId === expectedMatchId && typeof value.id === "string" &&
+    typeof value.segmentId === "string" && typeof value.syncSegmentId === "string" &&
+    (value.period === 1 || value.period === 2) && typeof value.eventId === "string" &&
+    typeof value.videoSecond === "number" && Number.isSafeInteger(value.videoSecond) && value.videoSecond >= 0 &&
+    (value.kind === "INITIAL" || value.kind === "RECALIBRATION") &&
+    typeof value.createdAt === "number" && typeof value.updatedAt === "number";
+}
+
+function isVideoSyncCheck(value: unknown, expectedMatchId: string): value is MatchVideoSyncCheck {
+  return isObject(value) && value.matchId === expectedMatchId && typeof value.id === "string" &&
+    typeof value.segmentId === "string" && typeof value.syncSegmentId === "string" &&
+    (value.period === 1 || value.period === 2) && typeof value.eventId === "string" &&
+    value.status === "CONFIRMED" && typeof value.createdAt === "number" && typeof value.updatedAt === "number";
+}
+
 function isVideoAnalysisClip(value: unknown, expectedMatchId: string): value is MatchVideoAnalysisClip {
   if (!isObject(value)) return false;
   return (
@@ -278,6 +298,7 @@ function hasEventBase(value: Record<string, unknown>, matchId: string): boolean 
       (typeof value.observedAt === "number" &&
         Number.isFinite(value.observedAt) &&
         value.observedAt > 0)) &&
+    (value.videoTiming === undefined || value.videoTiming === "RETROSPECTIVE") &&
     typeof value.updatedAt === "number" &&
     (value.deletedAt === null || typeof value.deletedAt === "number") &&
     typeof value.pendingReview === "boolean" &&
@@ -567,6 +588,8 @@ function migratePersistedSession(value: unknown): unknown {
     reviewReopenedAt: typeof value.reviewReopenedAt === "number" ? value.reviewReopenedAt : undefined,
     videoSegments: Array.isArray(value.videoSegments) ? value.videoSegments : [],
     videoEventOverrides: Array.isArray(value.videoEventOverrides) ? value.videoEventOverrides : [],
+    videoCalibrations: Array.isArray(value.videoCalibrations) ? value.videoCalibrations : [],
+    videoSyncChecks: Array.isArray(value.videoSyncChecks) ? value.videoSyncChecks : [],
     videoAnalysisClips: Array.isArray(value.videoAnalysisClips) ? value.videoAnalysisClips : [],
     videoEventAnalysisDetails: Array.isArray(value.videoEventAnalysisDetails) ? value.videoEventAnalysisDetails : [],
     events: migrateChronology(value.events, value.matchId),
@@ -706,6 +729,10 @@ function validPersistedSession(
       (!Array.isArray(value.videoSegments) || !value.videoSegments.every(isVideoSegment))) ||
     (value.videoEventOverrides !== undefined &&
       (!Array.isArray(value.videoEventOverrides) || !value.videoEventOverrides.every((item) => isVideoEventOverride(item, expectedMatchId)))) ||
+    (value.videoCalibrations !== undefined &&
+      (!Array.isArray(value.videoCalibrations) || !value.videoCalibrations.every((item) => isVideoCalibration(item, expectedMatchId)))) ||
+    (value.videoSyncChecks !== undefined &&
+      (!Array.isArray(value.videoSyncChecks) || !value.videoSyncChecks.every((item) => isVideoSyncCheck(item, expectedMatchId)))) ||
     (value.videoAnalysisClips !== undefined &&
       (!Array.isArray(value.videoAnalysisClips) || !value.videoAnalysisClips.every((item) => isVideoAnalysisClip(item, expectedMatchId)))) ||
     (value.videoEventAnalysisDetails !== undefined &&
@@ -724,12 +751,15 @@ function validPersistedSession(
     const past = value.past as MatchEvent[][];
     const future = value.future as MatchEvent[][];
     const videoOverrides = (value.videoEventOverrides ?? []) as MatchVideoEventOverride[];
+    const videoCalibrations = (value.videoCalibrations ?? []) as MatchVideoCalibration[];
+    const videoSyncChecks = (value.videoSyncChecks ?? []) as MatchVideoSyncCheck[];
     const videoEventDetails = (value.videoEventAnalysisDetails ?? []) as MatchVideoEventAnalysisDetail[];
     const eventIds = new Set(events.map((event) => event.id));
     const overrideKeys = videoOverrides.map((item) => `${item.eventId}:${item.syncSegmentId ?? item.segmentId}`);
     if (overrideKeys.length !== new Set(overrideKeys).size || videoOverrides.some((item) => !eventIds.has(item.eventId))) {
       return false;
     }
+    if (videoCalibrations.some((item) => !eventIds.has(item.eventId)) || videoSyncChecks.some((item) => !eventIds.has(item.eventId))) return false;
     if (videoEventDetails.length !== new Set(videoEventDetails.map((item) => item.eventId)).size || videoEventDetails.some((item) => !eventIds.has(item.eventId))) {
       return false;
     }
@@ -809,6 +839,8 @@ export function saveMatchRecord(
       reviewReopenedAt: session.reviewReopenedAt,
       videoSegments: session.videoSegments ?? [],
       videoEventOverrides: session.videoEventOverrides ?? [],
+      videoCalibrations: session.videoCalibrations ?? [],
+      videoSyncChecks: session.videoSyncChecks ?? [],
       videoAnalysisClips: session.videoAnalysisClips ?? [],
       videoEventAnalysisDetails: session.videoEventAnalysisDetails ?? [],
       events: session.events,

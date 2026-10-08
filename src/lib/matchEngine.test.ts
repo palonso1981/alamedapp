@@ -1287,6 +1287,26 @@ test("Zustand aísla partidos y soporta undo/redo", () => {
   assert.equal(state.matches["match-a"].events.length, 2);
 });
 
+test("JUGADA ANTERIOR marca solo el tiempo audiovisual y mantiene el efecto deportivo", () => {
+  useMatchStore.setState({ matches: {} });
+  const matchId = "retrospective-video-marker";
+  const actions = useMatchStore.getState();
+  actions.ensureMatch(matchId);
+  actions.recordThreat(matchId, {
+    side: "FOR",
+    playerId: "p1",
+    origin: { x: 0.7, y: 0.5 },
+    outcome: "GOL",
+    phase: "POSITIONAL",
+    assist: { status: "NONE" },
+    videoTiming: "RETROSPECTIVE",
+  });
+  const session = useMatchStore.getState().matches[matchId];
+  const goal = session.events.find((event) => event.type === "threat_recorded");
+  assert.equal(goal?.videoTiming, "RETROSPECTIVE");
+  assert.equal(replayMatch(session.players, session.events).score.for, 1);
+});
+
 test("el reloj retrocede hasta cero sin alterar eventos y permite inserción retroactiva", () => {
   useMatchStore.setState({ matches: {} });
   const matchId = "clock-backward";

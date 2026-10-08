@@ -9,7 +9,15 @@ import {
   replayMatch,
   sortEvents,
 } from "./matchEngine";
-import { normalizeLeadSeconds, upsertVideoEventOverride, videoEventTime } from "./videoIndex";
+import {
+  confirmVideoSyncCheck,
+  normalizeLeadSeconds,
+  resolveAutomaticEventVideoPosition,
+  upsertVideoCalibration,
+  upsertVideoEventOverride,
+  videoEventTime,
+  videoSyncSegmentId,
+} from "./videoIndex";
 import { matchesVideoEventKind, VideoLibraryFilters, videoEventPlayerIds, videoEventSide } from "./videoLibrary";
 import {
   MatchEvent,
@@ -262,6 +270,15 @@ export interface VideoLabTimelineRow {
   diagnostic: VideoLabAnchorDiagnostic;
 }
 
+export interface VideoLabSyncAudit {
+  syncSegmentId: string;
+  initialEventId?: string;
+  controlEventIds: string[];
+  confirmedControlEventIds: string[];
+  calibrated: boolean;
+  checked: boolean;
+}
+
 export type VideoLabVerificationMap = Record<string, VideoLabVerification>;
 
 const EMPTY_DIAGNOSTIC: VideoLabAnchorDiagnostic = {
@@ -274,7 +291,7 @@ const EMPTY_DIAGNOSTIC: VideoLabAnchorDiagnostic = {
 export function buildVideoLabSyncSegments(session: MatchSession): VideoLabSyncSegment[] {
   return (session.videoSegments ?? []).flatMap((segment) =>
     segment.periods.map((period) => ({
-      id: `${segment.id}:P${period}`,
+      id: videoSyncSegmentId(segment.id, period),
       physicalSegmentId: segment.id,
       period,
       videoId: segment.videoId,
@@ -307,32 +324,25 @@ function resolveAutomatic(
   event: MatchEvent,
   segment: VideoLabSyncSegment,
 ): Pick<VideoLabTimelineRow, "estimatedSecond" | "openSecond" | "timeSource" | "diagnostic"> {
-  const eventTime = videoEventTime(event);
-  if (!eventTime || segment.anchors.length === 0) return { diagnostic: EMPTY_DIAGNOSTIC };
+  const automatic = resolveAutomaticEventVideoPosition(session, event.id);
+  if (!automatic || automatic.syncSegmentId !== segment.id) return { diagnostic: EMPTY_DIAGNOSTIC };
   const eventById = new Map(session.events.map((candidate) => [candidate.id, candidate]));
   const offsets = segment.anchors.flatMap((anchor) => {
     const anchorEvent = eventById.get(anchor.eventId);
     const anchorTime = anchorEvent ? videoEventTime(anchorEvent) : null;
-    return anchorEvent?.period === segment.period && anchorTime
-      ? [anchor.videoSecond - anchorTime.timestamp / 1000]
-      : [];
+    return anchorEvent?.period === segment.period && anchorTime ? [anchor.videoSecond - anchorTime.timestamp / 1000] : [];
   });
-  if (offsets.length === 0) return { diagnostic: EMPTY_DIAGNOSTIC };
-
-  // El primer anchor válido es el origen operativo. Los siguientes diagnostican
-  // deriva; la interpolación futura será una decisión explícita, no una mediana oculta.
   const primaryOffset = offsets[0];
-  const estimatedSecond = Math.max(0, Math.round(eventTime.timestamp / 1000 + primaryOffset));
-  const deltasFromPrimary = offsets.slice(1).map((offset) => offset - primaryOffset);
-  const spreadSeconds = offsets.length > 1 ? Math.max(...offsets) - Math.min(...offsets) : 0;
+  const deltasFromPrimary = primaryOffset === undefined ? [] : offsets.slice(1).map((offset) => offset - primaryOffset);
+  const spreadSeconds = automatic.anchorSpreadSeconds;
   return {
-    estimatedSecond,
-    openSecond: Math.max(0, estimatedSecond - segment.leadSeconds),
-    timeSource: eventTime.source,
+    estimatedSecond: automatic.estimatedSecond,
+    openSecond: automatic.openSecond,
+    timeSource: automatic.timeSource,
     diagnostic: {
       count: offsets.length,
       spreadSeconds,
-      status: offsets.length === 1 ? "SINGLE" : spreadSeconds <= 5 ? "COHERENT" : "DRIFT_WARNING",
+      status: offsets.length === 0 ? "NONE" : offsets.length === 1 ? "SINGLE" : spreadSeconds <= 5 ? "COHERENT" : "DRIFT_WARNING",
       deltasFromPrimary,
     },
   };
@@ -346,7 +356,10 @@ export function buildVideoLabTimeline(
   return sortEvents(session.events)
     .filter(isVideoLabTimelineEvent)
     .map((event) => {
-      const segment = syncSegments.find((candidate) => candidate.period === event.period);
+      const canonicalAutomatic = resolveAutomaticEventVideoPosition(session, event.id);
+      const segment = canonicalAutomatic
+        ? syncSegments.find((candidate) => candidate.id === canonicalAutomatic.syncSegmentId)
+        : syncSegments.find((candidate) => candidate.period === event.period);
       const leadSeconds = segment?.leadSeconds ?? 6;
       const verification = verifications[event.id];
       const persistedOverride = segment
@@ -385,6 +398,104 @@ export function buildVideoLabTimeline(
         ...automatic,
       };
     });
+}
+
+export function isReliableVideoSyncEvent(event: MatchEvent): boolean {
+  return event.deletedAt === null &&
+    event.provenance === "LIVE" &&
+    event.videoTiming !== "RETROSPECTIVE" &&
+    event.pendingReview !== true &&
+    event.reviewState !== "PENDING_REVIEW" &&
+    Number.isFinite(event.observedAt) &&
+    (event.observedAt ?? 0) > 0;
+}
+
+function closestControl(
+  candidates: MatchEvent[],
+  target: number,
+  excluded: Set<string>,
+): MatchEvent | undefined {
+  return candidates
+    .filter((event) => !excluded.has(event.id))
+    .sort((left, right) => Math.abs((left.observedAt ?? 0) - target) - Math.abs((right.observedAt ?? 0) - target))[0];
+}
+
+/** Propone pocos controles distribuidos por tiempo real, no por índice. */
+export function buildVideoLabSyncAudit(session: MatchSession, segment: VideoLabSyncSegment): VideoLabSyncAudit {
+  const candidates = sortEvents(session.events)
+    .filter((event) => event.period === segment.period && isReliableVideoSyncEvent(event));
+  const explicitInitial = (session.videoCalibrations ?? []).find((item) => item.syncSegmentId === segment.id && item.kind === "INITIAL");
+  const legacyInitial = segment.anchors.find((anchor) => candidates.some((event) => event.id === anchor.eventId));
+  const initialEventId = explicitInitial?.eventId ?? legacyInitial?.eventId ?? candidates[0]?.id;
+  const calibrated = Boolean(explicitInitial || legacyInitial);
+  const excluded = new Set<string>([
+    ...(initialEventId ? [initialEventId] : []),
+    ...(session.videoCalibrations ?? []).filter((item) => item.syncSegmentId === segment.id).map((item) => item.eventId),
+  ]);
+  const start = candidates[0]?.observedAt;
+  const end = candidates.at(-1)?.observedAt;
+  const controls: MatchEvent[] = [];
+  if (start !== undefined && end !== undefined && end > start) {
+    const middle = closestControl(candidates, start + (end - start) * 0.5, excluded);
+    if (middle) { controls.push(middle); excluded.add(middle.id); }
+    const late = closestControl(candidates, start + (end - start) * 0.85, excluded);
+    if (late) controls.push(late);
+  }
+  const confirmed = new Set((session.videoSyncChecks ?? []).filter((item) => item.syncSegmentId === segment.id).map((item) => item.eventId));
+  const controlEventIds = controls.map((event) => event.id);
+  const confirmedControlEventIds = controlEventIds.filter((eventId) => confirmed.has(eventId));
+  return {
+    syncSegmentId: segment.id,
+    initialEventId,
+    controlEventIds,
+    confirmedControlEventIds,
+    calibrated,
+    checked: calibrated && controlEventIds.length === 2 && confirmedControlEventIds.length === 2,
+  };
+}
+
+export function calibrateVideoLabFromEvent(
+  session: MatchSession,
+  row: VideoLabTimelineRow,
+  videoSecond: number,
+  kind: "INITIAL" | "RECALIBRATION",
+  input: { id?: string; now?: number } = {},
+): MatchSession {
+  if (!row.syncSegmentId || row.videoId === undefined || !isReliableVideoSyncEvent(row.event)) return session;
+  const syncSegment = buildVideoLabSyncSegments(session).find((candidate) => candidate.id === row.syncSegmentId);
+  if (!syncSegment) return session;
+  const now = input.now ?? Date.now();
+  const calibrated = upsertVideoCalibration(session, {
+    id: input.id ?? globalThis.crypto.randomUUID(),
+    segmentId: syncSegment.physicalSegmentId,
+    syncSegmentId: syncSegment.id,
+    period: syncSegment.period,
+    eventId: row.event.id,
+    videoSecond: Math.max(0, Math.round(videoSecond)),
+    kind,
+    now,
+  });
+  return persistVideoLabVerification(calibrated, row, { videoSecond, timeSource: "manual", now });
+}
+
+export function confirmVideoLabControl(
+  session: MatchSession,
+  row: VideoLabTimelineRow,
+  input: { id?: string; now?: number } = {},
+): MatchSession {
+  if (!row.syncSegmentId || row.estimatedSecond === undefined || !isReliableVideoSyncEvent(row.event)) return session;
+  const syncSegment = buildVideoLabSyncSegments(session).find((candidate) => candidate.id === row.syncSegmentId);
+  if (!syncSegment) return session;
+  const now = input.now ?? Date.now();
+  const verified = persistVideoLabVerification(session, row, { now });
+  return confirmVideoSyncCheck(verified, {
+    id: input.id ?? globalThis.crypto.randomUUID(),
+    segmentId: syncSegment.physicalSegmentId,
+    syncSegmentId: syncSegment.id,
+    period: syncSegment.period,
+    eventId: row.event.id,
+    now,
+  });
 }
 
 export function verifyVideoLabEvent(

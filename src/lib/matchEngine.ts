@@ -157,6 +157,8 @@ interface EventFactoryBase {
   now?: number;
   /** Primera interacción significativa de una captura LIVE. */
   observedAt?: number;
+  /** Captura introducida con retraso; solo afecta a la sincronización audiovisual. */
+  videoTiming?: "RETROSPECTIVE";
   provenance?: EventProvenance;
 }
 
@@ -276,6 +278,7 @@ function eventBase(input: EventFactoryBase) {
     ...(provenance === "LIVE"
       ? { observedAt: input.observedAt ?? now }
       : {}),
+    ...(input.videoTiming ? { videoTiming: input.videoTiming } : {}),
     updatedAt: now,
     deletedAt: null,
     pendingReview: false,
