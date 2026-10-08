@@ -8,7 +8,7 @@ import {
   syncPayloadsEqual,
 } from "./syncTypes";
 
-type VideoMetadata = Pick<MatchRemoteMetadata, "videoSegments" | "videoEventOverrides" | "videoAnalysisClips" | "videoEventAnalysisDetails">;
+type VideoMetadata = Pick<MatchRemoteMetadata, "videoSegments" | "videoEventOverrides" | "videoCalibrations" | "videoSyncChecks" | "videoAnalysisClips" | "videoEventAnalysisDetails">;
 
 export type MatchVideoConflictResolution =
   | { status: "RESOLVED"; remoteRevision: number; wroteRemote: boolean }
@@ -29,16 +29,20 @@ function splitVideoMetadata(value: unknown): {
   const {
     videoSegments = [],
     videoEventOverrides = [],
+    videoCalibrations = [],
+    videoSyncChecks = [],
     videoAnalysisClips = [],
     videoEventAnalysisDetails = [],
     ...rest
   } = source;
-  if (!Array.isArray(videoSegments) || !Array.isArray(videoEventOverrides) || !Array.isArray(videoAnalysisClips) || !Array.isArray(videoEventAnalysisDetails)) return null;
+  if (!Array.isArray(videoSegments) || !Array.isArray(videoEventOverrides) || !Array.isArray(videoCalibrations) || !Array.isArray(videoSyncChecks) || !Array.isArray(videoAnalysisClips) || !Array.isArray(videoEventAnalysisDetails)) return null;
   return {
     rest,
     video: {
       videoSegments: videoSegments as MatchRemoteMetadata["videoSegments"],
       videoEventOverrides: videoEventOverrides as MatchRemoteMetadata["videoEventOverrides"],
+      videoCalibrations: videoCalibrations as MatchRemoteMetadata["videoCalibrations"],
+      videoSyncChecks: videoSyncChecks as MatchRemoteMetadata["videoSyncChecks"],
       videoAnalysisClips: videoAnalysisClips as MatchRemoteMetadata["videoAnalysisClips"],
       videoEventAnalysisDetails: videoEventAnalysisDetails as MatchRemoteMetadata["videoEventAnalysisDetails"],
     },
@@ -58,6 +62,8 @@ export function buildLocalVideoResolutionPayload(
     ...remotePayload as MatchRemoteMetadata,
     videoSegments: local.video.videoSegments,
     videoEventOverrides: local.video.videoEventOverrides,
+    videoCalibrations: local.video.videoCalibrations,
+    videoSyncChecks: local.video.videoSyncChecks,
     videoAnalysisClips: local.video.videoAnalysisClips,
     videoEventAnalysisDetails: local.video.videoEventAnalysisDetails,
   };

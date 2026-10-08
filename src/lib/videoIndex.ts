@@ -2,9 +2,11 @@ import {
   MatchEvent,
   MatchSession,
   MatchVideoAnchor,
+  MatchVideoCalibration,
   MatchVideoEventOverride,
   MatchVideoPeriod,
   MatchVideoSegment,
+  MatchVideoSyncCheck,
 } from "../types";
 
 export const DEFAULT_VIDEO_LEAD_SECONDS = 6;
@@ -41,6 +43,7 @@ export type VideoEventTime = {
 /** Instante audiovisual fiable: la primera intención de captura prevalece sobre el guardado. */
 export function videoEventTime(event: MatchEvent): VideoEventTime | null {
   if (event.provenance !== "LIVE") return null;
+  if (event.videoTiming === "RETROSPECTIVE") return null;
   if (Number.isFinite(event.observedAt) && (event.observedAt ?? 0) > 0) {
     return { timestamp: event.observedAt!, source: "observedAt" };
   }
@@ -106,19 +109,129 @@ export function buildYouTubeWatchAtUrl(videoId: string, second: number): string 
   return `${youtubeBaseUrl(videoId)}&t=${Math.max(0, Math.round(second))}s`;
 }
 
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+export function videoSyncSegmentId(segmentId: string, period: MatchVideoPeriod): string {
+  return `${segmentId}:P${period}`;
 }
 
 export function compatibleVideoSegments(session: MatchSession, event: MatchEvent): MatchVideoSegment[] {
   return (session.videoSegments ?? [])
     .filter((segment) => segment.periods.includes(event.period as MatchVideoPeriod))
     .sort((a, b) => {
-      const anchored = Number(b.anchors.length > 0) - Number(a.anchors.length > 0);
+      const calibrated = (segment: MatchVideoSegment) => Number(
+        segment.anchors.some((anchor) => session.events.find((item) => item.id === anchor.eventId)?.period === event.period) ||
+        (session.videoCalibrations ?? []).some((item) => item.segmentId === segment.id && item.period === event.period),
+      );
+      const anchored = calibrated(b) - calibrated(a);
       return anchored || a.periods.length - b.periods.length || a.createdAt - b.createdAt;
     });
+}
+
+function compareEventPosition(left: MatchEvent, right: MatchEvent): number {
+  return left.period - right.period || left.minute - right.minute || left.order - right.order || left.createdAt - right.createdAt || left.id.localeCompare(right.id);
+}
+
+export type AutomaticVideoPosition = {
+  segment: MatchVideoSegment;
+  syncSegmentId: string;
+  estimatedSecond: number;
+  openSecond: number;
+  leadSeconds: number;
+  timeSource: VideoEventTime["source"];
+  calibrationId?: string;
+  calibrationKind: "LEGACY_INITIAL" | MatchVideoCalibration["kind"];
+  anchorSpreadSeconds: number;
+  quality: Exclude<VideoResolutionQuality, "MANUAL">;
+};
+
+/**
+ * Resolver AUTO canónico. Una calibración inicial define el offset base y cada
+ * recalibración explícita lo sustituye únicamente desde su evento en adelante.
+ * Las anchors legacy conservan la primera referencia válida de cada periodo;
+ * nunca se reinterpretan silenciosamente como recalibraciones.
+ */
+export function resolveAutomaticEventVideoPosition(
+  session: MatchSession,
+  eventId: string,
+): AutomaticVideoPosition | null {
+  const event = session.events.find((candidate) => candidate.id === eventId);
+  if (!event) return null;
+  const eventTime = videoEventTime(event);
+  const segment = compatibleVideoSegments(session, event)[0];
+  if (!eventTime || !segment) return null;
+  const period = event.period as MatchVideoPeriod;
+  const syncSegmentId = videoSyncSegmentId(segment.id, period);
+  const events = session.events.filter((candidate) => candidate.period === period).sort(compareEventPosition);
+  const eventIndex = events.findIndex((candidate) => candidate.id === event.id);
+  const eventById = new Map(session.events.map((candidate) => [candidate.id, candidate]));
+  const calibrations = (session.videoCalibrations ?? [])
+    .filter((item) => item.segmentId === segment.id && item.syncSegmentId === syncSegmentId && item.period === period)
+    .flatMap((item) => {
+      const calibrationEvent = eventById.get(item.eventId);
+      const calibrationTime = calibrationEvent ? videoEventTime(calibrationEvent) : null;
+      const index = calibrationEvent ? events.findIndex((candidate) => candidate.id === calibrationEvent.id) : -1;
+      return calibrationEvent && calibrationTime && index >= 0
+        ? [{ calibration: item, calibrationTime, index }]
+        : [];
+    });
+  const initial = calibrations
+    .filter((item) => item.calibration.kind === "INITIAL")
+    .sort((a, b) => b.calibration.updatedAt - a.calibration.updatedAt)[0];
+  const recalibration = calibrations
+    .filter((item) => item.calibration.kind === "RECALIBRATION" && item.index <= eventIndex)
+    .sort((a, b) => b.index - a.index || b.calibration.updatedAt - a.calibration.updatedAt)[0];
+
+  let videoSecond: number;
+  let referenceTime: VideoEventTime;
+  let calibrationId: string | undefined;
+  let calibrationKind: AutomaticVideoPosition["calibrationKind"];
+  if (recalibration) {
+    videoSecond = recalibration.calibration.videoSecond;
+    referenceTime = recalibration.calibrationTime;
+    calibrationId = recalibration.calibration.id;
+    calibrationKind = "RECALIBRATION";
+  } else if (initial) {
+    videoSecond = initial.calibration.videoSecond;
+    referenceTime = initial.calibrationTime;
+    calibrationId = initial.calibration.id;
+    calibrationKind = "INITIAL";
+  } else {
+    const legacyAnchors = segment.anchors.flatMap((anchor) => {
+      const anchorEvent = eventById.get(anchor.eventId);
+      const anchorTime = anchorEvent ? videoEventTime(anchorEvent) : null;
+      return anchorEvent?.period === period && anchorTime ? [{ anchor, anchorTime }] : [];
+    });
+    const legacy = legacyAnchors[0];
+    if (!legacy) return null;
+    videoSecond = legacy.anchor.videoSecond;
+    referenceTime = legacy.anchorTime;
+    calibrationKind = "LEGACY_INITIAL";
+  }
+
+  const offset = videoSecond - referenceTime.timestamp / 1000;
+  const estimatedSecond = Math.max(0, Math.round(eventTime.timestamp / 1000 + offset));
+  const leadSeconds = normalizeLeadSeconds(segment.leadSeconds);
+  const legacyOffsets = segment.anchors.flatMap((anchor) => {
+    const anchorEvent = eventById.get(anchor.eventId);
+    const anchorTime = anchorEvent ? videoEventTime(anchorEvent) : null;
+    return anchorEvent?.period === period && anchorTime ? [anchor.videoSecond - anchorTime.timestamp / 1000] : [];
+  });
+  const anchorSpreadSeconds = legacyOffsets.length > 1 ? Math.max(...legacyOffsets) - Math.min(...legacyOffsets) : 0;
+  return {
+    segment,
+    syncSegmentId,
+    estimatedSecond,
+    openSecond: Math.max(0, estimatedSecond - leadSeconds),
+    leadSeconds,
+    timeSource: eventTime.source,
+    calibrationId,
+    calibrationKind,
+    anchorSpreadSeconds,
+    quality: legacyOffsets.length <= 1
+      ? "SINGLE_ANCHOR"
+      : anchorSpreadSeconds <= COHERENT_ANCHOR_SPREAD_SECONDS
+        ? "MULTI_ANCHOR_COHERENT"
+        : "MULTI_ANCHOR_WARNING",
+  };
 }
 
 export function resolveEventVideoPosition(
@@ -147,36 +260,18 @@ export function resolveEventVideoPosition(
   const segment = compatible[0];
   if (!segment) return { status: "NO_VIDEO" };
   if (!isVideoTimeResolvable(event)) return { status: "NO_POSITION", segmentId: segment.id };
-  const eventById = new Map(session.events.map((candidate) => [candidate.id, candidate]));
-  const offsets = segment.anchors.flatMap((anchor) => {
-    const anchorEvent = eventById.get(anchor.eventId);
-    const anchorTime = anchorEvent ? videoEventTime(anchorEvent) : null;
-    return anchorEvent && anchorTime && segment.periods.includes(anchorEvent.period as MatchVideoPeriod)
-      ? [anchor.videoSecond - anchorTime.timestamp / 1000]
-      : [];
-  });
-  if (offsets.length === 0) return { status: "PENDING_SYNC", segmentId: segment.id, videoId: segment.videoId };
-  const calibratedOffset = median(offsets);
-  const eventTime = videoEventTime(event)!;
-  const estimatedSecond = Math.max(0, Math.round(eventTime.timestamp / 1000 + calibratedOffset));
-  const leadSeconds = normalizeLeadSeconds(segment.leadSeconds);
-  const spread = offsets.length > 1 ? Math.max(...offsets) - Math.min(...offsets) : 0;
-  const quality: VideoResolutionQuality = offsets.length === 1
-    ? "SINGLE_ANCHOR"
-    : spread <= COHERENT_ANCHOR_SPREAD_SECONDS
-      ? "MULTI_ANCHOR_COHERENT"
-      : "MULTI_ANCHOR_WARNING";
-  const openSecond = Math.max(0, estimatedSecond - leadSeconds);
+  const automatic = resolveAutomaticEventVideoPosition(session, event.id);
+  if (!automatic) return { status: "PENDING_SYNC", segmentId: segment.id, videoId: segment.videoId };
   return {
     status: "RESOLVED",
-    segmentId: segment.id,
-    videoId: segment.videoId,
-    estimatedSecond,
-    openSecond,
-    leadSeconds,
-    url: buildYouTubeWatchAtUrl(segment.videoId, openSecond),
-    quality,
-    anchorSpreadSeconds: spread,
+    segmentId: automatic.segment.id,
+    videoId: automatic.segment.videoId,
+    estimatedSecond: automatic.estimatedSecond,
+    openSecond: automatic.openSecond,
+    leadSeconds: automatic.leadSeconds,
+    url: buildYouTubeWatchAtUrl(automatic.segment.videoId, automatic.openSecond),
+    quality: automatic.quality,
+    anchorSpreadSeconds: automatic.anchorSpreadSeconds,
   };
 }
 
@@ -220,6 +315,11 @@ export function upsertVideoSegment(session: MatchSession, segment: MatchVideoSeg
     leadSeconds: normalizeLeadSeconds(segment.leadSeconds),
     anchors: previous && previous.videoId !== segment.videoId ? [] : segment.anchors,
   };
+  const calibrationChanged = Boolean(previous && (
+    previous.videoId !== segment.videoId ||
+    previous.periods.join(",") !== normalized.periods.join(",") ||
+    JSON.stringify(previous.anchors) !== JSON.stringify(normalized.anchors)
+  ));
   return {
     ...session,
     videoSegments: previous
@@ -228,6 +328,12 @@ export function upsertVideoSegment(session: MatchSession, segment: MatchVideoSeg
     videoEventOverrides: previous && previous.videoId !== segment.videoId
       ? (session.videoEventOverrides ?? []).filter((item) => item.segmentId !== segment.id)
       : session.videoEventOverrides,
+    videoCalibrations: previous && previous.videoId !== segment.videoId
+      ? (session.videoCalibrations ?? []).filter((item) => item.segmentId !== segment.id)
+      : session.videoCalibrations,
+    videoSyncChecks: calibrationChanged
+      ? (session.videoSyncChecks ?? []).filter((item) => item.segmentId !== segment.id)
+      : session.videoSyncChecks,
   };
 }
 
@@ -236,6 +342,75 @@ export function removeVideoSegment(session: MatchSession, segmentId: string): Ma
     ...session,
     videoSegments: (session.videoSegments ?? []).filter((segment) => segment.id !== segmentId),
     videoEventOverrides: (session.videoEventOverrides ?? []).filter((item) => item.segmentId !== segmentId),
+    videoCalibrations: (session.videoCalibrations ?? []).filter((item) => item.segmentId !== segmentId),
+    videoSyncChecks: (session.videoSyncChecks ?? []).filter((item) => item.segmentId !== segmentId),
+  };
+}
+
+export function upsertVideoCalibration(
+  session: MatchSession,
+  input: Omit<MatchVideoCalibration, "matchId" | "createdAt" | "updatedAt"> & { now?: number },
+): MatchSession {
+  const segment = (session.videoSegments ?? []).find((candidate) => candidate.id === input.segmentId);
+  const event = session.events.find((candidate) => candidate.id === input.eventId);
+  if (!segment || !event) throw new Error("No se encontró el vídeo o el evento elegido.");
+  if (event.period !== input.period || !segment.periods.includes(input.period)) throw new Error("La calibración no pertenece al periodo del evento.");
+  if (input.syncSegmentId !== videoSyncSegmentId(segment.id, input.period)) throw new Error("El segmento de sincronización no es coherente.");
+  if (!videoEventTime(event)) throw new Error("Este evento no conserva un instante LIVE fiable.");
+  if (!Number.isSafeInteger(input.videoSecond) || input.videoSecond < 0) throw new Error("El tiempo de vídeo no es válido.");
+  const now = input.now ?? Date.now();
+  const previous = (session.videoCalibrations ?? []).find((item) => item.id === input.id);
+  const calibration: MatchVideoCalibration = {
+    id: input.id,
+    matchId: session.matchId,
+    segmentId: input.segmentId,
+    syncSegmentId: input.syncSegmentId,
+    period: input.period,
+    eventId: input.eventId,
+    videoSecond: input.videoSecond,
+    kind: input.kind,
+    createdAt: previous?.createdAt ?? now,
+    updatedAt: now,
+  };
+  const withoutSuperseded = (session.videoCalibrations ?? []).filter((item) =>
+    item.id !== input.id &&
+    !(input.kind === "INITIAL" && item.syncSegmentId === input.syncSegmentId && item.kind === "INITIAL") &&
+    !(input.kind === "RECALIBRATION" && item.syncSegmentId === input.syncSegmentId && item.kind === "RECALIBRATION" && item.eventId === input.eventId),
+  );
+  return {
+    ...session,
+    videoCalibrations: [...withoutSuperseded, calibration],
+    // Toda calibración nueva cambia el modelo temporal del periodo y obliga a
+    // volver a comprobar sus controles; nunca toca overrides VERIFIED.
+    videoSyncChecks: (session.videoSyncChecks ?? []).filter((item) => item.syncSegmentId !== input.syncSegmentId),
+  };
+}
+
+export function confirmVideoSyncCheck(
+  session: MatchSession,
+  input: Omit<MatchVideoSyncCheck, "matchId" | "status" | "createdAt" | "updatedAt"> & { now?: number },
+): MatchSession {
+  const event = session.events.find((candidate) => candidate.id === input.eventId);
+  if (!event || event.period !== input.period || !videoEventTime(event)) throw new Error("El punto de control no es fiable.");
+  const now = input.now ?? Date.now();
+  const previous = (session.videoSyncChecks ?? []).find((item) => item.syncSegmentId === input.syncSegmentId && item.eventId === input.eventId);
+  const check: MatchVideoSyncCheck = {
+    id: previous?.id ?? input.id,
+    matchId: session.matchId,
+    segmentId: input.segmentId,
+    syncSegmentId: input.syncSegmentId,
+    period: input.period,
+    eventId: input.eventId,
+    status: "CONFIRMED",
+    createdAt: previous?.createdAt ?? now,
+    updatedAt: now,
+  };
+  return {
+    ...session,
+    videoSyncChecks: [
+      ...(session.videoSyncChecks ?? []).filter((item) => !(item.syncSegmentId === input.syncSegmentId && item.eventId === input.eventId)),
+      check,
+    ],
   };
 }
 

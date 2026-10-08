@@ -48,6 +48,7 @@ export default function MatchVideoPage() {
   const session = useMatchStore((state) => state.matches[matchId]);
   const ensureMatch = useMatchStore((state) => state.ensureMatch);
   const setVideoSegments = useMatchStore((state) => state.setVideoSegments);
+  const setVideoSyncState = useMatchStore((state) => state.setVideoSyncState);
   const [url, setUrl] = useState("");
   const [label, setLabel] = useState("");
   const [coverage, setCoverage] = useState<"P1" | "P2" | "FULL">("FULL");
@@ -104,6 +105,7 @@ export default function MatchVideoPage() {
   const commit = (next: MatchSession) => {
     if (!canWrite) return;
     setVideoSegments(matchId, next.videoSegments ?? []);
+    setVideoSyncState(matchId, next);
   };
   function addSegment() {
     try {
