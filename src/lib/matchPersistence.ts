@@ -853,6 +853,10 @@ export function saveMatchRecord(
   let serialized: string;
   try {
     serialized = JSON.stringify(envelope);
+    // Use the reload validator before replacing the last recoverable record.
+    if (!validPersistedSession(migratePersistedSession(JSON.parse(serialized).session), session.matchId)) {
+      return { ok: false, unavailable: false, message: "El partido contiene referencias incompatibles y no se puede guardar." };
+    }
   } catch (error) {
     return {
       ok: false,
