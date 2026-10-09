@@ -74,6 +74,8 @@ export function matchRemoteMetadata(session: MatchSession): MatchRemoteMetadata 
     reviewReopenedAt: session.reviewReopenedAt,
     videoSegments: session.videoSegments ?? [],
     videoEventOverrides: session.videoEventOverrides ?? [],
+    videoCalibrations: session.videoCalibrations ?? [],
+    videoSyncChecks: session.videoSyncChecks ?? [],
     videoAnalysisClips: session.videoAnalysisClips ?? [],
     videoEventAnalysisDetails: session.videoEventAnalysisDetails ?? [],
     preparation: session.preparation,

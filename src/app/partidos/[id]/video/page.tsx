@@ -48,6 +48,7 @@ export default function MatchVideoPage() {
   const session = useMatchStore((state) => state.matches[matchId]);
   const ensureMatch = useMatchStore((state) => state.ensureMatch);
   const setVideoSegments = useMatchStore((state) => state.setVideoSegments);
+  const setVideoSyncState = useMatchStore((state) => state.setVideoSyncState);
   const [url, setUrl] = useState("");
   const [label, setLabel] = useState("");
   const [coverage, setCoverage] = useState<"P1" | "P2" | "FULL">("FULL");
@@ -104,6 +105,11 @@ export default function MatchVideoPage() {
   const commit = (next: MatchSession) => {
     if (!canWrite) return;
     setVideoSegments(matchId, next.videoSegments ?? []);
+    setVideoSyncState(matchId, next);
+    const saved = useMatchStore.getState().matches[matchId];
+    if (saved?.persistenceStatus === "error") {
+      throw new Error(saved.lastError ?? "No se pudo guardar el vídeo.");
+    }
   };
   function addSegment() {
     try {

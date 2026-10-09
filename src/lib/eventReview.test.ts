@@ -157,3 +157,14 @@ test("Video Lab expone edición solo bajo canWrite, pendiente y tombstone sin un
   assert.match(source, /setEventReviewPending/);
   assert.match(source, /softDeleteEvent/);
 });
+
+test("Video Sync V2 expone calibración, controles y aviso de jugada anterior", () => {
+  const lab = readFileSync("src/app/partido/[id]/video-lab/page.tsx", "utf8");
+  const live = readFileSync("src/app/partido/[id]/directo/page.tsx", "utf8");
+  assert.match(lab, /CALIBRAR PERIODO AQUÍ/);
+  assert.match(lab, /RECALIBRAR DESDE AQUÍ/);
+  assert.match(lab, /SINCRONIZACIÓN COMPROBADA/);
+  assert.match(lab, /JUGADA ANTERIOR/);
+  assert.match(live, /REGISTRANDO JUGADA ANTERIOR/);
+  assert.match(live, /videoTiming/);
+});
