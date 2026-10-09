@@ -106,6 +106,10 @@ export default function MatchVideoPage() {
     if (!canWrite) return;
     setVideoSegments(matchId, next.videoSegments ?? []);
     setVideoSyncState(matchId, next);
+    const saved = useMatchStore.getState().matches[matchId];
+    if (saved?.persistenceStatus === "error") {
+      throw new Error(saved.lastError ?? "No se pudo guardar el vídeo.");
+    }
   };
   function addSegment() {
     try {

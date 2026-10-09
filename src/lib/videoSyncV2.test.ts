@@ -172,3 +172,25 @@ test("calibración desde Video Lab persiste VERIFIED sin tocar timestamps deport
   assert.equal(next.videoEventOverrides?.[0].status, "VERIFIED");
   assert.equal(next.videoCalibrations?.[0].kind, "INITIAL");
 });
+
+test("video config survives reload; foreign analysis reference cannot replace saved session", async () => {
+  const { saveMatchSession, loadMatchSession } = await import("./matchPersistence");
+  const { createVideoSegment, upsertVideoSegment } = await import("./videoIndex");
+  const values = new Map<string, string>();
+  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } };
+  const initial = session([action("a", 1, 1, 1, 10_000), action("b", 1, 5, 1, 30_000), action("c", 1, 10, 1, 60_000)], []);
+  initial.videoEventAnalysisDetails = [{ matchId: initial.matchId, eventId: "a", tags: [], createdAt: 1, updatedAt: 1 }];
+  assert.equal(saveMatchSession(initial, storage).ok, true);
+  const next = upsertVideoSegment(initial, createVideoSegment({ urlOrVideoId: "https://www.youtube.com/watch?v=ZoIqZkyKmjE", label: "Full", periods: [1, 2], leadSeconds: 6 }));
+  assert.equal(saveMatchSession(next, storage).ok, true);
+  const loaded = loadMatchSession(initial.matchId, storage)!;
+  assert.equal(loaded.videoSegments?.[0].videoId, "ZoIqZkyKmjE");
+  const audit = buildVideoLabSyncAudit(loaded, buildVideoLabSyncSegments(loaded)[0]);
+  assert.equal(audit.calibrated, false);
+  assert.equal(audit.initialEventId, "a");
+  const before = new Map(values);
+  next.videoEventAnalysisDetails = [{ ...initial.videoEventAnalysisDetails[0], matchId: "original-match" }];
+  assert.equal(saveMatchSession(next, storage).ok, false);
+  assert.deepEqual(values, before);
+  assert.ok(loadMatchSession(initial.matchId, storage));
+});
