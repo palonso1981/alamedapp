@@ -1499,6 +1499,10 @@ test("hidratación PROD-style refresca una caché incompleta con eventos y víde
     ...initial,
     preparation,
     matchFinished: true,
+    // A finished fixture must carry its recorded period durations.
+    period: 2,
+    minute: 20,
+    periodMinutes: { 1: 20, 2: 20 },
     events: [...initial.events, goal, historicalDuplicateOrder],
     videoSegments: [segment],
   };
