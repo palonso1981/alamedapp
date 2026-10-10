@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { analyzeCombination, buildCombinationsContext, combinationKey, combinationMinimumMinutes, compareCombinations, rankCombinations, validateCombination } from "./dashboardCombinations";
+import { analyzeCombination, buildCombinationsContext, combinationKey, combinationMinimumMinutes, compareCombinations, combinationPlayers, rankCombinations, validateCombination } from "./dashboardCombinations";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
 import { buildDashboardV2, emptyDashboardScope } from "./dashboardV2";
 import { createLineupInitializedEvent, createLiveThreatEvent, createSubstitutionEvent, createGameStateEvent } from "./matchEngine";
@@ -40,3 +40,60 @@ test("P-J filtra exposición y eventos; fuera del periodo no hay fuga en el bord
 test("minutos clave/de oro y filtro de portero recortan el mismo contexto",()=>{const r=record();assert.equal(buildCombinationsContext([r],{...scope(),competitiveContext:"KEY"}).minutes,40);assert.equal(buildCombinationsContext([r],{...scope(),competitiveContext:"GOLD"}).minutes,5);assert.equal(buildCombinationsContext([r],{...scope(),goalkeeperIds:["p1"]}).minutes,40);assert.equal(buildCombinationsContext([r],{...scope(),goalkeeperIds:["p2"]}).minutes,0);});
 test("quinteto duplicado o con desconocido queda fuera del denominador",()=>{for(const id of ["p1","unknown"]){const r=record();r.session.events=r.session.events.map(e=>e.type==="lineup_initialized"?{...e,onCourtPlayerIds:["p1","p2","p3","p4",id]}:e);assert.equal(buildCombinationsContext([r],scope()).minutes,0);}});
 test("regla multi-PJ y denominador cero explícitos",()=>{const a=record(),b=record("b");b.session.events=b.session.events.map(e=>e.type==="lineup_initialized"?{...e,onCourtPlayerIds:["p1","p3","p4","p5","p6"]}:e).filter(e=>e.type!=="substitution");assert.equal(analyzeCombination(buildCombinationsContext([a,b],scope()),["p1","p2"]).lowSample,true);const c=buildCombinationsContext([a],{...scope(),goalkeeperIds:["p7"]});const row=analyzeCombination(c,["p1","p2"]);assert.equal(row.percent,null);assert.equal(row.rest.goals,null);assert.equal(row.differential.goals,null);});
+
+
+test("SIN PORTEROS usa solo posición de plantilla, no capacidad ni rol funcional", () => {
+  const r = record();
+  r.session.players = r.session.players.map(p => ({ ...p, goalkeeperCapable: p.id === "p2", position: p.id === "p1" || p.id === "p7" ? "PORTERO" : "ALA" }));
+  r.session.events = r.session.events.map(e => e.type === "lineup_initialized" ? { ...e, goalkeeperPlayerId: "p2" } : e);
+  const c = buildCombinationsContext([r], scope());
+  for (const size of [2, 3, 4] as const) {
+    assert.deepEqual(combinationPlayers(c, size, true).map(p => p.id), ["p2", "p3", "p4", "p5", "p6"]);
+    const ranking = rankCombinations(c, size, true);
+    assert.ok(ranking.length > 0);
+    assert.ok(ranking.every(row => !row.ids.includes("p1") && !row.ids.includes("p7")));
+    assert.ok(ranking.some(row => row.ids.includes("p2")));
+  }
+});
+test("cuarteto sin porteros acumula los mismos minutos y métricas tras cambio de portero", () => {
+  const r = record();
+  r.session.players = r.session.players.map(p => p.id === "p6" ? { ...p, position: "PORTERO", goalkeeperCapable: true } : p);
+  r.session.events = r.session.events.map(e => e.type === "substitution" ? { ...e, playerOutId: "p1", playerInId: "p6" } : e);
+  const c = buildCombinationsContext([r], scope());
+  const ids = ["p2", "p3", "p4", "p5"];
+  const row = analyzeCombination(c, ids, true);
+  assert.equal(row.minutes, 40);
+  assert.equal(row.percent, 100);
+  assert.deepEqual(row.quintets.map(q => q.minutes), [30, 10]);
+  assert.deepEqual(row, analyzeCombination(c, ids));
+  assert.deepEqual(rankCombinations(c, 4, true), [row]);
+  const filtered = buildCombinationsContext([r], { ...scope(), period: 2, phases: ["TRANSITION"] });
+  assert.equal(analyzeCombination(filtered, ids, true).minutes, 20);
+  assert.deepEqual(analyzeCombination(filtered, ids, true), analyzeCombination(filtered, ids));
+});
+test("toggle off y quintetos exactos preservan íntegramente el comportamiento anterior", () => {
+  const c = buildCombinationsContext([record()], scope());
+  for (const size of [2, 3, 4, 5] as const) assert.deepEqual(rankCombinations(c, size, false), rankCombinations(c, size));
+  assert.deepEqual(rankCombinations(c, 5, true), rankCombinations(c, 5));
+  assert.deepEqual(combinationPlayers(c, 5, true), c.players);
+});
+test("exploración, detalle y comparador rechazan PORTERO con toggle activo", () => {
+  const c = buildCombinationsContext([record()], scope());
+  assert.throws(() => analyzeCombination(c, ["p1", "p2"], true));
+  assert.throws(() => compareCombinations(c, ["p2", "p3"], ["p1", "p3"], true));
+  assert.throws(() => compareCombinations(c, ["p1", "p3"], ["p2", "p3"], true));
+  assert.deepEqual(compareCombinations(c, ["p2", "p3"], ["p3", "p6"], true), compareCombinations(c, ["p2", "p3"], ["p3", "p6"]));
+  assert.equal(analyzeCombination(c, ["p2", "p6"], true).minutes, 0);
+});
+
+test("posición maestra de plantilla prevalece sobre slot inicial y snapshot histórico", () => {
+  const r = record();
+  r.session.players = r.session.players.map(p => p.id === "p1" ? { ...p, naturalPosition: "GOALKEEPER" } : p.id === "p2" ? { ...p, naturalPosition: "WINGER" } : p);
+  const c = buildCombinationsContext([r], scope(), [{ playerId: "p1", primaryPosition: "WINGER" }, { playerId: "p2", primaryPosition: "GOALKEEPER" }]);
+  const eligible = combinationPlayers(c, 2, true).map(p => p.id);
+  assert.ok(eligible.includes("p1"));
+  assert.ok(!eligible.includes("p2"));
+  const historical = buildCombinationsContext([r], scope());
+  assert.ok(!combinationPlayers(historical, 2, true).some(p => p.id === "p1"));
+  assert.deepEqual(rankCombinations(c, 2), rankCombinations(historical, 2));
+});
