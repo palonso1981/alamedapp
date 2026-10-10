@@ -1,4 +1,4 @@
-import { MatchEvent, Player } from "../types";
+import { MatchEvent, MasterPlayer, Player } from "../types";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
 import { DashboardScopeV2, filterDashboardMatchSelection, threatMatches } from "./dashboardV2";
 import { deriveCompetitiveProjection } from "./dashboardCompetitiveContext";
@@ -32,9 +32,15 @@ function rates(c: CombinationCounts, minutes: number): CombinationRates {
   return { gf: r(c.gf), gc: r(c.gc), shots: r(c.shots), threats: r(c.threats), goals: r(c.gf - c.gc), danger: r(c.shots - c.threats) };
 }
 /** Filters select the records; exposure and event attribution always replay the unfiltered log. */
-export function buildCombinationsContext(records: readonly DashboardMatchRecord[], scope: DashboardScopeV2): CombinationsContext {
+export function buildCombinationsContext(records: readonly DashboardMatchRecord[], scope: DashboardScopeV2, rosterPlayers: readonly Pick<MasterPlayer, "playerId" | "primaryPosition">[] = []): CombinationsContext {
   const selected = filterDashboardMatchSelection(records, scope);
   const players = Array.from(new Map(selected.flatMap(r => r.session.players).map(p => [p.id, p])).values());
+  // Roster position, never the match's functional goalkeeper slot/capability.
+  const roster = new Map(rosterPlayers.map(player => [player.playerId, player.primaryPosition]));
+  const selectionPlayers = players.map(player => {
+    const position = roster.get(player.id) ?? player.naturalPosition;
+    return position ? { ...player, position: position === "GOALKEEPER" ? "PORTERO" : "JUGADOR" } : player;
+  });
   let excludedMinutes = 0;
   const matches: ContextMatch[] = selected.map(record => {
     const { session } = record;
@@ -66,10 +72,14 @@ export function buildCombinationsContext(records: readonly DashboardMatchRecord[
   });
   const minutes = matches.reduce((sum, m) => sum + m.minutes, 0), counts = zero();
   matches.forEach(m => add(counts, m.totals));
-  return { matches, players, minutes, excludedMinutes, minimumMinutes: combinationMinimumMinutes(minutes), counts };
+  return { matches, players: selectionPlayers, minutes, excludedMinutes, minimumMinutes: combinationMinimumMinutes(minutes), counts };
 }
-export function analyzeCombination(context: CombinationsContext, selected: readonly string[]): CombinationRow {
-  const ids = validateCombination(selected, context.players), counts = zero(), quintets = new Map<string, { ids: string[]; minutes: number }>();
+/** Eligibility only: canonical lineups, exposure and exact quintets stay untouched. */
+export function combinationPlayers(context: CombinationsContext, size: CombinationSize, withoutGoalkeepers = false): Player[] {
+  return withoutGoalkeepers && size !== 5 ? context.players.filter(player => player.position !== "PORTERO") : context.players;
+}
+export function analyzeCombination(context: CombinationsContext, selected: readonly string[], withoutGoalkeepers = false): CombinationRow {
+  const ids = validateCombination(selected, combinationPlayers(context, selected.length as CombinationSize, withoutGoalkeepers)), counts = zero(), quintets = new Map<string, { ids: string[]; minutes: number }>();
   const byMatch: CombinationMatch[] = [];
   for (const match of context.matches) {
     const together = match.intervals.filter(i => contains(i.ids, ids)), minutes = together.reduce((sum, i) => sum + i.minutes, 0);
@@ -95,12 +105,13 @@ function subsets(ids: readonly string[], size: number): string[][] {
   if (size === 0) return [[]];
   return ids.flatMap((id, index) => subsets(ids.slice(index + 1), size - 1).map(rest => [id, ...rest]));
 }
-export function rankCombinations(context: CombinationsContext, size: CombinationSize): CombinationRow[] {
+export function rankCombinations(context: CombinationsContext, size: CombinationSize, withoutGoalkeepers = false): CombinationRow[] {
+  const eligible = new Set(combinationPlayers(context, size, withoutGoalkeepers).map(player => player.id));
   const observed = new Map<string, string[]>();
-  for (const match of context.matches) for (const interval of match.intervals) for (const ids of subsets(interval.ids, size)) observed.set(combinationKey(ids), ids);
-  return Array.from(observed.values()).map(ids => analyzeCombination(context, ids)).sort((a, b) => b.minutes - a.minutes || a.key.localeCompare(b.key));
+  for (const match of context.matches) for (const interval of match.intervals) for (const ids of subsets(interval.ids.filter(id => eligible.has(id)), size)) observed.set(combinationKey(ids), ids);
+  return Array.from(observed.values()).map(ids => analyzeCombination(context, ids, withoutGoalkeepers)).sort((a, b) => b.minutes - a.minutes || a.key.localeCompare(b.key));
 }
-export function compareCombinations(context: CombinationsContext, a: readonly string[], b: readonly string[]) {
-  validateCombination(b, context.players, a.length as CombinationSize);
-  return { a: analyzeCombination(context, a), b: analyzeCombination(context, b) };
+export function compareCombinations(context: CombinationsContext, a: readonly string[], b: readonly string[], withoutGoalkeepers = false) {
+  validateCombination(b, combinationPlayers(context, a.length as CombinationSize, withoutGoalkeepers), a.length as CombinationSize);
+  return { a: analyzeCombination(context, a, withoutGoalkeepers), b: analyzeCombination(context, b, withoutGoalkeepers) };
 }
