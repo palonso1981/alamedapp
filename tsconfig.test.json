@@ -71,6 +71,7 @@
     "src/lib/sync/localTeamRepository.ts",
     "src/store/useMatchStore.ts",
     "src/types/index.ts",
-    "src/lib/dashboardCombinations.test.ts"
+    "src/lib/dashboardCombinations.test.ts",
+    "src/lib/dashboardDistribution.test.ts"
   ]
 }

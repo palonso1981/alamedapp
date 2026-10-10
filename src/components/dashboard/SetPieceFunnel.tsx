@@ -1,5 +1,6 @@
 "use client";
 
+import { MetricRange } from "./MetricDistribution";
 import { useMemo, useState } from "react";
 import { DashboardMatchRecord } from "../../lib/dashboardAnalytics";
 import {
@@ -36,11 +37,11 @@ function FunnelSide({ title, tone, stats, scaleMaximum, kind }: { title: string;
         const width = setPieceFunnelWidth(value, scaleMaximum);
         return <div key={key} data-abp-funnel-stage={key} data-value={value} data-width={width.toFixed(2)} className="text-center">
           <div className="mb-1 flex items-baseline justify-center gap-2"><span className="text-[9px] font-black tracking-wide text-slate-400">{label}</span><strong className="text-sm text-white">{value}</strong><small className="text-[10px] font-bold text-slate-400">{percentage === null ? "—" : `${Math.round(percentage)}%`}</small></div>
-          <div data-abp-funnel-bar className={`mx-auto h-3 rounded-md ${fill}`} style={{ width: `${width}%` }}/>
+          <div data-abp-funnel-bar className={`mx-auto h-3 rounded-md ${fill}`} style={{ width: `${width}%` }}/><MetricRange metric={`abp.${kind}.${tone === "cyan" ? "FOR" : "AGAINST"}.${key}`} peerMetric={`abp.${kind}.${tone === "cyan" ? "AGAINST" : "FOR"}.${key}`} mode="TOTALS"/>
         </div>;
       })}
     </div>
-    <div data-abp-total-shots className="mt-3 border-t border-slate-800 pt-2 text-center"><span className="text-[9px] font-black tracking-wide text-slate-500">REMATES TOTALES</span><strong className={`ml-2 text-lg ${text}`}>{stats.totalShots}</strong><p className="text-[9px] text-slate-500">Una ABP puede generar más de un remate.</p></div>
+    <div data-abp-total-shots className="mt-3 border-t border-slate-800 pt-2 text-center"><span className="text-[9px] font-black tracking-wide text-slate-500">REMATES TOTALES</span><strong className={`ml-2 text-lg ${text}`}>{stats.totalShots}</strong><MetricRange metric={`abp.${kind}.${tone === "cyan" ? "FOR" : "AGAINST"}.totalShots`} peerMetric={`abp.${kind}.${tone === "cyan" ? "AGAINST" : "FOR"}.totalShots`} mode="TOTALS"/><p className="text-[9px] text-slate-500">Una ABP puede generar más de un remate.</p></div>
   </article>;
 }
 
