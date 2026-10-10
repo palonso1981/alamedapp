@@ -70,6 +70,7 @@
     "src/lib/sync/teamSyncTypes.ts",
     "src/lib/sync/localTeamRepository.ts",
     "src/store/useMatchStore.ts",
-    "src/types/index.ts"
+    "src/types/index.ts",
+    "src/lib/dashboardCombinations.test.ts"
   ]
 }

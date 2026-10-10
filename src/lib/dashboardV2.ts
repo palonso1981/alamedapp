@@ -28,7 +28,7 @@ import { GOAL_FRAME } from "./goalTarget";
 import { CompetitiveContext, competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, PlayingStateContext, ScoreStateContext } from "./dashboardCompetitiveContext";
 
 export type DashboardValueMode = "TOTALS" | "PER_MATCH" | "PER_40";
-export type DashboardArea = "SUMMARY" | "TEAM" | "PLAYERS" | "GOALKEEPERS" | "MAPS";
+export type DashboardArea = "SUMMARY" | "TEAM" | "PLAYERS" | "GOALKEEPERS" | "COMBINATIONS" | "MAPS";
 export type DashboardPhaseFilter = ThreatPhase | "SET_PIECE";
 export type DashboardCompetition = CompetitionType | "UNSPECIFIED" | "ALL";
 export type DashboardSetPieceTraceability = "ALL_CLASSIFIED" | "LINKED_RESTART_ONLY";
@@ -205,7 +205,7 @@ function phaseMatches(
   );
 }
 
-function threatMatches(
+export function threatMatches(
   event: ThreatRecordedEvent,
   record: DashboardMatchRecord,
   scope: DashboardScopeV2,
@@ -518,7 +518,7 @@ function eventMatches(
  * Construye una vista efímera del event log. Los eventos estructurales se conservan
  * para que replay reconstruya alineaciones; nunca se persisten agregados ni filtros.
  */
-export function filterDashboardDataset(
+export function filterDashboardMatchSelection(
   records: readonly DashboardMatchRecord[],
   scope: DashboardScopeV2,
 ): DashboardMatchRecord[] {
@@ -535,6 +535,11 @@ export function filterDashboardDataset(
     .filter((record) => scope.rivals.length === 0 || scope.rivals.includes(record.catalog.opponent))
     .filter((record) => scope.venues.length === 0 || scope.venues.includes(record.catalog.venue))
     .filter((record) => scope.results.length === 0 || Boolean(matchResult(record) && scope.results.includes(matchResult(record)!)))
+;
+}
+
+export function filterDashboardDataset(records: readonly DashboardMatchRecord[], scope: DashboardScopeV2): DashboardMatchRecord[] {
+  return filterDashboardMatchSelection(records, scope)
     .map((record) => {
       const contextIds = competitiveEventIds(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, scope.playingState, scope.scoreState);
       return {

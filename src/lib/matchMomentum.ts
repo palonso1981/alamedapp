@@ -107,7 +107,7 @@ export function classifyMomentumDanger(event: ThreatRecordedEvent): MomentumDang
   return near ? "NEAR" : "NORMAL";
 }
 
-function periodDurations(session: MatchSession): number[] {
+export function periodDurations(session: MatchSession): number[] {
   const configured = REGULATION_MATCH_CLOCK.periodDurationMinutes;
   return Array.from({ length: REGULATION_MATCH_CLOCK.regulationPeriods }, (_, index) => {
     const period = index + 1;
@@ -119,7 +119,7 @@ function periodDurations(session: MatchSession): number[] {
   });
 }
 
-function periodOffsets(durations: readonly number[]): number[] {
+export function periodOffsets(durations: readonly number[]): number[] {
   let cursor = 0;
   return durations.map((duration) => {
     const offset = cursor;
@@ -128,13 +128,18 @@ function periodOffsets(durations: readonly number[]): number[] {
   });
 }
 
-function eventGlobalMinute(event: Pick<MatchEvent, "period" | "minute">, offsets: readonly number[]): number {
+export function eventGlobalMinute(event: Pick<MatchEvent, "period" | "minute">, offsets: readonly number[]): number {
   return (offsets[event.period - 1] ?? 0) + event.minute;
 }
 
 export function momentumDangerMatches(danger: MomentumDanger, filter: MomentumDangerFilter): boolean {
   if (filter === "ALL") return true;
   return MOMENTUM_COLOR_INTENSITY[danger] >= MOMENTUM_COLOR_INTENSITY[filter];
+}
+
+/** Single canonical replay used by Momentum and derived lineup analytics. */
+export function canonicalLineupReplay(session: MatchSession) {
+  return replayMatch(session.players, session.events, { currentClock: { period: session.period, minute: session.minute } });
 }
 
 export function deriveSharedPlayerIntervals(
@@ -145,9 +150,7 @@ export function deriveSharedPlayerIntervals(
   const durations = periodDurations(session);
   const offsets = periodOffsets(durations);
   const end = durations.reduce((sum, value) => sum + value, 0);
-  const replay = replayMatch(session.players, session.events, {
-    currentClock: { period: session.period, minute: session.minute },
-  });
+  const replay = canonicalLineupReplay(session);
   const states = new Map<number, string[]>();
   for (const entry of replay.timeline) {
     states.set(eventGlobalMinute(entry.event, offsets), entry.lineupPlayerIds);
@@ -181,9 +184,7 @@ export function buildMatchMomentum(
   const durations = periodDurations(session);
   const offsets = periodOffsets(durations);
   const sharedIntervals = deriveSharedPlayerIntervals(session, filters.playerIds);
-  const replay = replayMatch(session.players, session.events, {
-    currentClock: { period: session.period, minute: session.minute },
-  });
+  const replay = canonicalLineupReplay(session);
   const lineupByEventId = new Map(
     replay.timeline.map((entry) => [entry.event.id, entry.lineupPlayerIds]),
   );
