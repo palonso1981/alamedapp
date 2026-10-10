@@ -1,6 +1,7 @@
+import { canonicalLineupReplay, periodDurations, periodOffsets, eventGlobalMinute } from "./matchMomentum";
 import { MatchEvent, MatchSession } from "../types";
 import { DashboardPeriod } from "./dashboardAnalytics";
-import { compareEventPosition, deriveGlobalMinute, goalkeeperAtPosition, isActiveMatchEvent, REGULATION_MATCH_CLOCK, replayMatch } from "./matchEngine";
+import { compareEventPosition, deriveGlobalMinute, goalkeeperAtPosition, isActiveMatchEvent, replayMatch } from "./matchEngine";
 
 export type CompetitiveContext = "ALL" | "KEY" | "GOLD";
 export type PlayingStateContext = "ALL" | "PJ_CDA" | "PJ_RIVAL";
@@ -32,30 +33,19 @@ export interface CompetitiveMinutes {
 
 export interface CompetitiveProjection extends CompetitiveMinutes {
   eventIds: Set<string>;
+  intervals: Array<{ start: number; end: number; period: number; lineupPlayerIds: string[]; eventId: string }>;
 }
 
 export const GOLD_WINDOW_START_GLOBAL_MINUTE = deriveGlobalMinute(2, 15);
 
-function matchEnd(session: MatchSession): number {
-  return session.matchFinished
-    ? REGULATION_MATCH_CLOCK.regulationPeriods * REGULATION_MATCH_CLOCK.periodDurationMinutes
-    : deriveGlobalMinute(session.period, session.minute);
+function matchEnd(session: MatchSession): number { return periodDurations(session).reduce((a, b) => a + b, 0); }
+function globalMinute(session: MatchSession, period: number, minute: number): number { return eventGlobalMinute({ period, minute }, periodOffsets(periodDurations(session))); }
+function periodBounds(session: MatchSession, period: DashboardPeriod, end: number): [number, number] {
+  if (period === "ALL") return [0, end];
+  const durations = periodDurations(session), start = periodOffsets(durations)[period - 1] ?? 0;
+  return [start, start + (durations[period - 1] ?? 0)];
 }
-
-function periodBounds(period: DashboardPeriod, end: number): [number, number] {
-  const duration = REGULATION_MATCH_CLOCK.periodDurationMinutes;
-  if (period === 1) return [0, Math.min(duration, end)];
-  if (period === 2) return [duration, Math.min(duration * 2, end)];
-  return [0, end];
-}
-
-function periodEnd(session: MatchSession, period: number): number {
-  if (session.matchFinished || session.closedPeriods?.includes(period) || session.period > period) {
-    return REGULATION_MATCH_CLOCK.periodDurationMinutes;
-  }
-  return session.period === period ? session.minute : 0;
-}
-
+function periodEnd(session: MatchSession, period: number): number { return periodDurations(session)[period - 1] ?? 0; }
 function isPlayingStateEvent(event: MatchEvent, context: Exclude<PlayingStateContext, "ALL">): boolean {
   return event.type === "game_state_changed"
     && event.state === "FLYING_GOALKEEPER"
@@ -94,8 +84,8 @@ export function derivePlayingStateIntervals(
             endOrder: change.order,
             startEventId: start.id,
             endEventId: change.id,
-            startGlobalMinute: deriveGlobalMinute(currentPeriod, start.minute),
-            endGlobalMinute: deriveGlobalMinute(currentPeriod, change.minute),
+            startGlobalMinute: globalMinute(session, currentPeriod, start.minute),
+            endGlobalMinute: globalMinute(session, currentPeriod, change.minute),
           });
         }
         start = null;
@@ -110,8 +100,8 @@ export function derivePlayingStateIntervals(
         endOrder: null,
         startEventId: start.id,
         endEventId: null,
-        startGlobalMinute: deriveGlobalMinute(currentPeriod, start.minute),
-        endGlobalMinute: deriveGlobalMinute(currentPeriod, endMinute),
+        startGlobalMinute: globalMinute(session, currentPeriod, start.minute),
+        endGlobalMinute: globalMinute(session, currentPeriod, endMinute),
       });
     }
   }
@@ -132,15 +122,6 @@ function playingStateContainsEvent(
   });
 }
 
-function intervalDuration(
-  from: number,
-  to: number,
-  intervals: readonly PlayingStateInterval[],
-): number {
-  return intervals.reduce((sum, interval) =>
-    sum + Math.max(0, Math.min(to, interval.endGlobalMinute) - Math.max(from, interval.startGlobalMinute)), 0);
-}
-
 function scoreState(scoreFor: number, scoreAgainst: number): Exclude<ScoreStateContext, "ALL"> {
   return scoreFor > scoreAgainst ? "LEADING" : scoreFor < scoreAgainst ? "TRAILING" : "DRAWING";
 }
@@ -155,7 +136,7 @@ export function deriveScoreStateIntervals(
   const cached = scoreStateIntervalCache.get(session)?.get(period);
   if (cached) return cached;
   const end = matchEnd(session);
-  const [scopeStart, scopeEnd] = periodBounds(period, end);
+  const [scopeStart, scopeEnd] = periodBounds(session, period, end);
   if (scopeEnd <= scopeStart) return [];
   const goals = replayMatch(session.players, session.events).timeline
     .map((entry) => entry.event)
@@ -165,7 +146,7 @@ export function deriveScoreStateIntervals(
   let start = scopeStart;
   const intervals: ScoreStateInterval[] = [];
   for (const goal of goals) {
-    const at = deriveGlobalMinute(goal.period, goal.minute);
+    const at = globalMinute(session, goal.period, goal.minute);
     if (at < scopeStart) {
       if (goal.side === "FOR") scoreFor += 1; else scoreAgainst += 1;
       continue;
@@ -206,10 +187,10 @@ export function isCompetitiveMoment(context: CompetitiveContext, period: number,
  */
 export function deriveCompetitiveProjection(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext, goalkeeperIds: readonly string[] = [], playingState: PlayingStateContext = "ALL", scoreContext: ScoreStateContext = "ALL"): CompetitiveProjection {
   const end = matchEnd(session);
-  const [scopeStart, scopeEnd] = periodBounds(period, end);
-  const projection: CompetitiveProjection = { observed: 0, byPlayer: {}, byGoalkeeper: {}, eventIds: new Set<string>() };
+  const [scopeStart, scopeEnd] = periodBounds(session, period, end);
+  const projection: CompetitiveProjection = { observed: 0, byPlayer: {}, byGoalkeeper: {}, eventIds: new Set<string>(), intervals: [] };
   if (scopeEnd <= scopeStart) return projection;
-  const replay = replayMatch(session.players, session.events, { currentClock: { period: session.matchFinished ? 2 : session.period, minute: session.matchFinished ? 20 : session.minute } });
+  const replay = canonicalLineupReplay(session);
   const playingIntervals = playingState === "ALL" ? [] : derivePlayingStateIntervals(session, period, playingState);
   const scoreIntervals = scoreContext === "ALL" ? [] : deriveScoreStateIntervals(session, period);
   let scoreFor = 0;
@@ -221,9 +202,9 @@ export function deriveCompetitiveProjection(session: MatchSession, period: Dashb
       : goalkeeperAtPosition(session.players, session.events, event);
     const goalkeeperMatches = goalkeeperIds.length === 0
       || (goalkeeper?.status === "PLAYER" && goalkeeperIds.includes(goalkeeper.playerId));
-    const start = deriveGlobalMinute(event.period, event.minute);
+    const start = globalMinute(session, event.period, event.minute);
     const playingStateMatches = playingState === "ALL" || playingStateContainsEvent(event, playingIntervals);
-    if (goalkeeperMatches && playingStateMatches && start >= scopeStart && start <= scopeEnd && isCompetitiveMoment(context, event.period, event.minute, scoreFor, scoreAgainst) && scoreStateMatches(scoreContext, scoreFor, scoreAgainst)) {
+    if ((period === "ALL" || event.period === period) && event.minute <= periodEnd(session, event.period) && goalkeeperMatches && playingStateMatches && start >= scopeStart && start <= scopeEnd && isCompetitiveMoment(context, event.period, event.minute, scoreFor, scoreAgainst) && scoreStateMatches(scoreContext, scoreFor, scoreAgainst)) {
       projection.eventIds.add(event.id);
     }
     if (entry.event.type === "threat_recorded" && entry.event.outcome === "GOL") {
@@ -231,19 +212,17 @@ export function deriveCompetitiveProjection(session: MatchSession, period: Dashb
       else scoreAgainst += 1;
     }
     const next = replay.timeline[index + 1];
-    const finish = Math.min(end, next ? deriveGlobalMinute(next.event.period, next.event.minute) : end);
+    const finish = Math.min(end, globalMinute(session, event.period, periodEnd(session, event.period)), next ? globalMinute(session, next.event.period, next.event.minute) : end);
     let from = Math.max(scopeStart, start);
     const to = Math.min(scopeEnd, finish);
-    if (context === "GOLD") from = Math.max(from, GOLD_WINDOW_START_GLOBAL_MINUTE);
+    if (context === "GOLD") from = Math.max(from, globalMinute(session, 2, 15));
     if (!goalkeeperMatches || to <= from || (context !== "ALL" && Math.abs(scoreFor - scoreAgainst) > 1) || !scoreStateMatches(scoreContext, scoreFor, scoreAgainst)) return;
     const scoreDuration = scoreStateDuration(from, to, scoreIntervals, scoreContext);
-    const duration = playingState === "ALL"
-      ? scoreDuration
-      : scoreDuration <= 0
-        ? 0
-        : intervalDuration(from, to, playingIntervals);
+    const pieces = playingState === "ALL" ? [{ start: from, end: to }] : playingIntervals.map(i => ({ start: Math.max(from, i.startGlobalMinute), end: Math.min(to, i.endGlobalMinute) })).filter(i => i.end > i.start);
+    const duration = scoreDuration <= 0 ? 0 : pieces.reduce((sum, i) => sum + i.end - i.start, 0);
     if (duration <= 0) return;
     projection.observed += duration;
+    for (const piece of pieces) projection.intervals.push({ ...piece, period: event.period, lineupPlayerIds: entry.lineupPlayerIds, eventId: event.id });
     entry.lineupPlayerIds.forEach((id) => { projection.byPlayer[id] = (projection.byPlayer[id] ?? 0) + duration; });
     if (goalkeeper?.status === "PLAYER") projection.byGoalkeeper[goalkeeper.playerId] = (projection.byGoalkeeper[goalkeeper.playerId] ?? 0) + duration;
   });
