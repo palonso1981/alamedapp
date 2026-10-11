@@ -58,7 +58,7 @@ export function GoalZoneGrid({ zones, selected = [], onSelect }: { zones: ZoneSt
       <div className="grid grid-cols-3 overflow-hidden rounded-2xl border-2 border-white/80">
         {GOAL_ORDER.map((key) => {
           const zone = byZone.get(key)!;
-          return <button type="button" disabled={!onSelect} onClick={() => onSelect?.(key)} key={key} className={`min-h-24 border bg-sky-950/80 p-2 text-center ${selected.includes(key) ? "border-cyan-300 ring-2 ring-inset ring-cyan-300" : "border-slate-700"}`}><strong className="block text-xl">{zone.threats}</strong><span className="block text-[9px] text-emerald-300">{zone.saves} P</span><span className="block text-[9px] text-rose-300">{zone.goals} G</span><span className="block text-[9px] text-slate-500">%P {percentage(zone.savePercentage)}</span></button>;
+          return <button type="button" disabled={!onSelect} onClick={() => onSelect?.(key)} key={key} className={`min-h-24 border bg-sky-950/80 p-2 text-center ${selected.includes(key) ? "border-cyan-300 ring-2 ring-inset ring-cyan-300" : "border-slate-700"}`}><strong className="block text-2xl">{zone.threats}</strong><span className="block text-[9px] text-slate-400">VOLUMEN</span><span className="mt-1 block text-[10px] text-rose-300">{zone.goals} goles</span><span className="block text-xs font-black text-rose-200">{percentage(zone.goalPercentage)} gol</span></button>;
         })}
       </div>
       <p className="mt-2 text-[10px] text-slate-500">FUERA no entra en la matriz interior.</p>
@@ -66,7 +66,7 @@ export function GoalZoneGrid({ zones, selected = [], onSelect }: { zones: ZoneSt
   );
 }
 
-export function KeeperBodySummary({ keeper }: { keeper: GoalkeeperAnalysis }) {
+export function KeeperBodySummary({ keeper, selected = [], onSelect }: { keeper: GoalkeeperAnalysis; selected?: KeeperBodyPart[]; onSelect?: (part: KeeperBodyPart) => void }) {
   const parts: Array<{ key: KeeperBodyPart; left: string; top: string }> = [
     { key: "HEAD", left: "50%", top: "10%" },
     { key: "TORSO", left: "50%", top: "39%" },
@@ -82,14 +82,14 @@ export function KeeperBodySummary({ keeper }: { keeper: GoalkeeperAnalysis }) {
       <h3 className="font-black">SILUETA · {keeper.name}</h3>
       <div className="relative mx-auto mt-3 h-64 max-w-xs" aria-label={`Paradas por parte corporal de ${keeper.name}`}>
         <svg viewBox="0 0 100 160" className="absolute inset-0 h-full w-full text-slate-700" aria-hidden="true"><circle cx="50" cy="20" r="13" fill="currentColor"/><path d="M36 39Q50 30 64 39L70 91H30Z" fill="currentColor"/><path d="M31 44L4 79L14 86L39 62M69 44L96 79L86 86L61 62M40 88L23 151L38 155L51 103M60 88L77 151L62 155L49 103" fill="none" stroke="currentColor" strokeWidth="13" strokeLinecap="round"/></svg>
-        {parts.map(({ key, left, top }) => <span key={key} title={BODY_LABEL[key]} className="absolute grid h-10 w-10 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-cyan-300 bg-slate-950 text-sm font-black text-white shadow" style={{ left, top }}>{keeper.bodyParts[key]}</span>)}
+        {parts.map(({ key, left, top }) => <button type="button" disabled={!onSelect} onClick={() => onSelect?.(key)} key={key} title={BODY_LABEL[key]} aria-pressed={selected.includes(key)} className={`absolute grid h-11 w-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border bg-slate-950 text-sm font-black text-white shadow ${selected.includes(key) ? "border-amber-300 ring-2 ring-amber-300/40" : "border-cyan-300"}`} style={{ left, top }}>{keeper.bodyParts[key]}</button>)}
       </div>
       <p className="text-center text-[10px] text-slate-500">{total > 0 ? `${total} paradas con parte corporal registrada` : "N/D · Sin parte corporal registrada"}</p>
     </article>
   );
 }
 
-export function SaveOutcomeSummary({ keeper }: { keeper: GoalkeeperAnalysis }) {
+export function SaveOutcomeSummary({ keeper, selected = [], onSelect }: { keeper: GoalkeeperAnalysis; selected?: SaveOutcome[]; onSelect?: (outcome: SaveOutcome) => void }) {
   const documented = Object.values(keeper.saveOutcomes).reduce((sum, value) => sum + value, 0);
-  return <div className="grid grid-cols-3 gap-2">{(Object.keys(SAVE_LABEL) as SaveOutcome[]).map((key) => <div key={key} className="rounded-xl bg-slate-950 p-2 text-center"><strong className="block text-xl">{keeper.saveOutcomes[key]}</strong><span className="text-[9px] font-black text-slate-500">{SAVE_LABEL[key]}</span><span className="block text-[9px] text-cyan-300">{documented > 0 ? `${(keeper.saveOutcomes[key] / documented * 100).toFixed(1).replace(".", ",")}%` : "N/D"}</span></div>)}</div>;
+  return <div className="grid grid-cols-3 gap-2">{(Object.keys(SAVE_LABEL) as SaveOutcome[]).map((key) => <button type="button" disabled={!onSelect} onClick={() => onSelect?.(key)} aria-pressed={selected.includes(key)} key={key} className={`rounded-xl border bg-slate-950 p-2 text-center ${selected.includes(key) ? "border-amber-300 ring-2 ring-amber-300/30" : "border-transparent"}`}><strong className="block text-xl">{keeper.saveOutcomes[key]}</strong><span className="text-[9px] font-black text-slate-500">{SAVE_LABEL[key]}</span><span className="block text-xs font-black text-cyan-300">{documented > 0 ? `${(keeper.saveOutcomes[key] / documented * 100).toFixed(1).replace(".", ",")}%` : "N/D"}</span></button>)}</div>;
 }

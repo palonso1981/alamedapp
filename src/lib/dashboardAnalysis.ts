@@ -188,6 +188,9 @@ export interface TrendPoint {
   savePercentage: number | null;
   pjForMinutes: number;
   pjAgainstMinutes: number;
+  possessionLosses: number;
+  keyMinutes: number;
+  goldMinutes: number;
 }
 
 export interface PlayingStateAnalytics {
@@ -489,7 +492,7 @@ export function buildDashboardAnalysis(
     const threatsNear = threats.filter((event) => event.side === "AGAINST" && ["Z1", "Z2", "Z3"].includes(deriveThreatOriginZone(event.origin, event.side))).length;
     const saves = one.threats.AGAINST.PARADA;
     const goals = one.threats.AGAINST.GOL;
-    return { matchId: record.catalog.matchId, opponent: record.catalog.opponent, date: record.catalog.date, venue: record.catalog.venue, result: resultFor(record), threatsFor: one.threats.FOR.total, threatsAgainst: one.threats.AGAINST.total, goalsFor: one.goalsFor, goalsAgainst: one.goalsAgainst, shotsOnTarget, threatsOnTarget, shotsNear, threatsNear, savePercentage: saves + goals > 0 ? saves / (saves + goals) * 100 : null, pjForMinutes: 0, pjAgainstMinutes: 0 };
+    return { matchId: record.catalog.matchId, opponent: record.catalog.opponent, date: record.catalog.date, venue: record.catalog.venue, result: resultFor(record), threatsFor: one.threats.FOR.total, threatsAgainst: one.threats.AGAINST.total, goalsFor: one.goalsFor, goalsAgainst: one.goalsAgainst, shotsOnTarget, threatsOnTarget, shotsNear, threatsNear, savePercentage: saves + goals > 0 ? saves / (saves + goals) * 100 : null, possessionLosses: record.session.events.filter((event) => isActiveMatchEvent(event) && event.type === "possession_lost" && (period === "ALL" || event.period === period)).length, keyMinutes: 0, goldMinutes: 0, pjForMinutes: 0, pjAgainstMinutes: 0 };
   }).sort((a, b) => a.date.localeCompare(b.date));
 
   for (const record of selected) {
