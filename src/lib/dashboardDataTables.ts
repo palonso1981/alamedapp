@@ -26,6 +26,7 @@ export interface DashboardPhaseDataRow {
   label: string;
   count: number | null;
   rawCount: number;
+  countPerMatch: number | null;
   countHabitual: HabitualMetric;
   volumePercentage: number | null;
   volumeHabitual: HabitualMetric;
@@ -80,7 +81,7 @@ export function buildDashboardPhaseDataRows(current: readonly DashboardMatchReco
     const impactHabitual = habitual(reference.map((item) => item.impact));
     return {
       key: definition.key, label: definition.label,
-      count: normalizeDashboardCount(value.count, mode, samples, observedMinutes), rawCount: value.count, countHabitual,
+      count: normalizeDashboardCount(value.count, mode, samples, observedMinutes), rawCount: value.count, countPerMatch: samples ? value.count / samples : null, countHabitual,
       volumePercentage: value.volume, volumeHabitual, volumeEquivalent: equivalent(value.total, volumeHabitual),
       goals: normalizeDashboardCount(value.goals, mode, samples, observedMinutes), rawGoals: value.goals,
       goalPercentage: value.goalShare, goalHabitual, goalEquivalent: equivalent(value.totalGoals, goalHabitual),
@@ -90,7 +91,7 @@ export function buildDashboardPhaseDataRows(current: readonly DashboardMatchReco
   const totals = rows.reduce((value, row) => ({ count: value.count + row.rawCount, goals: value.goals + row.rawGoals }), { count: 0, goals: 0 });
   const totalCountHabitual = habitual(referenceByMatch.map((records) => DASHBOARD_DATA_PHASES.reduce((sum, definition) => sum + phaseRaw(records, definition, side).count, 0)));
   return [...rows, {
-    key: "TOTAL", label: "TOTAL", count: normalizeDashboardCount(totals.count, mode, samples, observedMinutes), rawCount: totals.count, countHabitual: totalCountHabitual,
+    key: "TOTAL", label: "TOTAL", count: normalizeDashboardCount(totals.count, mode, samples, observedMinutes), rawCount: totals.count, countPerMatch: samples ? totals.count / samples : null, countHabitual: totalCountHabitual,
     volumePercentage: totals.count ? 100 : null, volumeHabitual: habitual([]), volumeEquivalent: null,
     goals: normalizeDashboardCount(totals.goals, mode, samples, observedMinutes), rawGoals: totals.goals,
     goalPercentage: totals.goals ? 100 : null, goalHabitual: habitual([]), goalEquivalent: null, impact: null, impactHabitual: habitual([]),

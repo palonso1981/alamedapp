@@ -26,9 +26,10 @@ export interface GoalkeeperAnalysisColumnProps {
   samples?: number;
   secondaryStats?: { shots: number; goals: number; assists: number; losses: number; fouls: number; cards: number };
   onTrendSelect?: (matchId: string) => void;
+  showEvolution?: boolean;
 }
 
-export function GoalkeeperAnalysisColumn({ keeper, records, detailHref, trend = [], onPoint, selectedBodyParts = [], selectedSaveOutcomes = [], onBodyPart, onSaveOutcome, mode = "TOTALS", samples = 1, secondaryStats, onTrendSelect }: GoalkeeperAnalysisColumnProps) {
+export function GoalkeeperAnalysisColumn({ keeper, records, detailHref, trend = [], onPoint, selectedBodyParts = [], selectedSaveOutcomes = [], onBodyPart, onSaveOutcome, mode = "TOTALS", samples = 1, secondaryStats, onTrendSelect, showEvolution = true }: GoalkeeperAnalysisColumnProps) {
   const count = (value: number) => normalizeDashboardCount(value, mode, samples, keeper.minutes);
   return <article className="space-y-3 rounded-3xl border border-slate-700 bg-slate-900 p-3">
     <header className="flex items-center gap-3">{keeper.playerId === "GLOBAL" ? <div className="grid h-24 w-20 shrink-0 place-items-center rounded-2xl border border-cyan-800 bg-cyan-950 text-3xl">🥅</div> : <PlayerPhotoCard player={{ id: keeper.playerId, name: keeper.name, number: keeper.number, photoUrl: keeper.photoUrl }} className="h-24 w-20 shrink-0"/>}<div><span className="text-[9px] font-black text-cyan-300">{keeper.playerId === "GLOBAL" ? "TODOS LOS PORTEROS" : `#${keeper.number} · PORTERO`}</span><h3 className="text-lg font-black">{keeper.name}</h3><strong className="mt-1 block text-3xl">{format(keeper.minutes, " min")}</strong><p className="text-[10px] text-slate-500">P-J excluido</p></div></header>
@@ -38,7 +39,7 @@ export function GoalkeeperAnalysisColumn({ keeper, records, detailHref, trend = 
     <KeeperBodySummary keeper={keeper} selected={selectedBodyParts} onSelect={onBodyPart}/>
     <GoalThreatMap points={keeper.goalPoints} onSelect={onPoint} pointTitle={(point) => dashboardMapPointTitle(records, point)}/>
     <PitchThreatMap points={keeper.originPoints} side="AGAINST" onSelect={onPoint} pointTitle={(point) => dashboardMapPointTitle(records, point)}/>
-    <EvolutionChart points={trend} reference={null} referenceLabel="MEDIA" onSelect={onTrendSelect ? (point) => onTrendSelect(point.id) : undefined}/>
+    {showEvolution && <EvolutionChart points={trend} reference={null} referenceLabel="MEDIA" onSelect={onTrendSelect ? (point) => onTrendSelect(point.id) : undefined}/>}
     {detailHref && <Link href={detailHref} className="inline-flex min-h-10 items-center rounded-xl border border-cyan-800 px-4 text-[10px] font-black text-cyan-200">VER DETALLE</Link>}
   </article>;
 }

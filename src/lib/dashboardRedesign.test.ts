@@ -9,6 +9,7 @@ import { sharedMetricMaximum } from "./distributionStatistics";
 import { dashboardScopeToVideoFilters, dashboardVideoHref, suggestedDashboardCollectionName } from "./dashboardVideoContext";
 import { orderPhaseRows, phaseImpactDelta } from "./dashboardPhaseImpact";
 import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows } from "./dashboardDataTables";
+import { buildGoalkeeperComparisonPanels, sortGoalkeeperRows } from "./dashboardGoalkeeperView";
 
 const fixtureScope = () => emptyDashboardScope(DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_TEAM_ID, DASHBOARD_FIXTURE_SEASON_ID);
 
@@ -93,6 +94,42 @@ test("DATA mantiene TOTAL, por partido y por 40 sobre la misma cantidad", () => 
   const per40 = buildDashboardPhaseDataRows(records, refs, "FOR", "PER_40", analysis.rates.observedMinutes).find((row) => row.key === "TOTAL")!;
   assert.equal(perMatch.count, total.rawCount / records.length);
   assert.equal(per40.count, analysis.rates.observedMinutes > 0 ? total.rawCount * 40 / analysis.rates.observedMinutes : null);
+});
+
+test("partido concreto mantiene HAB contra el universo de referencia", () => {
+  const records = buildDashboardFixture();
+  const current = buildDashboardV2([records[0]], { ...fixtureScope(), matchIds: [records[0].catalog.matchId] });
+  const rows = buildDashboardPhaseDataRows(current.records, records.map((record) => buildDashboardV2([record], { ...fixtureScope(), matchIds: [record.catalog.matchId] }).records), "AGAINST", "TOTALS", current.rates.observedMinutes);
+  const positional = rows.find((row) => row.key === "POSITIONAL")!;
+  assert.equal(positional.countHabitual.stats.n, records.length);
+  assert.ok(positional.countHabitual.stats.n > current.samples);
+});
+
+test("tabla de porteros invierte ascendente y descendente", () => {
+  const analysis = buildDashboardV2(buildDashboardFixture(), fixtureScope());
+  const base = analysis.goalkeepers[0];
+  assert.ok(base);
+  const rows = [{ keeper: { ...base, playerId: "a", minutes: 10 }, matches: 1 }, { keeper: { ...base, playerId: "b", minutes: 30 }, matches: 2 }];
+  assert.deepEqual(sortGoalkeeperRows(rows, "minutes", "DESC").map((row) => row.keeper.playerId), ["b", "a"]);
+  assert.deepEqual(sortGoalkeeperRows(rows, "minutes", "ASC").map((row) => row.keeper.playerId), ["a", "b"]);
+});
+
+test("comparar porteros conserva dos Targets y dos Orígenes independientes", () => {
+  const analysis = buildDashboardV2(buildDashboardFixture(), fixtureScope());
+  const base = analysis.goalkeepers[0];
+  assert.ok(base);
+  const targetA = [{ ...base.goalPoints[0], eventId: "target-a" }];
+  const targetB = [{ ...base.goalPoints[0], eventId: "target-b" }];
+  const originA = [{ ...base.originPoints[0], eventId: "origin-a" }];
+  const originB = [{ ...base.originPoints[0], eventId: "origin-b" }];
+  const panels = buildGoalkeeperComparisonPanels([{ ...base, playerId: "a", name: "A", goalPoints: targetA, originPoints: originA }, { ...base, playerId: "b", name: "B", goalPoints: targetB, originPoints: originB }], ["a", "b"]);
+  assert.equal(panels.length, 2);
+  assert.equal(panels[0].targetPoints[0].eventId, "target-a");
+  assert.equal(panels[1].targetPoints[0].eventId, "target-b");
+  assert.equal(panels[0].originPoints[0].eventId, "origin-a");
+  assert.equal(panels[1].originPoints[0].eventId, "origin-b");
+  assert.notEqual(panels[0].targetPoints, panels[1].targetPoints);
+  assert.notEqual(panels[0].originPoints, panels[1].originPoints);
 });
 
 test("porcentajes habituales se calculan por partido antes de P25/P75", () => {
