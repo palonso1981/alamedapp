@@ -355,7 +355,7 @@ function VideoLibraryContent() {
   const beginCollection = (kind: "COLLECTION" | "SHARED_REEL", sourceItems: readonly VideoLibraryItem[] = items) => {
     setCollectionEditor(null);
     setCollectionDraftItems([...sourceItems]);
-    setCollectionName(kind === "COLLECTION" ? (fromDashboard ? suggestedDashboardCollectionName(filters) : `Selección · ${sourceItems.length} jugadas`) : `Reel · ${sourceItems.length} jugadas`);
+    setCollectionName(kind === "COLLECTION" ? (fromDashboard ? suggestedDashboardCollectionName(filters, { players: players.map((player) => ({ id: player.id, name: player.name })), goalkeepers: goalkeeperOptions.map((item) => ({ id: item.value, name: item.label })) }) : `Selección · ${sourceItems.length} jugadas`) : `Reel · ${sourceItems.length} jugadas`);
     setCollectionDescription("");
     setCollectionVisibility(kind === "COLLECTION" ? "CLUB" : "LINK_ONLY");
     setCollectionMessage(kind);

@@ -7,6 +7,7 @@ import { buildDashboardV2, dashboardActiveFilterCount, DASHBOARD_AREAS, emptyDas
 import { aggregateGoalkeepers } from "./dashboardAnalysis";
 import { sharedMetricMaximum } from "./distributionStatistics";
 import { dashboardScopeToVideoFilters, dashboardVideoHref, suggestedDashboardCollectionName } from "./dashboardVideoContext";
+import { orderPhaseRows, phaseImpactDelta } from "./dashboardPhaseImpact";
 
 const fixtureScope = () => emptyDashboardScope(DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_TEAM_ID, DASHBOARD_FIXTURE_SEASON_ID);
 
@@ -118,5 +119,21 @@ test("enlace contextual puede acotar fase y lado sin mutar el scope del Dashboar
 
 test("nombre sugerido de colección incluye contexto legible y fecha", () => {
   const filters = dashboardScopeToVideoFilters({ ...fixtureScope(), matchIds: ["m1"] });
-  assert.equal(suggestedDashboardCollectionName(filters, new Date("2026-10-12T12:00:00Z")), "Partido · 12/10/2026");
+  assert.equal(suggestedDashboardCollectionName(filters, {}, new Date("2026-10-12T12:00:00Z")), "Partido · 12-10-2026");
+});
+
+test("nombre sugerido prioriza portero, lado, fase y destino con etiquetas humanas", () => {
+  const filters = dashboardScopeToVideoFilters(fixtureScope(), { goalkeeperIds: ["g1"], side: "AGAINST", phases: ["TRANSITION"], outcomes: ["PARADA"], targetZones: ["RIGHT_HIGH"] });
+  assert.equal(suggestedDashboardCollectionName(filters, { goalkeepers: [{ id: "g1", name: "Pablo" }] }, new Date("2026-10-12T12:00:00Z")), "Portero Pablo · Rival · Transición · Paradas · Escuadra der. · 12-10-2026");
+});
+
+test("impacto de fase es goles menos volumen y permite ordenar por ambas lecturas", () => {
+  const rows = [
+    { id: "mucho", values: [{ volumePercentage: 60, goalPercentage: 50 }] },
+    { id: "impacto", values: [{ volumePercentage: 20, goalPercentage: 55 }] },
+  ];
+  assert.equal(phaseImpactDelta(20, 55), 35);
+  assert.equal(phaseImpactDelta(null, 55), null);
+  assert.equal(orderPhaseRows(rows, "VOLUME", (row) => row.values)[0].id, "mucho");
+  assert.equal(orderPhaseRows(rows, "IMPACT", (row) => row.values)[0].id, "impacto");
 });
