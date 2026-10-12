@@ -6,6 +6,7 @@ import { describeDistribution, habitualPosition, MIN_MATCHES_FOR_HABITUAL_RANGE 
 import { buildDashboardV2, dashboardActiveFilterCount, DASHBOARD_AREAS, emptyDashboardScope, normalizeDashboardArea, phaseImpactShare, scopeFromSearchParams, scopeToSearchParams, teamThreatProfile } from "./dashboardV2";
 import { aggregateGoalkeepers } from "./dashboardAnalysis";
 import { sharedMetricMaximum } from "./distributionStatistics";
+import { dashboardScopeToVideoFilters, dashboardVideoHref, suggestedDashboardCollectionName } from "./dashboardVideoContext";
 
 const fixtureScope = () => emptyDashboardScope(DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_TEAM_ID, DASHBOARD_FIXTURE_SEASON_ID);
 
@@ -89,4 +90,33 @@ test("GLOBAL de porteros agrega tres porteros sin asumir dos", () => {
   assert.equal(global?.threatsAgainst, base.threatsAgainst * 3);
   assert.equal(global?.saves, base.saves * 3);
   assert.equal(global?.goalPoints.length, base.goalPoints.length * 3);
+});
+
+test("traductor Dashboard a VIDEO conserva el scope canónico y abre una consulta reproducible", () => {
+  const scope = { ...fixtureScope(), matchIds: ["m1", "m2"], period: 2 as const, phases: ["SET_PIECE" as const], threatSides: ["FOR" as const], playerIds: ["p1"] };
+  const filters = dashboardScopeToVideoFilters(scope);
+  assert.equal(filters.source, "EVENT");
+  assert.equal(filters.side, "FOR");
+  assert.deepEqual(filters.matchIds, ["m1", "m2"]);
+  assert.deepEqual(filters.eventKinds, ["SET_PIECES"]);
+  assert.deepEqual(filters.periods, [2]);
+  const href = dashboardVideoHref(scope);
+  const params = new URLSearchParams(href.split("?")[1]);
+  assert.equal(params.get("from"), "dashboard");
+  assert.equal(params.get("amatchIds"), "m1~m2");
+  assert.deepEqual(params.getAll("vMatches"), ["m1", "m2"]);
+  assert.equal(params.get("vSide"), "FOR");
+});
+
+test("enlace contextual puede acotar fase y lado sin mutar el scope del Dashboard", () => {
+  const scope = fixtureScope();
+  const filters = dashboardScopeToVideoFilters(scope, { side: "AGAINST", phases: ["TRANSITION"] });
+  assert.equal(filters.side, "AGAINST");
+  assert.deepEqual(filters.phases, ["TRANSITION"]);
+  assert.deepEqual(scope.phases, []);
+});
+
+test("nombre sugerido de colección incluye contexto legible y fecha", () => {
+  const filters = dashboardScopeToVideoFilters({ ...fixtureScope(), matchIds: ["m1"] });
+  assert.equal(suggestedDashboardCollectionName(filters, new Date("2026-10-12T12:00:00Z")), "Partido · 12/10/2026");
 });

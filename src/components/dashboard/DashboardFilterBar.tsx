@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import {
   DashboardPhaseFilter,
   DashboardReferencePreset,
@@ -55,6 +55,8 @@ export interface DashboardFilterBarProps {
 }
 
 export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams, seasons, matches, rivals, players = [], goalkeepers = [], referencePreset, referenceScope, mode, onScope, onReferencePreset, onReferenceScope, onMode, onRefresh, fixture, comparison, comparisonEnabled = true, onComparisonEnabled, fixedPer40 = false }: DashboardFilterBarProps) {
+  const advancedRef = useRef<HTMLDetailsElement>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const patch = (changes: Partial<DashboardScopeV2>) => onScope({ ...scope, ...changes });
   const chips: Array<{ key: string; label: string; clear: () => void }> = [];
   if (scope.period !== "ALL") chips.push({ key: "period", label: `P${scope.period}`, clear: () => patch({ period: "ALL" }) });
@@ -78,6 +80,24 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
   scope.threatSides.forEach((side) => chips.push({ key: `side-${side}`, label: side === "FOR" ? "Amenazas CDA" : "Amenazas rival", clear: () => patch({ threatSides: scope.threatSides.filter((item) => item !== side) }) }));
   if (scope.setPieceTraceability === "LINKED_RESTART_ONLY") chips.push({ key: "linked-restart", label: "ABP con vínculo", clear: () => patch({ setPieceTraceability: "ALL_CLASSIFIED" }) });
   const clearAll = () => patch({ matchIds: [], period: "ALL", venues: [], results: [], rivals: [], phases: [], playerIds: [], goalkeeperIds: [], originZones: [], targetZones: [], outcomes: [], keeperBodyParts: [], saveOutcomes: [], threatSides: [], setPieceTraceability: "ALL_CLASSIFIED", outcomeGroup: "ALL", originDistance: "ALL", competitiveContext: "ALL", playingState: "ALL", scoreState: "ALL" });
+  useEffect(() => {
+    if (!advancedOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!advancedRef.current?.contains(event.target as Node)) {
+        advancedRef.current!.open = false;
+        setAdvancedOpen(false);
+      }
+    };
+    const closeEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && advancedRef.current) {
+        advancedRef.current.open = false;
+        setAdvancedOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeEscape);
+    return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeEscape); };
+  }, [advancedOpen]);
 
   return <><div data-dashboard-filter-context className="overflow-hidden rounded-3xl border border-slate-700 bg-slate-950/95 shadow-xl"><section className="p-3">
     <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -110,10 +130,10 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
         {fixedPer40 ? <span className="text-[10px] font-black text-cyan-300">COMBINACIONES · x40 · RESTO DEL MISMO CONTEXTO</span> : <div className="flex rounded-xl bg-slate-900 p-1">{(["TOTALS", "PER_MATCH", "PER_40"] as DashboardValueMode[]).map((item) => <button key={item} type="button" onClick={() => onMode(item)} className={`min-h-8 rounded-lg px-2 text-[9px] font-black ${mode === item ? "bg-white text-slate-950" : "text-slate-500"}`}>{item === "TOTALS" ? "TOTALES" : item === "PER_MATCH" ? "POR PARTIDO" : "POR 40"}</button>)}</div>}
       </div>
     </div>
-    </section>{comparisonEnabled && comparison}</div>{comparisonEnabled && (referencePreset === "MATCH" || referencePreset === "CUSTOM") && <ReferenceBuilder preset={referencePreset} scope={referenceScope} analysis={scope} matches={matches} rivals={rivals} onChange={onReferenceScope}/>}<details id="dashboard-advanced-filters" data-dashboard-advanced-filters className="rounded-2xl border border-slate-800 bg-slate-900/80 px-3 py-2">
+    </section>{comparisonEnabled && comparison}</div>{comparisonEnabled && (referencePreset === "MATCH" || referencePreset === "CUSTOM") && <ReferenceBuilder preset={referencePreset} scope={referenceScope} analysis={scope} matches={matches} rivals={rivals} onChange={onReferenceScope}/>}<details ref={advancedRef} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)} id="dashboard-advanced-filters" data-dashboard-advanced-filters className="rounded-2xl border border-slate-800 bg-slate-900/80 px-3 py-2">
       <summary className="cursor-pointer text-[10px] font-black text-slate-400">FILTROS AVANZADOS · {chips.length}</summary>
       <div data-advanced-filter-panel className="fixed inset-x-3 top-28 z-50 max-h-[calc(100vh-8rem)] space-y-3 overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950 p-4 shadow-2xl sm:left-auto sm:right-5 sm:w-[min(46rem,calc(100vw-2.5rem))]">
-        <div className="sticky top-0 z-10 flex items-center justify-between bg-slate-950 pb-2"><b className="text-xs text-white">FILTROS AVANZADOS · {chips.length}</b><button type="button" onClick={() => { const details = document.getElementById("dashboard-advanced-filters") as HTMLDetailsElement | null; if (details) details.open = false; }} className="min-h-9 rounded-xl border border-slate-700 px-3 text-[10px] font-black">CERRAR ×</button></div>
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-slate-950 pb-2"><b className="text-xs text-white">FILTROS AVANZADOS · {chips.length}</b><div className="flex gap-2">{chips.length > 0 && <button type="button" onClick={clearAll} className="min-h-9 rounded-xl bg-amber-950 px-3 text-[10px] font-black text-amber-200">LIMPIAR TODO</button>}<button type="button" onClick={() => { if (advancedRef.current) advancedRef.current.open = false; setAdvancedOpen(false); }} className="min-h-9 rounded-xl border border-slate-700 px-3 text-[10px] font-black">CERRAR ×</button></div></div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">SEDE · RESULTADO</span>{(["HOME", "AWAY"] as const).map((value) => <MultiButton key={value} active={scope.venues.includes(value)} onClick={() => patch({ venues: toggle(scope.venues, value) })}>{value === "HOME" ? "LOCAL" : "VISITANTE"}</MultiButton>)}{(["WIN", "DRAW", "LOSS"] as const).map((value) => <MultiButton key={value} active={scope.results.includes(value)} onClick={() => patch({ results: toggle(scope.results, value) })}>{value === "WIN" ? "VICTORIA" : value === "DRAW" ? "EMPATE" : "DERROTA"}</MultiButton>)}</div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">RIVALES · OR DENTRO DE LA DIMENSIÓN</span>{rivals.map((rival) => <MultiButton key={rival} active={scope.rivals.includes(rival)} onClick={() => patch({ rivals: toggle(scope.rivals, rival) })}>{rival}</MultiButton>)}</div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">FASE</span>{PHASES.map(([value, label]) => <MultiButton key={value} active={scope.phases.includes(value)} onClick={() => patch({ phases: toggle(scope.phases, value) })}>{label}</MultiButton>)}</div>
