@@ -27,17 +27,20 @@ export function PitchZoneGrid({ zones, selected = [], onSelect }: { zones: ZoneS
     <article className="rounded-3xl border border-slate-700 bg-slate-900 p-4">
       <p className="text-[10px] font-black tracking-[0.16em] text-cyan-300">PERSPECTIVA PORTERO CDA</p>
       <h3 className="mb-3 font-black">ZONAS DE ORIGEN 1–6</h3>
-      <p className="mb-1 text-center text-[9px] font-black tracking-[.3em] text-slate-500">PORTERÍA</p>
-      <div className="grid grid-cols-3 gap-2" aria-label="Z1 Z2 Z3 cercanas; Z4 Z5 Z6 lejanas">
+      <p className="mb-1 text-center text-[9px] font-black tracking-[.3em] text-slate-500">PORTERÍA CDA ◀</p>
+      <div className="relative overflow-hidden rounded-[2rem] border-2 border-emerald-200/70 bg-emerald-950/35 p-2" aria-label="Pista de fútbol sala: Z1 Z2 Z3 cercanas; Z4 Z5 Z6 lejanas">
+        <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-1/2 border-l border-white/25"/><span aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/25"/><span aria-hidden="true" className="pointer-events-none absolute -left-8 top-1/2 h-28 w-20 -translate-y-1/2 rounded-r-full border border-white/30"/>
+        <div className="relative z-10 grid grid-cols-3 gap-2">
         {zones.map((zone, index) => (
-          <button type="button" disabled={!onSelect} onClick={() => onSelect?.(zone.zone)} key={zone.zone} className={`min-h-24 rounded-xl border bg-slate-950 p-3 text-left ${selected.includes(zone.zone) ? "border-cyan-300 ring-2 ring-cyan-300/30" : "border-slate-700"}`}>
+          <button type="button" disabled={!onSelect} onClick={() => onSelect?.(zone.zone)} key={zone.zone} className={`min-h-28 rounded-xl border bg-slate-950/90 p-2 text-left ${selected.includes(zone.zone) ? "border-cyan-300 ring-2 ring-cyan-300/30" : "border-slate-700/80"}`}>
             <div className="flex items-center justify-between"><strong className="text-cyan-300">{zone.zone}</strong><span className="text-[8px] text-slate-500">{index < 3 ? "CERCANA" : "LEJANA"} · {index % 3 === 0 ? "DCHA." : index % 3 === 1 ? "CENTRO" : "IZQ."}</span></div>
-            <strong className="mt-1 block text-2xl">{zone.threats}</strong>
-            <p className="text-[10px] font-bold text-cyan-200">{total ? percentage(zone.threats / total * 100) : "N/D"} del total</p>
-            <p className="text-[10px] text-slate-400">{zone.goals} G · {zone.saves} P · {zone.outside} F</p>
-            <p className="text-[10px] font-bold text-slate-500">GOL {percentage(zone.goalPercentage)}</p>
+            <strong className="mt-1 block text-2xl text-rose-200">{percentage(zone.goalPercentage)}</strong>
+            <p className="text-[9px] font-black text-rose-300">DAÑO · {zone.goals} GOLES</p>
+            <p className="mt-1 text-[10px] text-slate-300">{zone.threats} amenazas · {total ? percentage(zone.threats / total * 100) : "N/D"}</p>
+            <p className="text-[9px] text-slate-500">{zone.saves} paradas · {zone.outside} fuera</p>
           </button>
         ))}
+        </div>
       </div>
       <p className="mt-3 text-[10px] text-slate-500">Derecha/izquierda son las del portero CDA mirando hacia la pista.</p>
     </article>
@@ -55,10 +58,10 @@ export function GoalZoneGrid({ zones, selected = [], onSelect }: { zones: ZoneSt
     <article className="rounded-3xl border border-slate-700 bg-slate-900 p-4">
       <p className="text-[10px] font-black tracking-[0.16em] text-cyan-300">TARGET EXACTO → AGREGACIÓN</p>
       <h3 className="mb-3 font-black">PORTERÍA 3×2</h3>
-      <div className="grid grid-cols-3 overflow-hidden rounded-2xl border-2 border-white/80">
+      <div className="relative grid grid-cols-3 overflow-hidden rounded-t-[2.5rem] border-x-[5px] border-t-[5px] border-white/90 bg-[repeating-linear-gradient(135deg,transparent,transparent_8px,rgba(255,255,255,.04)_8px,rgba(255,255,255,.04)_10px)] pt-2 shadow-[0_-4px_20px_rgba(255,255,255,.08)]">
         {GOAL_ORDER.map((key) => {
           const zone = byZone.get(key)!;
-          return <button type="button" disabled={!onSelect} onClick={() => onSelect?.(key)} key={key} className={`min-h-24 border bg-sky-950/80 p-2 text-center ${selected.includes(key) ? "border-cyan-300 ring-2 ring-inset ring-cyan-300" : "border-slate-700"}`}><strong className="block text-2xl">{zone.threats}</strong><span className="block text-[9px] text-slate-400">VOLUMEN</span><span className="mt-1 block text-[10px] text-rose-300">{zone.goals} goles</span><span className="block text-xs font-black text-rose-200">{percentage(zone.goalPercentage)} gol</span></button>;
+          return <button type="button" disabled={!onSelect} onClick={() => onSelect?.(key)} key={key} className={`min-h-28 border bg-sky-950/80 p-2 text-center ${selected.includes(key) ? "border-cyan-300 ring-2 ring-inset ring-cyan-300" : "border-slate-700"}`}><strong className="block text-2xl text-rose-200">{percentage(zone.goalPercentage)}</strong><span className="block text-[9px] font-black text-rose-300">GOL · {zone.goals}</span><span className="mt-2 block text-sm font-black">{zone.threats}</span><span className="block text-[8px] text-slate-400">VOLUMEN</span></button>;
         })}
       </div>
       <p className="mt-2 text-[10px] text-slate-500">FUERA no entra en la matriz interior.</p>

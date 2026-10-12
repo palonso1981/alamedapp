@@ -171,6 +171,21 @@ export interface GoalkeeperAnalysis {
   goldMinutesPercentage: number | null;
 }
 
+export function aggregateGoalkeepers(keepers: readonly GoalkeeperAnalysis[], name = "GLOBAL"): GoalkeeperAnalysis | undefined {
+  if (!keepers.length) return undefined;
+  const minutes = keepers.reduce((sum, keeper) => sum + keeper.minutes, 0);
+  const threatsAgainst = keepers.reduce((sum, keeper) => sum + keeper.threatsAgainst, 0);
+  const saves = keepers.reduce((sum, keeper) => sum + keeper.saves, 0);
+  const goalsAgainst = keepers.reduce((sum, keeper) => sum + keeper.goalsAgainst, 0);
+  const bodyParts: Record<KeeperBodyPart, number> = { HEAD: 0, TORSO: 0, LEFT_ARM_HAND: 0, RIGHT_ARM_HAND: 0, LEFT_LEG_FOOT: 0, RIGHT_LEG_FOOT: 0 };
+  const saveOutcomes: Record<SaveOutcome, number> = { CATCH: 0, REBOUND: 0, CLEARANCE: 0 };
+  keepers.forEach((keeper) => {
+    (Object.keys(bodyParts) as KeeperBodyPart[]).forEach((key) => { bodyParts[key] += keeper.bodyParts[key]; });
+    (Object.keys(saveOutcomes) as SaveOutcome[]).forEach((key) => { saveOutcomes[key] += keeper.saveOutcomes[key]; });
+  });
+  return { playerId: keepers.length === 1 ? keepers[0].playerId : "GLOBAL", name: keepers.length === 1 ? keepers[0].name : name, number: keepers.length === 1 ? keepers[0].number : 0, photoUrl: keepers.length === 1 ? keepers[0].photoUrl : undefined, minutes, threatsAgainst, threatsAgainst40: minutes > 0 ? threatsAgainst / minutes * 40 : null, interiorThreats: saves + goalsAgainst, saves, goalsAgainst, goalsAgainst40: minutes > 0 ? goalsAgainst / minutes * 40 : null, savePercentage: saves + goalsAgainst > 0 ? saves / (saves + goalsAgainst) * 100 : null, bodyParts, saveOutcomes, goalPoints: keepers.flatMap((keeper) => keeper.goalPoints), originPoints: keepers.flatMap((keeper) => keeper.originPoints), keyMinutes: keepers.reduce((sum, keeper) => sum + keeper.keyMinutes, 0), keyMinutesPercentage: null, goldMinutes: keepers.reduce((sum, keeper) => sum + keeper.goldMinutes, 0), goldMinutesPercentage: null };
+}
+
 export interface TrendPoint {
   matchId: string;
   opponent: string;

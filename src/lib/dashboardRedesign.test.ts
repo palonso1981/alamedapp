@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "./dashboardFixture";
 import { dashboardMetricDistribution } from "./dashboardDistribution";
 import { describeDistribution, habitualPosition, MIN_MATCHES_FOR_HABITUAL_RANGE } from "./distributionStatistics";
-import { buildDashboardV2, DASHBOARD_AREAS, emptyDashboardScope, normalizeDashboardArea, phaseImpactShare, scopeFromSearchParams, scopeToSearchParams, teamThreatProfile } from "./dashboardV2";
+import { buildDashboardV2, dashboardActiveFilterCount, DASHBOARD_AREAS, emptyDashboardScope, normalizeDashboardArea, phaseImpactShare, scopeFromSearchParams, scopeToSearchParams, teamThreatProfile } from "./dashboardV2";
+import { aggregateGoalkeepers } from "./dashboardAnalysis";
+import { sharedMetricMaximum } from "./distributionStatistics";
 
 const fixtureScope = () => emptyDashboardScope(DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_TEAM_ID, DASHBOARD_FIXTURE_SEASON_ID);
 
@@ -55,4 +57,36 @@ test("navegación fusiona EQUIPO en RESUMEN sin ruta muerta", () => {
   assert.equal(DASHBOARD_AREAS.includes("TEAM" as never), false);
   assert.equal(normalizeDashboardArea("TEAM"), "SUMMARY");
   assert.equal(normalizeDashboardArea("GOALKEEPERS"), "GOALKEEPERS");
+});
+
+test("porcentajes habituales se calculan por partido antes de P25/P75", () => {
+  const records = buildDashboardFixture();
+  const distribution = dashboardMetricDistribution(records, fixtureScope(), "FOR.onTargetPct", "TOTALS");
+  const expected = records.map((record) => teamThreatProfile(record.session.events, "FOR").onTargetPercentage);
+  assert.deepEqual(distribution.observations.map((observation) => observation.value), expected);
+  assert.deepEqual(distribution.stats, describeDistribution(expected));
+});
+
+test("barra CDA/Rival comparte una sola escala", () => {
+  assert.equal(sharedMetricMaximum(15, 10, 12, 8), 15);
+  assert.equal(sharedMetricMaximum(null, 0), 1);
+});
+
+test("contador sticky refleja filtros activos reales", () => {
+  const empty = fixtureScope();
+  assert.equal(dashboardActiveFilterCount(empty), 0);
+  assert.equal(dashboardActiveFilterCount({ ...empty, period: 2, matchIds: ["m1", "m2"], keeperBodyParts: ["TORSO"], scoreState: "LEADING" }), 5);
+});
+
+test("GLOBAL de porteros agrega tres porteros sin asumir dos", () => {
+  const analysis = buildDashboardV2(buildDashboardFixture(), fixtureScope());
+  assert.ok(analysis.goalkeepers.length > 0);
+  const base = analysis.goalkeepers[0];
+  const keepers = [base, { ...base, playerId: "gk-2", name: "Dos" }, { ...base, playerId: "gk-3", name: "Tres" }];
+  const global = aggregateGoalkeepers(keepers);
+  assert.equal(global?.playerId, "GLOBAL");
+  assert.equal(global?.minutes, base.minutes * 3);
+  assert.equal(global?.threatsAgainst, base.threatsAgainst * 3);
+  assert.equal(global?.saves, base.saves * 3);
+  assert.equal(global?.goalPoints.length, base.goalPoints.length * 3);
 });

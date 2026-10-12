@@ -3,14 +3,24 @@ import { buildDashboardV2, DashboardScopeV2, DashboardValueMode, filterDashboard
 import { describeDistribution } from "./distributionStatistics";
 
 type Analysis = ReturnType<typeof buildDashboardV2>;
-export type DashboardDistributionMetric = "goalsFor" | "goalsAgainst" | "threatsFor" | "threatsAgainst" | "possessionLosses" | "FOR.onTarget" | "AGAINST.onTarget" | "FOR.saves" | "AGAINST.saves";
+export type DashboardDistributionMetric =
+  | "goalsFor" | "goalsAgainst" | "threatsFor" | "threatsAgainst" | "possessionLosses"
+  | "FOR.onTarget" | "AGAINST.onTarget" | "FOR.saves" | "AGAINST.saves"
+  | "FOR.outsidePct" | "AGAINST.outsidePct"
+  | "FOR.onTargetPct" | "AGAINST.onTargetPct"
+  | "FOR.conversionPct" | "AGAINST.conversionPct"
+  | "FOR.savePct" | "AGAINST.savePct";
 
 function readMetric(analysis: Analysis, metric: DashboardDistributionMetric, mode: DashboardValueMode): number | null {
   if (["goalsFor", "goalsAgainst", "threatsFor", "threatsAgainst", "possessionLosses"].includes(metric)) {
     return teamMetricValue(analysis, metric as "goalsFor" | "goalsAgainst" | "threatsFor" | "threatsAgainst" | "possessionLosses", mode);
   }
-  const [side, field] = metric.split(".") as ["FOR" | "AGAINST", "onTarget" | "saves"];
+  const [side, field] = metric.split(".") as ["FOR" | "AGAINST", "onTarget" | "saves" | "outsidePct" | "onTargetPct" | "conversionPct" | "savePct"];
   const profile = teamThreatProfile(analysis.records.flatMap((record) => record.session.events), side);
+  if (field === "outsidePct") return profile.outsidePercentage;
+  if (field === "onTargetPct") return profile.onTargetPercentage;
+  if (field === "conversionPct") return profile.conversionPercentage;
+  if (field === "savePct") return profile.goalkeeperSavePercentage;
   return normalizeDashboardCount(profile[field], mode, analysis.samples, analysis.rates.observedMinutes);
 }
 

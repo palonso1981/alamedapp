@@ -41,3 +41,7 @@ export function habitualPosition(value: number | null, stats: DistributionStats)
   if (value === null || stats.n < MIN_MATCHES_FOR_HABITUAL_RANGE || stats.p25 === null || stats.p75 === null) return "unavailable";
   return value < stats.p25 ? "below" : value > stats.p75 ? "above" : "within";
 }
+
+export function sharedMetricMaximum(...values: Array<number | null | undefined>): number {
+  return Math.max(1, ...values.filter((value): value is number => typeof value === "number" && Number.isFinite(value)));
+}

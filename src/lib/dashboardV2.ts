@@ -79,6 +79,17 @@ export interface DashboardScopeV2 {
   includeArchived: boolean;
 }
 
+export function dashboardActiveFilterCount(scope: DashboardScopeV2): number {
+  return (scope.period === "ALL" ? 0 : 1)
+    + scope.matchIds.length + scope.rivals.length + scope.venues.length + scope.results.length
+    + scope.phases.length + scope.originZones.length + scope.targetZones.length + scope.outcomes.length
+    + scope.keeperBodyParts.length + scope.saveOutcomes.length + scope.playerIds.length + scope.goalkeeperIds.length
+    + scope.threatSides.length
+    + (scope.outcomeGroup === "ALL" ? 0 : 1) + (scope.originDistance === "ALL" ? 0 : 1)
+    + (scope.competitiveContext === "ALL" ? 0 : 1) + (scope.playingState === "ALL" ? 0 : 1)
+    + (scope.scoreState === "ALL" ? 0 : 1) + (scope.setPieceTraceability === "ALL_CLASSIFIED" ? 0 : 1);
+}
+
 export interface DashboardViewState {
   analysis: DashboardScopeV2;
   reference: DashboardScopeV2;
