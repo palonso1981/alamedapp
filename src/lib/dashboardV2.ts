@@ -30,8 +30,8 @@ import { GOAL_FRAME } from "./goalTarget";
 import { CompetitiveContext, competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, PlayingStateContext, ScoreStateContext } from "./dashboardCompetitiveContext";
 
 export type DashboardValueMode = "TOTALS" | "PER_MATCH" | "PER_40";
-export type DashboardArea = "SUMMARY" | "PLAYERS" | "GOALKEEPERS" | "COMBINATIONS" | "MAPS";
-export const DASHBOARD_AREAS: readonly DashboardArea[] = ["SUMMARY", "PLAYERS", "GOALKEEPERS", "COMBINATIONS", "MAPS"];
+export type DashboardArea = "SUMMARY" | "DATA" | "PLAYERS" | "GOALKEEPERS" | "COMBINATIONS" | "MAPS";
+export const DASHBOARD_AREAS: readonly DashboardArea[] = ["SUMMARY", "DATA", "PLAYERS", "GOALKEEPERS", "COMBINATIONS", "MAPS"];
 export function normalizeDashboardArea(value: string | null): DashboardArea {
   return value === "TEAM" ? "SUMMARY" : DASHBOARD_AREAS.includes(value as DashboardArea) ? value as DashboardArea : "SUMMARY";
 }

@@ -8,6 +8,7 @@ import { aggregateGoalkeepers } from "./dashboardAnalysis";
 import { sharedMetricMaximum } from "./distributionStatistics";
 import { dashboardScopeToVideoFilters, dashboardVideoHref, suggestedDashboardCollectionName } from "./dashboardVideoContext";
 import { orderPhaseRows, phaseImpactDelta } from "./dashboardPhaseImpact";
+import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows } from "./dashboardDataTables";
 
 const fixtureScope = () => emptyDashboardScope(DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_TEAM_ID, DASHBOARD_FIXTURE_SEASON_ID);
 
@@ -59,6 +60,39 @@ test("navegación fusiona EQUIPO en RESUMEN sin ruta muerta", () => {
   assert.equal(DASHBOARD_AREAS.includes("TEAM" as never), false);
   assert.equal(normalizeDashboardArea("TEAM"), "SUMMARY");
   assert.equal(normalizeDashboardArea("GOALKEEPERS"), "GOALKEEPERS");
+  assert.equal(normalizeDashboardArea("DATA"), "DATA");
+});
+
+test("DATOS deriva volumen, totales y ratios desde el evento de equipo", () => {
+  const records = buildDashboardFixture();
+  const rows = buildDashboardPhaseDataRows(records, records.map((record) => [record]), "FOR", "TOTALS", buildDashboardV2(records, fixtureScope()).rates.observedMinutes);
+  const body = rows.filter((row) => row.key !== "TOTAL");
+  const total = rows.find((row) => row.key === "TOTAL")!;
+  assert.equal(total.rawCount, body.reduce((sum, row) => sum + row.rawCount, 0));
+  assert.equal(total.rawGoals, body.reduce((sum, row) => sum + row.rawGoals, 0));
+  assert.ok(Math.abs(body.reduce((sum, row) => sum + (row.volumePercentage ?? 0), 0) - 100) < 0.0001);
+  assert.equal(total.volumePercentage, 100);
+});
+
+test("tablas ABP reutilizan solo córner y banda cercana", () => {
+  const records = buildDashboardFixture();
+  const rows = buildDashboardSetPieceDataRows(records, records.map((record) => [record]), "FOR");
+  const all = rows.find((row) => row.key === "ALL")!;
+  const corner = rows.find((row) => row.key === "CORNER")!;
+  const kickIn = rows.find((row) => row.key === "KICK_IN")!;
+  assert.equal(all.current.opportunities, corner.current.opportunities + kickIn.current.opportunities);
+  assert.equal(rows.some((row) => String(row.key).includes("FREE")), false);
+});
+
+test("DATA mantiene TOTAL, por partido y por 40 sobre la misma cantidad", () => {
+  const records = buildDashboardFixture();
+  const analysis = buildDashboardV2(records, fixtureScope());
+  const refs = records.map((record) => [record]);
+  const total = buildDashboardPhaseDataRows(records, refs, "FOR", "TOTALS", analysis.rates.observedMinutes).find((row) => row.key === "TOTAL")!;
+  const perMatch = buildDashboardPhaseDataRows(records, refs, "FOR", "PER_MATCH", analysis.rates.observedMinutes).find((row) => row.key === "TOTAL")!;
+  const per40 = buildDashboardPhaseDataRows(records, refs, "FOR", "PER_40", analysis.rates.observedMinutes).find((row) => row.key === "TOTAL")!;
+  assert.equal(perMatch.count, total.rawCount / records.length);
+  assert.equal(per40.count, analysis.rates.observedMinutes > 0 ? total.rawCount * 40 / analysis.rates.observedMinutes : null);
 });
 
 test("porcentajes habituales se calculan por partido antes de P25/P75", () => {
