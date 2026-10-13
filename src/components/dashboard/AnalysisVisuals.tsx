@@ -24,15 +24,15 @@ function percentage(value: number | null) {
 export function PitchZoneGrid({ zones, selected = [], onSelect }: { zones: ZoneStats<PitchOriginZone>[]; selected?: PitchOriginZone[]; onSelect?: (zone: PitchOriginZone) => void }) {
   const total = zones.reduce((sum, zone) => sum + zone.threats, 0);
   return (
-    <article className="rounded-3xl border border-slate-700 bg-slate-900 p-4">
+    <article className="self-start rounded-3xl border border-slate-700 bg-slate-900 p-4">
       <p className="text-[10px] font-black tracking-[0.16em] text-cyan-300">PERSPECTIVA PORTERO CDA</p>
       <h3 className="mb-3 font-black">ZONAS DE ORIGEN 1–6</h3>
       <p className="mb-1 text-center text-[9px] font-black tracking-[.3em] text-slate-500">▲ PORTERÍA CDA</p>
-      <div className="relative mx-auto min-h-[38rem] max-w-xl overflow-hidden rounded-[2rem] border-[3px] border-white/75 bg-emerald-950/55 p-3 pt-5 shadow-inner sm:aspect-[.68/1] sm:min-h-0" aria-label="Pista vertical de fútbol sala con portería CDA arriba: Z1 Z2 Z3 cercanas; Z4 Z5 Z6 lejanas">
-        <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-1/2 border-t-2 border-white/35"/><span aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 h-24 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/35"/><span aria-hidden="true" className="pointer-events-none absolute -top-12 left-1/2 h-32 w-48 -translate-x-1/2 rounded-b-full border-2 border-white/40"/><span aria-hidden="true" className="pointer-events-none absolute -top-1 left-1/2 h-4 w-20 -translate-x-1/2 border-x-2 border-b-2 border-white/80"/>
-        <div className="relative z-10 grid h-full grid-cols-3 grid-rows-2 overflow-hidden rounded-[1.35rem] border border-white/20">
+      <div className="relative mx-auto min-h-[25rem] max-w-xl overflow-hidden rounded-b-[1.5rem] rounded-t-[2.5rem] border-[3px] border-white/75 bg-emerald-950/55 p-3 pb-8 pt-7 shadow-inner sm:aspect-[1.2/1] sm:min-h-0" aria-label="Medio campo defensivo con portería CDA arriba: Z1 Z2 Z3 cercanas; Z4 Z5 Z6 lejanas">
+        <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-5 border-t-2 border-white/55"/><span aria-hidden="true" className="pointer-events-none absolute bottom-1 left-1/2 -translate-x-1/2 text-[8px] font-black tracking-[.2em] text-white/55">MEDIO CAMPO</span><span aria-hidden="true" className="pointer-events-none absolute -top-14 left-1/2 h-32 w-48 -translate-x-1/2 rounded-b-full border-2 border-white/40"/><span aria-hidden="true" className="pointer-events-none absolute -top-1 left-1/2 h-4 w-20 -translate-x-1/2 border-x-2 border-b-2 border-white/80"/>
+        <div className="relative z-10 grid h-full grid-cols-3 grid-rows-2 overflow-hidden rounded-[1.2rem] border border-white/20">
         {zones.map((zone, index) => (
-          <button type="button" disabled={!onSelect} onClick={() => onSelect?.(zone.zone)} key={zone.zone} className={`grid min-h-48 place-content-center border border-white/15 bg-slate-950/55 p-2 text-center backdrop-blur-[1px] transition sm:min-h-0 ${selected.includes(zone.zone) ? "z-10 border-cyan-300 bg-cyan-950/60 ring-2 ring-inset ring-cyan-300/60" : "hover:bg-slate-900/75"}`}>
+          <button type="button" disabled={!onSelect} onClick={() => onSelect?.(zone.zone)} key={zone.zone} className={`grid min-h-40 place-content-center border border-white/15 bg-slate-950/55 p-2 text-center backdrop-blur-[1px] transition sm:min-h-0 ${selected.includes(zone.zone) ? "z-10 border-cyan-300 bg-cyan-950/60 ring-2 ring-inset ring-cyan-300/60" : "hover:bg-slate-900/75"}`}>
             <strong className="text-lg text-cyan-300">{zone.zone}</strong><span className="text-[8px] text-slate-500">{index < 3 ? "CERCANA" : "LEJANA"} · {index % 3 === 0 ? "DCHA." : index % 3 === 1 ? "CENTRO" : "IZQ."}</span>
             <strong className="mt-2 block text-2xl text-rose-100 sm:text-3xl">{percentage(zone.goalPercentage)}</strong>
             <p className="text-[9px] font-black text-rose-300">DAÑO · {zone.goals} GOLES</p>
@@ -42,7 +42,7 @@ export function PitchZoneGrid({ zones, selected = [], onSelect }: { zones: ZoneS
         ))}
         </div>
       </div>
-      <p className="mt-3 text-[10px] text-slate-500">Portería arriba. Derecha/izquierda son las del portero CDA mirando hacia la pista.</p>
+      <p className="mt-3 text-[10px] text-slate-500">Solo medio campo defensivo. Portería arriba; derecha/izquierda son las del portero CDA mirando hacia la pista.</p>
     </article>
   );
 }
@@ -55,7 +55,7 @@ const GOAL_ORDER: GoalZoneV1[] = [
 export function GoalZoneGrid({ zones, selected = [], onSelect }: { zones: ZoneStats<GoalZoneV1>[]; selected?: GoalZoneV1[]; onSelect?: (zone: GoalZoneV1) => void }) {
   const byZone = new Map(zones.map((zone) => [zone.zone, zone]));
   return (
-    <article className="rounded-3xl border border-slate-700 bg-slate-900 p-4">
+    <article className="self-start rounded-3xl border border-slate-700 bg-slate-900 p-4">
       <p className="text-[10px] font-black tracking-[0.16em] text-cyan-300">TARGET EXACTO → AGREGACIÓN</p>
       <h3 className="mb-3 font-black">PORTERÍA 3×2</h3>
       <div className="relative grid grid-cols-3 overflow-hidden rounded-t-[2.5rem] border-x-[5px] border-t-[5px] border-white/90 bg-[repeating-linear-gradient(135deg,transparent,transparent_8px,rgba(255,255,255,.04)_8px,rgba(255,255,255,.04)_10px)] pt-2 shadow-[0_-4px_20px_rgba(255,255,255,.08)]">

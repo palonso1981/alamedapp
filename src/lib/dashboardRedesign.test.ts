@@ -8,8 +8,9 @@ import { aggregateGoalkeepers } from "./dashboardAnalysis";
 import { sharedMetricMaximum } from "./distributionStatistics";
 import { dashboardScopeToVideoFilters, dashboardVideoHref, suggestedDashboardCollectionName } from "./dashboardVideoContext";
 import { orderPhaseRows, phaseImpactDelta } from "./dashboardPhaseImpact";
-import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows } from "./dashboardDataTables";
-import { buildGoalkeeperComparisonPanels, sortGoalkeeperRows } from "./dashboardGoalkeeperView";
+import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows, sortDashboardSetPieceRows, sortDashboardSituationRows } from "./dashboardDataTables";
+import { buildGoalkeeperComparisonPanels, goalkeeperSaveOutcomePercentage, sortGoalkeeperRows } from "./dashboardGoalkeeperView";
+import { evaluateDashboardDeviation, summaryMetricFavorableWhenHigher } from "./dashboardSemantics";
 
 const fixtureScope = () => emptyDashboardScope(DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_TEAM_ID, DASHBOARD_FIXTURE_SEASON_ID);
 
@@ -85,6 +86,45 @@ test("tablas ABP reutilizan solo córner y banda cercana", () => {
   assert.equal(rows.some((row) => String(row.key).includes("FREE")), false);
 });
 
+test("ABP mantiene TODAS fija y ordena los subtipos en ambas direcciones", () => {
+  const records = buildDashboardFixture();
+  const rows = buildDashboardSetPieceDataRows(records, records.map((record) => [record]), "FOR");
+  const descending = sortDashboardSetPieceRows(rows, "opportunities", "DESC");
+  const ascending = sortDashboardSetPieceRows(rows, "opportunities", "ASC");
+  const habitual = sortDashboardSetPieceRows(rows, "shotHabitual", "DESC");
+  assert.equal(descending[0].key, "ALL");
+  assert.equal(ascending[0].key, "ALL");
+  assert.equal(habitual[0].key, "ALL");
+  assert.ok(descending[1].current.opportunities >= descending[2].current.opportunities);
+  assert.ok(ascending[1].current.opportunities <= ascending[2].current.opportunities);
+});
+
+test("SITUACIONES ordena actual, por partido, habitual y partidos relevantes", () => {
+  const stats = describeDistribution([1, 2, 3, 4]);
+  const rows = [
+    { key: "a", label: "A", current: 8, perMatch: 4, habitual: { stats, range: [1.75, 3.25] as [number, number] }, relevant: [{ id: 1 }, { id: 2 }] },
+    { key: "b", label: "B", current: 2, perMatch: 1, habitual: { stats: describeDistribution([5, 6, 7, 8]), range: [5.75, 7.25] as [number, number] }, relevant: [{ id: 1 }] },
+  ];
+  assert.equal(sortDashboardSituationRows(rows, "current", "DESC")[0].key, "a");
+  assert.equal(sortDashboardSituationRows(rows, "perMatch", "ASC")[0].key, "b");
+  assert.equal(sortDashboardSituationRows(rows, "habitual", "DESC")[0].key, "b");
+  assert.equal(sortDashboardSituationRows(rows, "matches", "ASC")[0].key, "b");
+});
+
+test("semántica favorable y desfavorable separa identidad CDA/Rival de valoración", () => {
+  const matrix = [
+    ["CDA", "VOLUME", true], ["CDA", "OUTSIDE", false], ["CDA", "ON_TARGET", true], ["CDA", "SAVES", false], ["CDA", "GOALS", true],
+    ["RIVAL", "VOLUME", false], ["RIVAL", "OUTSIDE", true], ["RIVAL", "ON_TARGET", false], ["RIVAL", "SAVES", true], ["RIVAL", "GOALS", false],
+  ] as const;
+  matrix.forEach(([side, metric, favorableHigh]) => {
+    assert.equal(summaryMetricFavorableWhenHigher(side, metric), favorableHigh);
+    assert.equal(evaluateDashboardDeviation("above", favorableHigh), favorableHigh ? "FAVORABLE" : "UNFAVORABLE");
+    assert.equal(evaluateDashboardDeviation("below", favorableHigh), favorableHigh ? "UNFAVORABLE" : "FAVORABLE");
+  });
+  assert.equal(evaluateDashboardDeviation("within", true), "NEUTRAL");
+  assert.equal(evaluateDashboardDeviation("unavailable", true), "UNAVAILABLE");
+});
+
 test("DATA mantiene TOTAL, por partido y por 40 sobre la misma cantidad", () => {
   const records = buildDashboardFixture();
   const analysis = buildDashboardV2(records, fixtureScope());
@@ -112,6 +152,23 @@ test("tabla de porteros invierte ascendente y descendente", () => {
   const rows = [{ keeper: { ...base, playerId: "a", minutes: 10 }, matches: 1 }, { keeper: { ...base, playerId: "b", minutes: 30 }, matches: 2 }];
   assert.deepEqual(sortGoalkeeperRows(rows, "minutes", "DESC").map((row) => row.keeper.playerId), ["b", "a"]);
   assert.deepEqual(sortGoalkeeperRows(rows, "minutes", "ASC").map((row) => row.keeper.playerId), ["a", "b"]);
+});
+
+test("tipos de parada usan solo paradas clasificadas, protegen cero y se ordenan", () => {
+  const analysis = buildDashboardV2(buildDashboardFixture(), fixtureScope());
+  const base = analysis.goalkeepers[0];
+  assert.ok(base);
+  const a = { ...base, playerId: "a", saveOutcomes: { CATCH: 2, CLEARANCE: 1, REBOUND: 1 } };
+  const b = { ...base, playerId: "b", saveOutcomes: { CATCH: 1, CLEARANCE: 3, REBOUND: 0 } };
+  const none = { ...base, playerId: "none", saveOutcomes: { CATCH: 0, CLEARANCE: 0, REBOUND: 0 } };
+  assert.equal(goalkeeperSaveOutcomePercentage(a, "CATCH"), 50);
+  assert.equal(goalkeeperSaveOutcomePercentage(a, "CLEARANCE"), 25);
+  assert.equal(goalkeeperSaveOutcomePercentage(a, "REBOUND"), 25);
+  assert.equal(goalkeeperSaveOutcomePercentage(none, "CATCH"), null);
+  const rows = [{ keeper: a, matches: 1 }, { keeper: b, matches: 1 }, { keeper: none, matches: 1 }];
+  assert.deepEqual(sortGoalkeeperRows(rows, "catchPercentage", "DESC").map((row) => row.keeper.playerId), ["a", "b", "none"]);
+  assert.deepEqual(sortGoalkeeperRows(rows, "catchPercentage", "ASC").map((row) => row.keeper.playerId), ["b", "a", "none"]);
+  assert.deepEqual(sortGoalkeeperRows(rows, "clearancePercentage", "DESC").map((row) => row.keeper.playerId), ["b", "a", "none"]);
 });
 
 test("comparar porteros conserva dos Targets y dos Orígenes independientes", () => {

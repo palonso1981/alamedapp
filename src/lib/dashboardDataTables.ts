@@ -108,6 +108,58 @@ export interface DashboardSetPieceDataRow {
   goalPct: number | null; goalHabitual: HabitualMetric; goalEquivalent: [number, number] | null;
 }
 
+export type DashboardSetPieceSortKey = "label" | "opportunities" | "habitual" | "withShot" | "shotPct" | "shotHabitual" | "shotEquivalent" | "withOnTarget" | "targetPct" | "targetHabitual" | "targetEquivalent" | "withGoal" | "goalPct" | "goalHabitual" | "goalEquivalent";
+export type DashboardTableSortDirection = "ASC" | "DESC";
+
+function setPieceSortValue(row: DashboardSetPieceDataRow, key: DashboardSetPieceSortKey): string | number {
+  if (key === "label") return row.label;
+  if (key === "opportunities") return row.current.opportunities;
+  if (key === "habitual") return row.opportunityHabitual.stats.median ?? -Infinity;
+  if (key === "withShot") return row.current.withShot;
+  if (key === "shotPct") return row.shotPct ?? -Infinity;
+  if (key === "shotHabitual") return row.shotHabitual.stats.median ?? -Infinity;
+  if (key === "shotEquivalent") return row.shotEquivalent ? (row.shotEquivalent[0] + row.shotEquivalent[1]) / 2 : -Infinity;
+  if (key === "withOnTarget") return row.current.withOnTarget;
+  if (key === "targetPct") return row.targetPct ?? -Infinity;
+  if (key === "targetHabitual") return row.targetHabitual.stats.median ?? -Infinity;
+  if (key === "targetEquivalent") return row.targetEquivalent ? (row.targetEquivalent[0] + row.targetEquivalent[1]) / 2 : -Infinity;
+  if (key === "withGoal") return row.current.withGoal;
+  if (key === "goalPct") return row.goalPct ?? -Infinity;
+  if (key === "goalHabitual") return row.goalHabitual.stats.median ?? -Infinity;
+  return row.goalEquivalent ? (row.goalEquivalent[0] + row.goalEquivalent[1]) / 2 : -Infinity;
+}
+
+export function sortDashboardSetPieceRows(rows: readonly DashboardSetPieceDataRow[], key: DashboardSetPieceSortKey, direction: DashboardTableSortDirection): DashboardSetPieceDataRow[] {
+  const aggregate = rows.find((row) => row.key === "ALL");
+  const detail = rows.filter((row) => row.key !== "ALL");
+  const sign = direction === "DESC" ? -1 : 1;
+  detail.sort((left, right) => {
+    const a = setPieceSortValue(left, key); const b = setPieceSortValue(right, key);
+    return (typeof a === "string" ? a.localeCompare(String(b), "es") : Number(a) - Number(b)) * sign;
+  });
+  return aggregate ? [aggregate, ...detail] : detail;
+}
+
+export interface DashboardSituationSortableRow {
+  key: string;
+  label: string;
+  current: number;
+  perMatch: number | null;
+  habitual: HabitualMetric;
+  relevant: readonly unknown[];
+}
+
+export type DashboardSituationSortKey = "label" | "current" | "perMatch" | "habitual" | "matches";
+
+export function sortDashboardSituationRows<T extends DashboardSituationSortableRow>(rows: readonly T[], key: DashboardSituationSortKey, direction: DashboardTableSortDirection): T[] {
+  const sign = direction === "DESC" ? -1 : 1;
+  return [...rows].sort((left, right) => {
+    const read = (row: T): string | number => key === "label" ? row.label : key === "current" ? row.current : key === "perMatch" ? row.perMatch ?? -Infinity : key === "habitual" ? row.habitual.stats.median ?? -Infinity : row.relevant.length;
+    const a = read(left); const b = read(right);
+    return (typeof a === "string" ? a.localeCompare(String(b), "es") : Number(a) - Number(b)) * sign;
+  });
+}
+
 const ratio = (value: number, total: number) => total ? value / total * 100 : null;
 export function buildDashboardSetPieceDataRows(current: readonly DashboardMatchRecord[], referenceByMatch: readonly (readonly DashboardMatchRecord[])[], side: DashboardDataSide): DashboardSetPieceDataRow[] {
   return (["ALL", "CORNER", "KICK_IN"] as const).map((kind) => {

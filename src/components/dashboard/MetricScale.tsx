@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { DistributionStats, habitualPosition } from "../../lib/distributionStatistics";
+import { evaluateDashboardDeviation } from "../../lib/dashboardSemantics";
 
 const format = (value: number | null, suffix = "") => value === null ? "N/D" : `${Number.isInteger(value) ? value : value.toFixed(1).replace(".", ",")}${suffix}`;
 
-export function MetricScale({ value, reference, stats, maximum, side, tone = side === "left" ? "cyan" : "rose", suffix = "" }: {
+export function MetricScale({ value, reference, stats, maximum, side, tone = side === "left" ? "cyan" : "rose", suffix = "", favorableWhenHigher }: {
   value: number | null;
   reference?: number | null;
   stats: DistributionStats;
@@ -13,10 +14,12 @@ export function MetricScale({ value, reference, stats, maximum, side, tone = sid
   side: "left" | "right";
   tone?: "cyan" | "rose";
   suffix?: string;
+  favorableWhenHigher?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const host = useRef<HTMLDivElement>(null);
   const position = habitualPosition(value, stats);
+  const evaluation = favorableWhenHigher === undefined ? null : evaluateDashboardDeviation(position, favorableWhenHigher);
   const pct = (candidate: number | null) => candidate === null ? 0 : Math.max(0, Math.min(100, candidate / maximum * 100));
   useEffect(() => {
     if (!open) return;
@@ -33,7 +36,7 @@ export function MetricScale({ value, reference, stats, maximum, side, tone = sid
         <span data-current-bar className={`absolute inset-y-0 rounded-full ${side === "left" ? "right-0" : "left-0"} ${tone === "cyan" ? "bg-cyan-400" : "bg-rose-400"}`} style={{ width: `${pct(value)}%` }}/>
         {reference !== undefined && reference !== null && <span data-reference-marker className="absolute -top-1 h-5 w-0.5 bg-white/90" style={{ [side === "left" ? "right" : "left"]: `${pct(reference)}%` }}/>} 
       </span>
-      <span className={`mt-1 block text-[8px] font-black ${position === "above" ? "text-rose-300" : position === "below" ? "text-sky-300" : position === "within" ? "text-amber-200" : "text-slate-500"}`}>{position === "unavailable" ? `habitual · muestra ${stats.n}/4` : `${position === "above" ? "↑ por encima" : position === "below" ? "↓ por debajo" : "· habitual"} ${format(stats.p25, suffix)}–${format(stats.p75, suffix)}`}</span>
+      <span data-dashboard-evaluation={evaluation ?? undefined} className={`mt-1 block text-[8px] font-black ${evaluation === "FAVORABLE" ? "text-emerald-300" : evaluation === "UNFAVORABLE" ? "text-rose-300" : position === "within" ? "text-amber-200" : position === "unavailable" ? "text-slate-500" : position === "above" ? "text-rose-300" : "text-sky-300"}`}>{position === "unavailable" ? `habitual · muestra ${stats.n}/4` : `${position === "above" ? "↑ por encima" : position === "below" ? "↓ por debajo" : "· habitual"} ${format(stats.p25, suffix)}–${format(stats.p75, suffix)}`}</span>
     </button>
     {open && <div role="dialog" aria-label="Detalle del rango habitual" className={`absolute z-30 mt-1 w-64 rounded-2xl border border-amber-900 bg-slate-950 p-3 text-left text-[10px] shadow-2xl ${side === "left" ? "right-0" : "left-0"}`}>
       <b className="block text-amber-200">RANGO HABITUAL</b>
