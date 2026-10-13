@@ -29,15 +29,16 @@ import { SetPieceFunnel } from "./SetPieceFunnel";
 import { HabitualRange } from "./HabitualRange";
 import { MetricScale } from "./MetricScale";
 import { dashboardMetricDistribution, DashboardDistributionMetric } from "../../lib/dashboardDistribution";
-import { describeDistribution, sharedMetricMaximum } from "../../lib/distributionStatistics";
+import { describeDistribution, habitualPosition, sharedMetricMaximum } from "../../lib/distributionStatistics";
 import { aggregateGoalkeepers } from "../../lib/dashboardAnalysis";
 import { phaseImpactDelta } from "../../lib/dashboardPhaseImpact";
 import { deriveCompetitiveProjection } from "../../lib/dashboardCompetitiveContext";
 import { periodDurations, periodOffsets } from "../../lib/matchMomentum";
 import { isActiveMatchEvent } from "../../lib/matchEngine";
 import { DashboardDataTables } from "./DashboardDataTables";
+import { DashboardActionIcon, DashboardActionIconKind } from "./DashboardActionIcon";
 import { buildGoalkeeperComparisonPanels, goalkeeperClassifiedSaves, goalkeeperSaveOutcomePercentage, GOALKEEPER_SAVE_OUTCOMES, GoalkeeperSortDirection, GoalkeeperSortKey, GoalkeeperTableRow, sortGoalkeeperRows } from "../../lib/dashboardGoalkeeperView";
-import { DashboardSummaryMetric, summaryMetricFavorableWhenHigher } from "../../lib/dashboardSemantics";
+import { dashboardTimePercentage, evaluateDashboardDeviation, formatDashboardDuration, DashboardSummaryMetric, summaryMetricFavorableWhenHigher } from "../../lib/dashboardSemantics";
 
 const AREAS: Array<[DashboardArea, string]> = [["SUMMARY", "RESUMEN"], ["DATA", "DATOS"], ["PLAYERS", "JUGADORES"], ["GOALKEEPERS", "PORTEROS"], ["COMBINATIONS", "COMBINACIONES"], ["MAPS", "MAPAS / ZONAS"]];
 const PHASE_LABEL: Record<ThreatPhase, string> = { POSITIONAL: "POSICIONAL", TRANSITION: "TRANSICIÓN", SET_PIECE_CORNER: "CÓRNER", SET_PIECE_FREE_KICK: "FALTA", SET_PIECE_KICK_IN: "BANDA", FLYING_GOALKEEPER: "P-J", PENALTY: "PENALTI", DOUBLE_PENALTY: "DOBLE PENALTI", UNSPECIFIED: "SIN FASE" };
@@ -271,6 +272,10 @@ function Empty() {
   return <section className="rounded-3xl border border-dashed border-slate-700 p-10 text-center"><strong className="text-xl">Sin datos para esta intersección</strong><p className="mt-2 text-sm text-slate-500">Retira un filtro o usa el fixture poblado sin persistencia.</p><Link href="/dashboard?fixture=1" className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-cyan-300 px-4 text-xs font-black text-slate-950">ABRIR FIXTURE POBLADO</Link></section>;
 }
 
+function summaryIcon(metric: DashboardSummaryMetric): DashboardActionIconKind {
+  return metric === "OUTSIDE" ? "OUTSIDE" : metric === "ON_TARGET" ? "ON_TARGET" : metric === "SAVES" ? "SAVE" : metric === "GOALS" ? "GOAL" : "SHOT";
+}
+
 function DuelRow({ label, metricKind, own, rival, ownPct, rivalPct, ownReference, rivalReference, ownPctReference, rivalPctReference, records, habitualScope, mode, ownMetric, rivalMetric, comparisonEnabled }: { label: string; metricKind: DashboardSummaryMetric; own: number | null; rival: number | null; ownPct?: number | null; rivalPct?: number | null; ownReference?: number | null; rivalReference?: number | null; ownPctReference?: number | null; rivalPctReference?: number | null; records: DashboardMatchRecord[]; habitualScope: DashboardScopeV2; mode: DashboardValueMode; ownMetric: DashboardDistributionMetric; rivalMetric: DashboardDistributionMetric; comparisonEnabled: boolean }) {
   const difference = own === null || rival === null ? null : own - rival;
   const ownDistribution = dashboardMetricDistribution(records, habitualScope, ownMetric, mode);
@@ -283,7 +288,7 @@ function DuelRow({ label, metricKind, own, rival, ownPct, rivalPct, ownReference
   const suffix = ownPct === undefined ? "" : "%";
   return <div className="grid grid-cols-[minmax(0,1fr)_6.5rem_minmax(0,1fr)] items-center gap-2 border-t border-slate-800 py-3 first:border-0">
     <div className="relative min-w-0"><div className="flex items-baseline justify-end gap-2"><span className="text-[10px] font-black text-cyan-300">{ownPct === undefined ? "" : format(ownPct, "%")}</span><strong className="text-2xl text-cyan-100">{format(own)}</strong></div><MetricScale value={ownScaleValue} reference={comparisonEnabled ? ownScaleReference : undefined} stats={ownDistribution.stats} maximum={maximum} side="left" suffix={suffix} favorableWhenHigher={summaryMetricFavorableWhenHigher("CDA", metricKind)}/></div>
-    <div className="text-center"><span className="block text-[9px] font-black tracking-wide text-slate-400">{label}</span><strong className="mt-0.5 block text-sm text-white">Dif. {difference !== null && difference > 0 ? "+" : ""}{format(difference)}</strong></div>
+    <div className="flex flex-col items-center text-center"><div className="flex items-center gap-1"><DashboardActionIcon kind={summaryIcon(metricKind)} label={label} tone={metricKind === "VOLUME" ? "green" : "slate"} compact/><span className="text-[9px] font-black tracking-wide text-slate-400">{label}</span></div><strong className="mt-0.5 block text-sm text-white">Dif. {difference !== null && difference > 0 ? "+" : ""}{format(difference)}</strong></div>
     <div className="relative min-w-0"><div className="flex items-baseline gap-2"><strong className="text-2xl text-rose-100">{format(rival)}</strong><span className="text-[10px] font-black text-rose-300">{rivalPct === undefined ? "" : format(rivalPct, "%")}</span></div><MetricScale value={rivalScaleValue} reference={comparisonEnabled ? rivalScaleReference : undefined} stats={rivalDistribution.stats} maximum={maximum} side="right" suffix={suffix} favorableWhenHigher={summaryMetricFavorableWhenHigher("RIVAL", metricKind)}/></div>
   </div>;
 }
@@ -335,11 +340,13 @@ function Summary({ analysis, reference, mode, comparisonEnabled, scope, onScope,
     const profileFor = teamThreatProfile(value.records.flatMap((record) => record.session.events), "FOR");
     const profileAgainst = teamThreatProfile(value.records.flatMap((record) => record.session.events), "AGAINST");
     const minutes = label.includes("ORO") ? value.teamGoldMinutes : value.teamKeyMinutes;
-    return <SituationCard label={label} primary={format(minutes, " min")} detail={<><p>{value.samples} partidos · {value.samples ? format(minutes / value.samples, " min/partido") : "N/D"}</p><p>{profileAgainst.total} amenazas · {profileFor.total} remates · {profileFor.goals + profileAgainst.goals} goles</p></>} expanded={expanded}/>;
+    const percentage = dashboardTimePercentage(minutes, analysis.rates.observedMinutes);
+    const goldContext = label.includes("ORO");
+    return <SituationCard icon={goldContext ? "GOLD_MINUTES" : "KEY_MINUTES"} label={label} primary={`${formatDashboardDuration(minutes)} · ${format(percentage, "%")}`} detail={<><p>{value.samples} partidos · {value.samples ? format(minutes / value.samples, " min/partido") : "N/D"}</p><p>{profileAgainst.total} amenazas · {profileFor.total} remates · {profileFor.goals + profileAgainst.goals} goles</p><p className="text-slate-500">% sobre {formatDashboardDuration(analysis.rates.observedMinutes)} del scope temporal.</p></>} expanded={expanded}/>;
   };
   return <>
     <section data-dashboard-context-strip className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-2xl border border-indigo-800/70 bg-indigo-950/30 px-4 py-2 text-sm"><b>{analysis.samples} {analysis.samples === 1 ? "partido" : "partidos"}</b><span className="text-slate-500">·</span><b>{format(analysis.rates.observedMinutes, " min")}</b><span className="text-slate-500">·</span><b className="text-cyan-200">GF {format(goalsFor)}</b><span>—</span><b className="text-rose-200">{format(goalsAgainst)} GC</b><span className="text-slate-500">·</span><b>{goalDifference !== null && goalDifference > 0 ? "+" : ""}{format(goalDifference)}</b>{pending > 0 && <span className="text-amber-300">? {pending}</span>}</section>
-    <section data-dashboard-duel className="rounded-3xl border border-slate-700 bg-slate-900 p-3 sm:p-4"><div className="grid grid-cols-[1fr_6.5rem_1fr] text-[10px] font-black tracking-[.12em]"><span className="text-right text-cyan-300">CDA · REM</span><span className="text-center text-slate-500">DIF.</span><span className="text-rose-300">AME · RIVAL</span></div>
+    <section data-dashboard-duel className="rounded-3xl border border-slate-700 bg-slate-900 p-3 sm:p-4"><div className="grid grid-cols-[1fr_6.5rem_1fr] items-center text-[10px] font-black tracking-[.12em]"><span className="flex items-center justify-end gap-1 text-right text-cyan-300"><DashboardActionIcon kind="SHOT" label="Remates CDA" tone="green" compact/>CDA · REM</span><span className="text-center text-slate-500">DIF.</span><span className="flex items-center gap-1 text-rose-300"><DashboardActionIcon kind="SHOT" label="Amenazas Rival" tone="red" compact/>AME · RIVAL</span></div>
       <DuelRow label="REM / AME" metricKind="VOLUME" own={normalized(own.total)} rival={normalized(rival.total)} ownReference={normalizedRef(ownRef.total)} rivalReference={normalizedRef(rivalRef.total)} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="threatsFor" rivalMetric="threatsAgainst" comparisonEnabled={comparisonEnabled}/>
       <DuelRow label="FUERA" metricKind="OUTSIDE" own={normalized(own.outside)} rival={normalized(rival.outside)} ownPct={own.outsidePercentage} rivalPct={rival.outsidePercentage} ownPctReference={ownRef.outsidePercentage} rivalPctReference={rivalRef.outsidePercentage} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="FOR.outsidePct" rivalMetric="AGAINST.outsidePct" comparisonEnabled={comparisonEnabled}/>
       <DuelRow label="A PUERTA" metricKind="ON_TARGET" own={normalized(own.onTarget)} rival={normalized(rival.onTarget)} ownPct={own.onTargetPercentage} rivalPct={rival.onTargetPercentage} ownPctReference={ownRef.onTargetPercentage} rivalPctReference={rivalRef.onTargetPercentage} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="FOR.onTargetPct" rivalMetric="AGAINST.onTargetPct" comparisonEnabled={comparisonEnabled}/>
@@ -348,7 +355,7 @@ function Summary({ analysis, reference, mode, comparisonEnabled, scope, onScope,
     </section>
     <MatchMomentumPanel records={momentumRecords} matches={momentumMatches} selectedMatchIds={scope.matchIds}/>
     <FamilySection family="setPiece" title="RENDIMIENTO ABP" eyebrow="OPORTUNIDAD → REMATE → PUERTA → GOL"><SetPieceFunnel records={analysis.records} referenceRecords={reference.records}/></FamilySection>
-    <PhaseImpact analysis={analysis} reference={reference} scope={scope} referenceScope={referenceScope} allRecords={allRecords} comparisonEnabled={comparisonEnabled}/>
+    <PhaseImpact analysis={analysis} reference={reference} scope={scope} onScope={onScope} referenceScope={referenceScope} allRecords={allRecords} comparisonEnabled={comparisonEnabled}/>
     <FamilySection family="context" title="SITUACIONES" eyebrow="CONTEXTO PROPIO · TOCA PARA PROFUNDIZAR"><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
       <SituationCard label="PÉRDIDAS" primary={format(losses)} detail={<><HabitualRange records={allRecords} scope={referenceScope} metric="possessionLosses" mode={mode} value={losses}/><p className="mt-2">Actual {format(losses)} · permanece disponible en Evolución.</p></>} expanded={<SituationBreakdown rows={situationRows("LOSSES")} kind="LOSSES"/>}/>
       {contextCard("MINUTOS CLAVE", key, <SituationBreakdown rows={situationRows("KEY")} kind="TIME"/>)}{contextCard("MINUTOS DE ORO", gold, <SituationBreakdown rows={situationRows("GOLD")} kind="TIME"/>)}
@@ -362,38 +369,60 @@ function SituationBreakdown({ rows, kind }: { rows: Array<{ id: string; opponent
   return <div className="space-y-2">{rows.map((row) => <article key={row.id} className="rounded-xl bg-slate-950 p-2"><b className="text-white">{row.matchday ? `J${row.matchday} · ` : ""}{row.opponent}</b><span className="ml-2 text-slate-500">{row.date}</span><p>{kind === "LOSSES" ? `${row.losses} pérdidas` : `${format(row.minutes, " min")} · ${row.remates} remates · ${row.amenazas} amenazas · ${row.goles} goles`}</p>{kind === "TIME" && <p className="text-slate-500">{row.intervals.length ? row.intervals.map((interval) => `P${interval.period} · min ${format(interval.start)}–${format(interval.end)}`).join(" · ") : "Sin intervalos en este partido"}</p>}</article>)}</div>;
 }
 
-function SituationCard({ label, primary, detail, expanded }: { label: string; primary: string; detail: React.ReactNode; expanded?: React.ReactNode }) {
-  return <details className="group rounded-2xl border border-slate-700 bg-slate-900 p-3 open:border-indigo-500"><summary className="cursor-pointer list-none"><span className="text-[9px] font-black tracking-[.12em] text-indigo-200">{label}</span><strong className="mt-1 block text-2xl">{primary}</strong><div className="mt-2 text-[10px] leading-5 text-slate-300">{detail}</div><span className="mt-2 block text-[9px] font-black text-indigo-300 group-open:hidden">PARTIDO A PARTIDO +</span></summary><div className="mt-3 border-t border-slate-800 pt-3 text-[10px] leading-5 text-slate-400">{expanded ?? "Sin desglose adicional disponible."}</div></details>;
+function SituationCard({ label, primary, detail, expanded, icon }: { label: string; primary: string; detail: React.ReactNode; expanded?: React.ReactNode; icon?: DashboardActionIconKind }) {
+  return <article className="relative rounded-2xl border border-slate-700 bg-slate-900 focus-within:border-indigo-500">{icon && <span className="absolute left-3 top-3 z-10"><DashboardActionIcon kind={icon} label={label} tone="amber" compact/></span>}<details className="group p-3"><summary className="cursor-pointer list-none"><span className={`block text-[9px] font-black tracking-[.12em] text-indigo-200 ${icon ? "pl-9 pt-2" : ""}`}>{label}</span><strong className="mt-1 block text-2xl">{primary}</strong><div className="mt-2 text-[10px] leading-5 text-slate-300">{detail}</div><span className="mt-2 block text-[9px] font-black text-indigo-300 group-open:hidden">PARTIDO A PARTIDO +</span></summary><div className="mt-3 border-t border-slate-800 pt-3 text-[10px] leading-5 text-slate-400">{expanded ?? "Sin desglose adicional disponible."}</div></details></article>;
 }
 
-function PhaseImpact({ analysis, reference, scope, referenceScope, allRecords, comparisonEnabled }: { analysis: Analysis; reference: Analysis; scope: DashboardScopeV2; referenceScope: DashboardScopeV2; allRecords: DashboardMatchRecord[]; comparisonEnabled: boolean }) {
+function PhaseSignal({ value, stats, favorableWhenHigher, label }: { value: number | null; stats: ReturnType<typeof describeDistribution>; favorableWhenHigher: boolean; label: string }) {
+  const evaluation = evaluateDashboardDeviation(habitualPosition(value, stats), favorableWhenHigher);
+  if (evaluation === "NEUTRAL" || evaluation === "UNAVAILABLE") return null;
+  const favorable = evaluation === "FAVORABLE";
+  return <span data-phase-signal={evaluation} aria-label={`${label}: ${favorable ? "favorable" : "desfavorable"}`} title={`${label}: ${favorable ? "favorable" : "desfavorable"} frente al rango habitual`} className={`inline-grid h-4 w-4 place-items-center rounded-full text-[9px] font-black ${favorable ? "bg-emerald-950 text-emerald-300 ring-1 ring-emerald-700" : "bg-rose-950 text-rose-300 ring-1 ring-rose-700"}`}>{favorable ? "✓" : "!"}</span>;
+}
+
+function PhaseImpact({ analysis, reference, scope, onScope, referenceScope, allRecords, comparisonEnabled }: { analysis: Analysis; reference: Analysis; scope: DashboardScopeV2; onScope: (scope: DashboardScopeV2) => void; referenceScope: DashboardScopeV2; allRecords: DashboardMatchRecord[]; comparisonEnabled: boolean }) {
   const aggregate = (records: DashboardMatchRecord[], phases: ThreatPhase[], side: "FOR" | "AGAINST") => {
     const parts = phases.map((phase) => phaseImpactShare(records, phase, side));
     const phaseEvents = parts.reduce((sum, value) => sum + value.phaseEvents, 0);
     const phaseGoals = parts.reduce((sum, value) => sum + value.phaseGoals, 0);
     const totalEvents = parts[0]?.totalEvents ?? 0;
     const totalGoals = parts[0]?.totalGoals ?? 0;
-    return { phaseEvents, phaseGoals, volumePercentage: totalEvents ? phaseEvents / totalEvents * 100 : null, goalPercentage: totalGoals ? phaseGoals / totalGoals * 100 : null };
+    return { phaseEvents, phaseGoals, totalEvents, totalGoals, volumePercentage: totalEvents ? phaseEvents / totalEvents * 100 : null, goalPercentage: totalGoals ? phaseGoals / totalGoals * 100 : null };
   };
-  const abp: ThreatPhase[] = ["SET_PIECE_CORNER", "SET_PIECE_FREE_KICK", "SET_PIECE_KICK_IN"];
+  const abp: ThreatPhase[] = ["SET_PIECE_CORNER", "SET_PIECE_KICK_IN"];
   const definitions: Array<{ key: string; label: string; phases: ThreatPhase[] }> = [
-    { key: "ABP", label: "ABP · CÓRNER + FALTA + BANDA", phases: abp },
+    { key: "ABP", label: "ABP · CÓRNER + BANDA", phases: abp },
     ...DASHBOARD_PHASES.filter((phase) => phase !== "UNSPECIFIED").map((phase) => ({ key: phase, label: PHASE_LABEL[phase], phases: [phase] })),
   ].filter((definition) => (["FOR", "AGAINST"] as const).some((side) => aggregate(analysis.records, definition.phases, side).phaseEvents > 0));
   const referenceMatches = filterDashboardMatchSelection(allRecords, referenceScope);
-  return <FamilySection family="context" title="FASES · VOLUMEN → IMPACTO" eyebrow="CDA A LA IZQUIERDA · RIVAL A LA DERECHA · MISMA ESCALA"><div className="space-y-2">{definitions.map((definition) => {
+  return <FamilySection family="context" title="FASES" eyebrow="REMATES CDA ↔ AMENAZAS RIVAL · MISMA ESCALA"><div className="space-y-2">{definitions.map((definition) => {
     const current = (["FOR", "AGAINST"] as const).map((side) => aggregate(analysis.records, definition.phases, side));
     const compared = (["FOR", "AGAINST"] as const).map((side) => aggregate(reference.records, definition.phases, side));
     const perMatch = (["FOR", "AGAINST"] as const).map((side) => referenceMatches.map((record) => aggregate(buildDashboardV2([record], { ...referenceScope, matchIds: [record.catalog.matchId] }).records, definition.phases, side)));
     const distributions = perMatch.map((values) => describeDistribution(values.map((value) => value.volumePercentage)));
     const countDistributions = perMatch.map((values) => describeDistribution(values.map((value) => value.phaseEvents)));
-    return <article key={definition.key} className="grid grid-cols-[minmax(0,1fr)_7.5rem_minmax(0,1fr)] items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950 p-3">{current.map((value, index) => {
+    const goalDistributions = perMatch.map((values) => describeDistribution(values.map((value) => value.goalPercentage)));
+    const impactDistributions = perMatch.map((values) => describeDistribution(values.map((value) => phaseImpactDelta(value.volumePercentage, value.goalPercentage))));
+    const countValues = current.map((value) => analysis.samples ? value.phaseEvents / analysis.samples : null);
+    const comparedCounts = compared.map((value) => reference.samples ? value.phaseEvents / reference.samples : null);
+    const countMaximum = sharedMetricMaximum(countValues[0], countValues[1], comparedCounts[0], comparedCounts[1], countDistributions[0].max, countDistributions[1].max);
+    const active = definition.phases.length === scope.phases.length && definition.phases.every((phase) => scope.phases.includes(phase));
+    return <article key={definition.key} data-phase-summary={definition.key} className={`grid grid-cols-[minmax(0,1fr)_6.5rem_minmax(0,1fr)] items-center gap-2 rounded-2xl border bg-slate-950 p-3 ${active ? "border-cyan-500 ring-1 ring-cyan-500/40" : "border-slate-800"}`}>{current.map((value, index) => {
       const own = index === 0;
       const differential = phaseImpactDelta(value.volumePercentage, value.goalPercentage);
-      const stats = distributions[index]; const counts = countDistributions[index];
-      const content = <div className={own ? "text-right" : "text-left"}><strong className={`text-xl ${own ? "text-cyan-100" : "text-rose-100"}`}>{value.phaseEvents}</strong><p className="text-[9px] font-black text-slate-400">{format(value.volumePercentage, "%")} VOLUMEN · {format(value.goalPercentage, "%")} GOLES</p><p className={`text-[9px] font-black ${differential !== null && differential >= 0 ? own ? "text-emerald-300" : "text-rose-300" : "text-slate-400"}`}>{own ? "EFICIENCIA" : "VULNERABILIDAD"} {differential !== null && differential > 0 ? "+" : ""}{format(differential, " pp")}</p><MetricScale value={value.volumePercentage} reference={comparisonEnabled ? compared[index].volumePercentage : undefined} stats={stats} maximum={100} side={own ? "left" : "right"} tone={own ? "cyan" : "rose"} suffix="%"/><details className="mt-1 text-[8px] text-slate-400"><summary className="cursor-pointer font-black text-indigo-200">ACTUAL / HABITUAL</summary><p>Actual: {value.phaseEvents} acciones · {format(value.volumePercentage, "%")}</p><p>Media: {format(counts.mean)} acc. · {format(stats.mean, "%")} · Mediana {format(counts.median)} / {format(stats.median, "%")}</p><p>Rango: {format(counts.min)}–{format(counts.max)} acc. · {format(stats.min, "%")}–{format(stats.max, "%")} · N={stats.n}</p><p>Habitual = distribución partido a partido del scope de referencia; no mezcla cantidad con porcentaje.</p></details><DashboardVideoLink records={allRecords} scope={scope} override={definition.key === "ABP" ? { side: own ? "FOR" : "AGAINST", eventKinds: ["SET_PIECES"] } : { side: own ? "FOR" : "AGAINST", phases: definition.phases }} label={own ? "CDA" : "RIVAL"}/></div>;
+      const volumeStats = distributions[index]; const counts = countDistributions[index]; const goalStats = goalDistributions[index]; const impactStats = impactDistributions[index];
+      const countValue = countValues[index];
+      const equivalentVolume = volumeStats.p25 === null || volumeStats.p75 === null ? null : [value.totalEvents * volumeStats.p25 / 100, value.totalEvents * volumeStats.p75 / 100];
+      const equivalentGoals = goalStats.p25 === null || goalStats.p75 === null ? null : [value.totalGoals * goalStats.p25 / 100, value.totalGoals * goalStats.p75 / 100];
+      const content = <div className={own ? "text-right" : "text-left"}>
+        <div className={`flex items-center gap-2 ${own ? "justify-end" : "justify-start"}`}><DashboardActionIcon kind="SHOT" label={own ? "Remates CDA" : "Amenazas Rival"} tone={own ? "green" : "red"} compact/><strong className={`text-3xl ${own ? "text-cyan-100" : "text-rose-100"}`}>{value.phaseEvents}</strong></div>
+        <p className="text-[8px] font-black tracking-wide text-slate-500">{own ? "REMATES" : "AMENAZAS"}</p>
+        <MetricScale value={countValue} reference={comparisonEnabled ? comparedCounts[index] : undefined} stats={counts} maximum={countMaximum} side={own ? "left" : "right"} tone={own ? "cyan" : "rose"}/>
+        <div className={`mt-2 flex flex-wrap gap-1 ${own ? "justify-end" : "justify-start"}`}><span className="inline-flex items-center gap-1 rounded-md bg-slate-900 px-2 py-1 text-[9px] font-black"><PhaseSignal value={value.volumePercentage} stats={volumeStats} favorableWhenHigher={own} label="Porcentaje de volumen"/>VOL {format(value.volumePercentage, "%")}</span><span className="inline-flex items-center gap-1 rounded-md bg-slate-900 px-2 py-1 text-[9px] font-black"><DashboardActionIcon kind="GOAL" label="Porcentaje de goles" tone={own ? "cyan" : "red"} compact/><PhaseSignal value={value.goalPercentage} stats={goalStats} favorableWhenHigher={own} label="Porcentaje de goles"/>GOL {format(value.goalPercentage, "%")}</span>{differential !== null && Math.abs(differential) >= 5 && <span className="rounded-md border border-slate-800 px-2 py-1 text-[8px] font-black text-slate-400">IMP {differential > 0 ? "+" : ""}{format(differential, " pp")}</span>}</div>
+        <details className="mt-2 text-[8px] text-slate-400"><summary className="cursor-pointer font-black text-indigo-200">DETALLE ESTADÍSTICO</summary><div className="mt-1 space-y-0.5 rounded-xl border border-slate-800 bg-slate-900 p-2"><p>Actual: {value.phaseEvents} · HAB cantidad {format(counts.p25)}–{format(counts.p75)} · media {format(counts.mean)} · mediana {format(counts.median)} · min/max {format(counts.min)}–{format(counts.max)} · N={counts.n}</p><p>Volumen: {format(value.volumePercentage, "%")} · HAB {format(volumeStats.p25, "%")}–{format(volumeStats.p75, "%")} · eq. {equivalentVolume ? `${format(equivalentVolume[0])}–${format(equivalentVolume[1])}` : "N/D"}</p><p>Goles: {value.phaseGoals} · {format(value.goalPercentage, "%")} · HAB {format(goalStats.p25, "%")}–{format(goalStats.p75, "%")} · eq. {equivalentGoals ? `${format(equivalentGoals[0])}–${format(equivalentGoals[1])}` : "N/D"}</p><p>Impacto: {differential !== null && differential > 0 ? "+" : ""}{format(differential, " pp")} · HAB {format(impactStats.p25, " pp")}–{format(impactStats.p75, " pp")}</p><p>Habitual = P25–P75 partido a partido del scope de referencia; requiere N≥4.</p></div></details><DashboardVideoLink records={allRecords} scope={scope} override={definition.key === "ABP" ? { side: own ? "FOR" : "AGAINST", phases: definition.phases } : { side: own ? "FOR" : "AGAINST", phases: definition.phases }} label={own ? "CDA" : "RIVAL"}/>
+      </div>;
       return index === 0 ? <div key="FOR">{content}</div> : <div key="AGAINST" className="col-start-3">{content}</div>;
-    })}<div className="col-start-2 row-start-1 text-center"><h3 className="text-[9px] font-black tracking-[.1em] text-white">{definition.label}</h3><p className="mt-1 text-[8px] text-slate-500">REMATES / AMENAZAS</p></div></article>;
+    })}<div className="col-start-2 row-start-1 text-center"><button type="button" aria-pressed={active} onClick={() => onScope({ ...scope, phases: active ? [] : [...definition.phases] })} className="min-h-11 w-full rounded-xl px-1 hover:bg-slate-900"><h3 className="text-[9px] font-black tracking-[.08em] text-white">{definition.label}</h3><p className="mt-1 text-[8px] text-slate-500">FILTRAR FASE</p></button></div></article>;
   })}</div></FamilySection>;
 }
 

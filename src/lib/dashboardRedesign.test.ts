@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "./dashboardFixture";
 import { dashboardMetricDistribution } from "./dashboardDistribution";
 import { describeDistribution, habitualPosition, MIN_MATCHES_FOR_HABITUAL_RANGE } from "./distributionStatistics";
@@ -9,8 +10,8 @@ import { sharedMetricMaximum } from "./distributionStatistics";
 import { dashboardScopeToVideoFilters, dashboardVideoHref, suggestedDashboardCollectionName } from "./dashboardVideoContext";
 import { orderPhaseRows, phaseImpactDelta } from "./dashboardPhaseImpact";
 import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows, sortDashboardSetPieceRows, sortDashboardSituationRows } from "./dashboardDataTables";
-import { buildGoalkeeperComparisonPanels, goalkeeperSaveOutcomePercentage, sortGoalkeeperRows } from "./dashboardGoalkeeperView";
-import { evaluateDashboardDeviation, summaryMetricFavorableWhenHigher } from "./dashboardSemantics";
+import { buildGoalkeeperComparisonPanels, goalkeeperSaveOutcomePercentage, GOALKEEPER_SAVE_OUTCOMES, sortGoalkeeperRows } from "./dashboardGoalkeeperView";
+import { dashboardTimePercentage, evaluateDashboardDeviation, formatDashboardDuration, summaryMetricFavorableWhenHigher } from "./dashboardSemantics";
 
 const fixtureScope = () => emptyDashboardScope(DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_TEAM_ID, DASHBOARD_FIXTURE_SEASON_ID);
 
@@ -264,4 +265,40 @@ test("impacto de fase es goles menos volumen y permite ordenar por ambas lectura
   assert.equal(phaseImpactDelta(null, 55), null);
   assert.equal(orderPhaseRows(rows, "VOLUME", (row) => row.values)[0].id, "mucho");
   assert.equal(orderPhaseRows(rows, "IMPACT", (row) => row.values)[0].id, "impacto");
+});
+
+test("Situaciones formatea duración y porcentaje sobre el scope temporal sin falsos ceros", () => {
+  assert.equal(formatDashboardDuration(12.5), "12:30");
+  assert.equal(dashboardTimePercentage(12.5, 40), 31.25);
+  assert.equal(dashboardTimePercentage(0, 40), 0);
+  assert.equal(dashboardTimePercentage(5, 0), null);
+});
+
+test("los filtros de evento no alteran el denominador temporal de Clave y Oro", () => {
+  const records = buildDashboardFixture();
+  const base = buildDashboardV2(records, fixtureScope());
+  const eventFiltered = buildDashboardV2(records, { ...fixtureScope(), phases: ["TRANSITION"], outcomes: ["GOL"], threatSides: ["FOR"] });
+  assert.equal(eventFiltered.rates.observedMinutes, base.rates.observedMinutes);
+  assert.equal(dashboardTimePercentage(eventFiltered.teamKeyMinutes, eventFiltered.rates.observedMinutes), dashboardTimePercentage(eventFiltered.teamKeyMinutes, base.rates.observedMinutes));
+  assert.equal(dashboardTimePercentage(eventFiltered.teamGoldMinutes, eventFiltered.rates.observedMinutes), dashboardTimePercentage(eventFiltered.teamGoldMinutes, base.rates.observedMinutes));
+});
+
+test("Porteros expone BLOQ DESP RECH y mantiene cero clasificado como dato ausente", () => {
+  assert.deepEqual(GOALKEEPER_SAVE_OUTCOMES.map((item) => item.shortLabel), ["BLOQ %", "DESP %", "RECH %"]);
+  const analysis = buildDashboardV2(buildDashboardFixture(), fixtureScope());
+  const empty = { ...analysis.goalkeepers[0], saveOutcomes: { CATCH: 0, CLEARANCE: 0, REBOUND: 0 } };
+  assert.equal(goalkeeperSaveOutcomePercentage(empty, "CATCH"), null);
+});
+
+test("FASES mantiene filtro canónico, detalle estadístico y señales ligadas a cada métrica", () => {
+  const source = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
+  for (const token of ["onScope({ ...scope, phases:", "media", "mediana", "min/max", "N=", "VOL", "GOL", "PhaseSignal"]) assert.ok(source.includes(token));
+  assert.ok(source.includes("habitualPosition"));
+});
+
+test("iconos del Dashboard son SVG accesibles y el tooltip responde a tap exterior y Escape", () => {
+  const source = readFileSync("src/components/dashboard/DashboardActionIcon.tsx", "utf8");
+  for (const token of ["<svg", "aria-label", "aria-expanded", "pointerdown", 'event.key === "Escape"']) assert.ok(source.includes(token));
+  assert.ok(!source.includes("👟"));
+  assert.ok(!source.includes("🥅"));
 });

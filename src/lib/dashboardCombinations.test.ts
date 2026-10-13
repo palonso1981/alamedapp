@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { analyzeCombination, buildCombinationsContext, combinationKey, combinationMinimumMinutes, compareCombinations, combinationPlayers, rankCombinations, validateCombination } from "./dashboardCombinations";
+import { analyzeCombination, buildCombinationsContext, combinationKey, combinationMinimumMinutes, combinationPointsPercentage, compareCombinations, combinationPlayers, rankCombinations, sortCombinationRows, validateCombination } from "./dashboardCombinations";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
 import { buildDashboardV2, emptyDashboardScope } from "./dashboardV2";
 import { createLineupInitializedEvent, createLiveThreatEvent, createSubstitutionEvent, createGameStateEvent } from "./matchEngine";
@@ -96,4 +96,27 @@ test("posición maestra de plantilla prevalece sobre slot inicial y snapshot his
   const historical = buildCombinationsContext([r], scope());
   assert.ok(!combinationPlayers(historical, 2, true).some(p => p.id === "p1"));
   assert.deepEqual(rankCombinations(c, 2), rankCombinations(historical, 2));
+});
+
+test("PTS reutiliza el cálculo canónico y ordena numerador ascendente y descendente", () => {
+  const base = analyzeCombination(buildCombinationsContext([record()], scope()), ["p1", "p2"]);
+  const rows = [
+    { ...base, key: "a", points: { ...base.points, total: 9, possible: 12 } },
+    { ...base, key: "b", points: { ...base.points, total: 3, possible: 3 } },
+    { ...base, key: "c", points: { ...base.points, total: 9, possible: 15 } },
+  ];
+  assert.equal(combinationPointsPercentage(rows[0]), 75);
+  assert.deepEqual(sortCombinationRows(rows, "points", "DESC").map((row) => row.key), ["c", "a", "b"]);
+  assert.deepEqual(sortCombinationRows(rows, "points", "ASC").map((row) => row.key), ["b", "a", "c"]);
+});
+
+test("% PTS ordena por ratio y desempata por puntos conseguidos", () => {
+  const base = analyzeCombination(buildCombinationsContext([record()], scope()), ["p1", "p2"]);
+  const rows = [
+    { ...base, key: "a", points: { ...base.points, total: 6, possible: 12 } },
+    { ...base, key: "b", points: { ...base.points, total: 9, possible: 12 } },
+    { ...base, key: "c", points: { ...base.points, total: 3, possible: 6 } },
+  ];
+  assert.deepEqual(sortCombinationRows(rows, "pointsPercentage", "DESC").map((row) => row.key), ["b", "a", "c"]);
+  assert.deepEqual(sortCombinationRows(rows, "pointsPercentage", "ASC").map((row) => row.key), ["c", "a", "b"]);
 });
