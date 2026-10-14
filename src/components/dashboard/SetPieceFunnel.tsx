@@ -12,18 +12,16 @@ import {
   setPieceFunnelWidth,
 } from "../../lib/dashboardV2";
 import { describeDistribution, MIN_MATCHES_FOR_HABITUAL_RANGE } from "../../lib/distributionStatistics";
-import { DashboardActionIcon, DashboardActionIconKind } from "./DashboardActionIcon";
-
-const RESULT_STAGES: ReadonlyArray<{ key: keyof Pick<SetPieceFunnelSide, "withShot" | "withOnTarget" | "withGoal">; label: string; icon: DashboardActionIconKind }> = [
-  { key: "withShot", label: "REMATES", icon: "SHOT" },
-  { key: "withOnTarget", label: "A PUERTA", icon: "ON_TARGET" },
-  { key: "withGoal", label: "GOL", icon: "GOAL" },
+const RESULT_STAGES: ReadonlyArray<{ key: keyof Pick<SetPieceFunnelSide, "withShot" | "withOnTarget" | "withGoal">; label: string }> = [
+  { key: "withShot", label: "REMATES" },
+  { key: "withOnTarget", label: "A PUERTA" },
+  { key: "withGoal", label: "GOL" },
 ];
 
 function FunnelSide({ title, tone, stats, scaleMaximum, kind, habitual }: { title: string; tone: "cyan" | "rose"; stats: SetPieceFunnelSide; scaleMaximum: number; kind: SetPieceFunnelKind; habitual: Array<{ key: string; p25: number; p75: number }> }) {
   const fill = tone === "cyan" ? "bg-cyan-400" : "bg-rose-400";
   const text = tone === "cyan" ? "text-cyan-200" : "text-rose-200";
-  const stages: ReadonlyArray<{ key: keyof Pick<SetPieceFunnelSide, "opportunities" | "withShot" | "withOnTarget" | "withGoal">; label: string; icon?: DashboardActionIconKind }> = [
+  const stages: ReadonlyArray<{ key: keyof Pick<SetPieceFunnelSide, "opportunities" | "withShot" | "withOnTarget" | "withGoal">; label: string }> = [
     { key: "opportunities", label: setPieceFunnelOpportunityLabel(kind) },
     ...RESULT_STAGES,
   ];
@@ -32,14 +30,14 @@ function FunnelSide({ title, tone, stats, scaleMaximum, kind, habitual }: { titl
   return <article data-abp-funnel-side={title} className="rounded-xl bg-slate-950/70 p-3">
     <h3 className={`text-center text-sm font-black tracking-wide ${text}`}>{title}</h3>
     <div className="mt-3 space-y-2">
-      {stages.map(({ key, label, icon }) => {
+      {stages.map(({ key, label }) => {
         const value = stats[key];
         const percentage = setPieceFunnelPercentage(value, stats.opportunities);
         const width = setPieceFunnelWidth(value, scaleMaximum);
         const usual = habitual.find((item) => item.key === key);
         const equivalent = key === "opportunities" || !usual ? null : [stats.opportunities * usual.p25 / 100, stats.opportunities * usual.p75 / 100];
         return <div key={key} data-abp-funnel-stage={key} data-value={value} data-width={width.toFixed(2)} className="text-center">
-          <div className="mb-1 flex items-center justify-center gap-2"><span className="inline-flex items-center gap-1 text-[9px] font-black tracking-wide text-slate-400">{icon ? <DashboardActionIcon kind={icon} label={label} tone={tone === "cyan" ? "green" : "red"} compact/> : null}{label}</span><strong className="text-sm text-white">{value}</strong><small className="text-[10px] font-bold text-slate-400">{percentage === null ? "—" : `${Math.round(percentage)}%`}</small></div>
+          <div className="mb-1 flex items-center justify-center gap-2"><span className="text-[9px] font-black tracking-wide text-slate-400">{label}</span><strong className="text-sm text-white">{value}</strong><small className="text-[10px] font-bold text-slate-400">{percentage === null ? "—" : `${Math.round(percentage)}%`}</small></div>
           <div data-abp-funnel-bar className={`mx-auto h-3 rounded-md ${fill}`} style={{ width: `${width}%` }}/>
           <p className="mt-1 text-[8px] text-slate-500">{usual ? key === "opportunities" ? `habitual ${usual.p25.toFixed(1)}–${usual.p75.toFixed(1)}/PJ` : `habitual ${usual.p25.toFixed(0)}–${usual.p75.toFixed(0)}%${equivalent ? ` · eq. ${equivalent[0].toFixed(1)}–${equivalent[1].toFixed(1)}` : ""}` : "Sin muestra habitual suficiente"}</p>
         </div>;

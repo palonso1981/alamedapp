@@ -284,16 +284,52 @@ test("los filtros de evento no alteran el denominador temporal de Clave y Oro", 
 });
 
 test("Porteros expone BLOQ DESP RECH y mantiene cero clasificado como dato ausente", () => {
-  assert.deepEqual(GOALKEEPER_SAVE_OUTCOMES.map((item) => item.shortLabel), ["BLOQ %", "DESP %", "RECH %"]);
+  assert.deepEqual(GOALKEEPER_SAVE_OUTCOMES.map((item) => item.shortLabel), ["BLOQ", "DESP", "RECH"]);
   const analysis = buildDashboardV2(buildDashboardFixture(), fixtureScope());
   const empty = { ...analysis.goalkeepers[0], saveOutcomes: { CATCH: 0, CLEARANCE: 0, REBOUND: 0 } };
   assert.equal(goalkeeperSaveOutcomePercentage(empty, "CATCH"), null);
 });
 
-test("FASES mantiene filtro canónico, detalle estadístico y señales ligadas a cada métrica", () => {
+test("FASES mantiene orden fijo, dos tracks, filtro canónico y detalle estadístico", () => {
   const source = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
-  for (const token of ["onScope({ ...scope, phases:", "media", "mediana", "min/max", "N=", "VOL", "GOL", "PhaseSignal"]) assert.ok(source.includes(token));
-  assert.ok(source.includes("habitualPosition"));
+  const labels = ["POSICIONAL", "TRANSICIÓN", "ABP", "CÓRNER", "BANDA CERCANA", "PORTERO-JUGADOR", "DOBLE PENALTI", "PENALTI"];
+  labels.reduce((position, label) => { const next = source.indexOf(`label: \"${label}\"`, position + 1); assert.ok(next > position, `${label} respeta el orden`); return next; }, -1);
+  for (const token of ["onScope({ ...scope, phases:", "media", "mediana", "min/max", "N=", 'data-phase-track=\"actions\"', 'data-phase-track=\"goals\"', "Volumen:", "Impacto:"]) assert.ok(source.includes(token));
+  assert.ok(!source.includes("PhaseSignal"));
+});
+
+test("RESUMEN y ABP usan etiquetas textuales sin iconos deportivos", () => {
+  const summary = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
+  const abp = readFileSync("src/components/dashboard/SetPieceFunnel.tsx", "utf8");
+  for (const token of ["REM · AME", "FUERA", "A PUERTA", "PARADAS", "GOLES"]) assert.ok(summary.includes(token));
+  assert.ok(!summary.includes("DashboardActionIcon"));
+  assert.ok(!abp.includes("DashboardActionIcon"));
+});
+
+test("SITUACIONES excluye ceros y solo analiza con filtros canónicos", () => {
+  const summary = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
+  const data = readFileSync("src/components/dashboard/DashboardDataTables.tsx", "utf8");
+  assert.ok(summary.includes('row.losses > 0 : row.minutes > 0'));
+  assert.ok(summary.includes('competitiveContext: goldContext ? "GOLD" : "KEY"'));
+  assert.ok(summary.includes('playingState: "PJ_CDA"'));
+  assert.ok(data.includes('filter((item) => item.value > 0)'));
+  assert.ok(data.includes('situation.key !== "losses"'));
+});
+
+test("DATOS no dibuja marcador neutral y conserva semántica favorable", () => {
+  const source = readFileSync("src/components/dashboard/DashboardDataTables.tsx", "utf8");
+  assert.ok(source.includes('data-deviation-position={position}'));
+  assert.ok(source.includes('data-deviation-evaluation={evaluation}'));
+  assert.ok(!source.includes('position === "within" ? "· "'));
+});
+
+test("tabla principal de porteros cabe sin scroll y conserva cabeceras esenciales", () => {
+  const source = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
+  const view = readFileSync("src/lib/dashboardGoalkeeperView.ts", "utf8");
+  for (const label of ["PORTERO", "MIN", "PJ", "AME", "PAR", "%PAR"]) assert.ok(source.includes(`label: \"${label}\"`));
+  for (const label of ["BLOQ", "DESP", "RECH"]) assert.ok(view.includes(`shortLabel: \"${label}\"`));
+  assert.ok(source.includes('className="w-full table-fixed'));
+  assert.ok(!source.includes('min-w-[1240px]'));
 });
 
 test("iconos del Dashboard son SVG accesibles y el tooltip responde a tap exterior y Escape", () => {

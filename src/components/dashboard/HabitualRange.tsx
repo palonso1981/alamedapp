@@ -23,9 +23,9 @@ export function HabitualRange({ records, scope, metric, mode, value }: { records
     return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
   }, [open]);
   if (position === "unavailable") return <span className="text-[9px] text-slate-500">habitual · muestra {stats.n}/4</span>;
-  const symbol = position === "above" ? "↑" : position === "below" ? "↓" : "·";
+  const symbol = position === "above" ? "↑ " : position === "below" ? "↓ " : "";
   return <div ref={host} className="relative inline-block text-left">
-    <button type="button" onClick={() => setOpen((current) => !current)} aria-expanded={open} className="text-[10px] font-bold text-amber-200">{symbol} habitual {format(stats.p25)}–{format(stats.p75)}</button>
+    <button type="button" onClick={() => setOpen((current) => !current)} aria-expanded={open} className="text-[10px] font-bold text-amber-200">{symbol}{format(stats.p25)}–{format(stats.p75)}</button>
     {open && <div role="dialog" className="absolute right-0 z-30 mt-1 w-64 rounded-xl border border-amber-900 bg-slate-950 p-3 text-[10px] shadow-xl">
       <b className="block text-amber-200">{position === "within" ? "DENTRO DE LO HABITUAL" : position === "above" ? "POR ENCIMA" : "POR DEBAJO"}</b>
       <p className="mt-1 text-slate-300">La mitad central de los partidos de esta referencia se sitúa entre {format(stats.p25)} y {format(stats.p75)}. Ese intervalo es el comportamiento habitual.</p>

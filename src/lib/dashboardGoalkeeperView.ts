@@ -11,9 +11,9 @@ export interface GoalkeeperTableRow {
 }
 
 export const GOALKEEPER_SAVE_OUTCOMES: ReadonlyArray<{ key: SaveOutcome; metric: Extract<GoalkeeperSortKey, "catchPercentage" | "clearancePercentage" | "reboundPercentage">; label: string; shortLabel: string }> = [
-  { key: "CATCH", metric: "catchPercentage", label: "Blocaje", shortLabel: "BLOQ %" },
-  { key: "CLEARANCE", metric: "clearancePercentage", label: "Despeje", shortLabel: "DESP %" },
-  { key: "REBOUND", metric: "reboundPercentage", label: "Rechace", shortLabel: "RECH %" },
+  { key: "CATCH", metric: "catchPercentage", label: "Blocaje", shortLabel: "BLOQ" },
+  { key: "CLEARANCE", metric: "clearancePercentage", label: "Despeje", shortLabel: "DESP" },
+  { key: "REBOUND", metric: "reboundPercentage", label: "Rechace", shortLabel: "RECH" },
 ];
 
 export function goalkeeperClassifiedSaves(keeper: GoalkeeperAnalysis): number {
