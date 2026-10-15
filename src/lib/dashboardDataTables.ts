@@ -161,19 +161,41 @@ export function sortDashboardSituationRows<T extends DashboardSituationSortableR
 }
 
 const ratio = (value: number, total: number) => total ? value / total * 100 : null;
-export function buildDashboardSetPieceDataRows(current: readonly DashboardMatchRecord[], referenceByMatch: readonly (readonly DashboardMatchRecord[])[], side: DashboardDataSide): DashboardSetPieceDataRow[] {
+export function normalizeDashboardReferenceQuantity(value: number, mode: DashboardValueMode, currentSamples: number, observedMinutes: number): number | null {
+  if (mode === "TOTALS") return value * currentSamples;
+  return normalizeDashboardCount(value, mode, 1, observedMinutes);
+}
+
+export function buildDashboardSetPieceDataRows(
+  currentRecords: readonly DashboardMatchRecord[],
+  referenceByMatch: readonly (readonly DashboardMatchRecord[])[],
+  side: DashboardDataSide,
+  mode: DashboardValueMode = "TOTALS",
+  observedMinutes = 0,
+  referenceObservedMinutes: readonly number[] = [],
+): DashboardSetPieceDataRow[] {
+  const samples = currentRecords.length;
+  const normalizeCurrent = (value: number) => normalizeDashboardCount(value, mode, samples, observedMinutes) ?? 0;
   return (["ALL", "CORNER", "KICK_IN"] as const).map((kind) => {
-    const value = buildSetPieceFunnel(current, kind)[side];
+    const value = buildSetPieceFunnel(currentRecords, kind)[side];
     const refs = referenceByMatch.map((records) => buildSetPieceFunnel(records, kind)[side]);
+    const referenceQuantity = (candidate: number, index: number) => normalizeDashboardReferenceQuantity(candidate, mode, samples, referenceObservedMinutes[index] ?? 40);
+    const normalizedCurrent = {
+      opportunities: normalizeCurrent(value.opportunities),
+      withShot: normalizeCurrent(value.withShot),
+      withOnTarget: normalizeCurrent(value.withOnTarget),
+      withGoal: normalizeCurrent(value.withGoal),
+      totalShots: normalizeCurrent(value.totalShots),
+    };
     const shotHabitual = habitual(refs.map((item) => ratio(item.withShot, item.opportunities)));
     const targetHabitual = habitual(refs.map((item) => ratio(item.withOnTarget, item.opportunities)));
     const goalHabitual = habitual(refs.map((item) => ratio(item.withGoal, item.opportunities)));
     return {
-      key: kind, label: kind === "ALL" ? "TODAS" : kind === "CORNER" ? "CÓRNER" : "BANDA CERCANA", current: value,
-      opportunityHabitual: habitual(refs.map((item) => item.opportunities)),
-      shotPct: ratio(value.withShot, value.opportunities), shotHabitual, shotEquivalent: equivalent(value.opportunities, shotHabitual),
-      targetPct: ratio(value.withOnTarget, value.opportunities), targetHabitual, targetEquivalent: equivalent(value.opportunities, targetHabitual),
-      goalPct: ratio(value.withGoal, value.opportunities), goalHabitual, goalEquivalent: equivalent(value.opportunities, goalHabitual),
+      key: kind, label: kind === "ALL" ? "TODAS" : kind === "CORNER" ? "CÓRNER" : "BANDA CERCANA", current: normalizedCurrent,
+      opportunityHabitual: habitual(refs.map((item, index) => referenceQuantity(item.opportunities, index))),
+      shotPct: ratio(value.withShot, value.opportunities), shotHabitual, shotEquivalent: equivalent(normalizedCurrent.opportunities, shotHabitual),
+      targetPct: ratio(value.withOnTarget, value.opportunities), targetHabitual, targetEquivalent: equivalent(normalizedCurrent.opportunities, targetHabitual),
+      goalPct: ratio(value.withGoal, value.opportunities), goalHabitual, goalEquivalent: equivalent(normalizedCurrent.opportunities, goalHabitual),
     };
   });
 }

@@ -9,7 +9,7 @@ import { aggregateGoalkeepers } from "./dashboardAnalysis";
 import { sharedMetricMaximum } from "./distributionStatistics";
 import { dashboardScopeToVideoFilters, dashboardVideoHref, suggestedDashboardCollectionName } from "./dashboardVideoContext";
 import { orderPhaseRows, phaseImpactDelta } from "./dashboardPhaseImpact";
-import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows, sortDashboardSetPieceRows, sortDashboardSituationRows } from "./dashboardDataTables";
+import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows, normalizeDashboardReferenceQuantity, sortDashboardSetPieceRows, sortDashboardSituationRows } from "./dashboardDataTables";
 import { buildGoalkeeperComparisonPanels, goalkeeperSaveOutcomePercentage, GOALKEEPER_SAVE_OUTCOMES, sortGoalkeeperRows } from "./dashboardGoalkeeperView";
 import { dashboardTimePercentage, evaluateDashboardDeviation, formatDashboardDuration, summaryMetricFavorableWhenHigher } from "./dashboardSemantics";
 
@@ -135,6 +135,24 @@ test("DATA mantiene TOTAL, por partido y por 40 sobre la misma cantidad", () => 
   const per40 = buildDashboardPhaseDataRows(records, refs, "FOR", "PER_40", analysis.rates.observedMinutes).find((row) => row.key === "TOTAL")!;
   assert.equal(perMatch.count, total.rawCount / records.length);
   assert.equal(per40.count, analysis.rates.observedMinutes > 0 ? total.rawCount * 40 / analysis.rates.observedMinutes : null);
+});
+
+test("ABP normaliza cantidades en TOTAL, PJ y x40 sin alterar ratios", () => {
+  const records = buildDashboardFixture();
+  const analysis = buildDashboardV2(records, fixtureScope());
+  const references = records.map((record) => buildDashboardV2([record], { ...fixtureScope(), matchIds: [record.catalog.matchId] }));
+  const referenceRecords = references.map((value) => value.records);
+  const referenceMinutes = references.map((value) => value.rates.observedMinutes);
+  const total = buildDashboardSetPieceDataRows(records, referenceRecords, "FOR", "TOTALS", analysis.rates.observedMinutes, referenceMinutes).find((row) => row.key === "ALL")!;
+  const perMatch = buildDashboardSetPieceDataRows(records, referenceRecords, "FOR", "PER_MATCH", analysis.rates.observedMinutes, referenceMinutes).find((row) => row.key === "ALL")!;
+  const per40 = buildDashboardSetPieceDataRows(records, referenceRecords, "FOR", "PER_40", analysis.rates.observedMinutes, referenceMinutes).find((row) => row.key === "ALL")!;
+  assert.equal(perMatch.current.opportunities, total.current.opportunities / records.length);
+  assert.equal(per40.current.opportunities, analysis.rates.observedMinutes > 0 ? total.current.opportunities * 40 / analysis.rates.observedMinutes : 0);
+  assert.equal(perMatch.shotPct, total.shotPct);
+  assert.equal(per40.goalPct, total.goalPct);
+  assert.equal(normalizeDashboardReferenceQuantity(3, "TOTALS", 2, 40), 6);
+  assert.equal(normalizeDashboardReferenceQuantity(3, "PER_MATCH", 2, 40), 3);
+  assert.equal(normalizeDashboardReferenceQuantity(3, "PER_40", 2, 60), 2);
 });
 
 test("partido concreto mantiene HAB contra el universo de referencia", () => {
@@ -294,8 +312,28 @@ test("FASES mantiene orden fijo, dos tracks, filtro canónico y detalle estadís
   const source = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
   const labels = ["POSICIONAL", "TRANSICIÓN", "ABP", "CÓRNER", "BANDA CERCANA", "PORTERO-JUGADOR", "DOBLE PENALTI", "PENALTI"];
   labels.reduce((position, label) => { const next = source.indexOf(`label: \"${label}\"`, position + 1); assert.ok(next > position, `${label} respeta el orden`); return next; }, -1);
-  for (const token of ["onScope({ ...scope, phases:", "media", "mediana", "min/max", "N=", 'data-phase-track=\"actions\"', 'data-phase-track=\"goals\"', "Volumen:", "Impacto:"]) assert.ok(source.includes(token));
+  for (const token of ["onScope({ ...scope, phases:", "media", "mediana", "min/max", "N=", 'data-phase-track={kind}', 'renderTrack("actions")', 'renderTrack("goals")', "Volumen:", "Impacto:"]) assert.ok(source.includes(token));
   assert.ok(!source.includes("PhaseSignal"));
+});
+
+test("FASES comparte escala entre fases, separa acciones y goles y compacta vídeos", () => {
+  const source = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
+  const phaseSource = source.slice(source.indexOf("function PhaseImpact"), source.indexOf("function GoalkeeperTable"));
+  assert.ok(source.includes("const actionMaximum = sharedMetricMaximum(...rows.flatMap"));
+  assert.ok(source.includes("const goalMaximum = sharedMetricMaximum(...rows.flatMap"));
+  assert.ok(source.includes("data-action-scale={actionMaximum}"));
+  assert.ok(source.includes("data-goal-scale={goalMaximum}"));
+  assert.ok(source.includes('label="CDA" compact'));
+  assert.ok(source.includes('label="RIV" compact'));
+  assert.ok(!phaseSource.includes("Dif."));
+});
+
+test("RESUMEN escala las cantidades visibles y conserva porcentajes como microdato", () => {
+  const source = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
+  assert.ok(source.includes("sharedMetricMaximum(own, rival, ownReference, rivalReference"));
+  assert.ok(source.includes("<MetricScale value={own}"));
+  assert.ok(source.includes('ownMetric="FOR.outside"'));
+  assert.ok(source.includes('ownMetric="FOR.onTarget"'));
 });
 
 test("RESUMEN y ABP usan etiquetas textuales sin iconos deportivos", () => {
@@ -323,13 +361,34 @@ test("DATOS no dibuja marcador neutral y conserva semántica favorable", () => {
   assert.ok(!source.includes('position === "within" ? "· "'));
 });
 
+test("DATOS normaliza SITUACIONES, destaca porcentaje de gol y cambia pestaña sin perder scope", () => {
+  const data = readFileSync("src/components/dashboard/DashboardDataTables.tsx", "utf8");
+  const page = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
+  assert.ok(data.includes("normalizeDashboardCount(rawCurrent, mode"));
+  assert.ok(data.includes('data-dashboard-value-mode={mode}'));
+  assert.ok(data.includes("border-l border-slate-700/60 bg-amber-950/10 font-black text-amber-100"));
+  assert.ok(page.includes("if (nextArea === area) return"));
+  assert.ok(page.includes('scrollIntoView({ block: "start", behavior: "auto" })'));
+  assert.ok(page.includes("onArea={changeArea}"));
+});
+
 test("tabla principal de porteros cabe sin scroll y conserva cabeceras esenciales", () => {
   const source = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
   const view = readFileSync("src/lib/dashboardGoalkeeperView.ts", "utf8");
   for (const label of ["PORTERO", "MIN", "PJ", "AME", "PAR", "%PAR"]) assert.ok(source.includes(`label: \"${label}\"`));
   for (const label of ["BLOQ", "DESP", "RECH"]) assert.ok(view.includes(`shortLabel: \"${label}\"`));
   assert.ok(source.includes('className="w-full table-fixed'));
+  assert.ok(source.includes('<col style={{ width: "24%" }}/>'));
+  assert.ok(source.includes('style={{ width: "9.5%" }}'));
   assert.ok(!source.includes('min-w-[1240px]'));
+});
+
+test("GLOBAL de porteros usa cabecera, KPI y tipos de parada compactos", () => {
+  const source = readFileSync("src/components/dashboard/GoalkeeperAnalysisColumn.tsx", "utf8");
+  assert.ok(source.includes("data-goalkeeper-global={global || undefined}"));
+  assert.ok(source.includes("TODOS LOS PORTEROS"));
+  assert.ok(source.includes("compact={global}"));
+  assert.ok(!source.includes("🥅"));
 });
 
 test("iconos del Dashboard son SVG accesibles y el tooltip responde a tap exterior y Escape", () => {
