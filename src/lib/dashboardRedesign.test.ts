@@ -3,10 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "./dashboardFixture";
 import { dashboardMetricDistribution } from "./dashboardDistribution";
-import { describeDistribution, habitualPosition, MIN_MATCHES_FOR_HABITUAL_RANGE } from "./distributionStatistics";
+import { describeDistribution, habitualPosition, metricScalePercentage, MIN_MATCHES_FOR_HABITUAL_RANGE, paddedMetricMaximum, sharedMetricMaximum } from "./distributionStatistics";
 import { buildDashboardV2, dashboardActiveFilterCount, DASHBOARD_AREAS, emptyDashboardScope, normalizeDashboardArea, phaseImpactShare, scopeFromSearchParams, scopeToSearchParams, teamThreatProfile } from "./dashboardV2";
 import { aggregateGoalkeepers } from "./dashboardAnalysis";
-import { sharedMetricMaximum } from "./distributionStatistics";
 import { dashboardScopeToVideoFilters, dashboardVideoHref, suggestedDashboardCollectionName } from "./dashboardVideoContext";
 import { orderPhaseRows, phaseImpactDelta } from "./dashboardPhaseImpact";
 import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows, normalizeDashboardReferenceQuantity, sortDashboardSetPieceRows, sortDashboardSituationRows } from "./dashboardDataTables";
@@ -319,8 +318,10 @@ test("FASES mantiene orden fijo, dos tracks, filtro canónico y detalle estadís
 test("FASES comparte escala entre fases, separa acciones y goles y compacta vídeos", () => {
   const source = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
   const phaseSource = source.slice(source.indexOf("function PhaseImpact"), source.indexOf("function GoalkeeperTable"));
-  assert.ok(source.includes("const actionMaximum = sharedMetricMaximum(...rows.flatMap"));
-  assert.ok(source.includes("const goalMaximum = sharedMetricMaximum(...rows.flatMap"));
+  assert.ok(source.includes("const actionMaximum = paddedMetricMaximum(rows.flatMap"));
+  assert.ok(source.includes("const goalMaximum = paddedMetricMaximum(rows.flatMap"));
+  assert.ok(!phaseSource.includes("...row.comparedActions"));
+  assert.ok(!phaseSource.includes("stats.max"));
   assert.ok(source.includes("data-action-scale={actionMaximum}"));
   assert.ok(source.includes("data-goal-scale={goalMaximum}"));
   assert.ok(source.includes('label="CDA" compact'));
@@ -330,10 +331,21 @@ test("FASES comparte escala entre fases, separa acciones y goles y compacta víd
 
 test("RESUMEN escala las cantidades visibles y conserva porcentajes como microdato", () => {
   const source = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
-  assert.ok(source.includes("sharedMetricMaximum(own, rival, ownReference, rivalReference"));
+  assert.ok(source.includes("const summaryMaximum = paddedMetricMaximum(summaryMetrics.flatMap"));
+  assert.ok(source.includes("ownStats.p25, ownStats.p75, rivalStats.p25, rivalStats.p75"));
+  assert.ok(source.includes("maximum={summaryMaximum}"));
   assert.ok(source.includes("<MetricScale value={own}"));
   assert.ok(source.includes('ownMetric="FOR.outside"'));
   assert.ok(source.includes('ownMetric="FOR.onTarget"'));
+});
+
+test("escala visual común conserva proporciones y usa un margen pequeño", () => {
+  const maximum = paddedMetricMaximum([43, 30, 18, 13, 12, 8]);
+  assert.equal(maximum, 45.15);
+  assert.equal(metricScalePercentage(13, maximum), metricScalePercentage(13, maximum));
+  assert.ok(metricScalePercentage(43, maximum) > metricScalePercentage(30, maximum));
+  assert.ok(Math.abs(metricScalePercentage(30, maximum) / metricScalePercentage(43, maximum) - 30 / 43) < .0001);
+  assert.ok(Math.abs(metricScalePercentage(24, paddedMetricMaximum([24, 15, 10, 8])) / metricScalePercentage(10, paddedMetricMaximum([24, 15, 10, 8])) - 2.4) < .0001);
 });
 
 test("RESUMEN y ABP usan etiquetas textuales sin iconos deportivos", () => {

@@ -29,7 +29,7 @@ import { SetPieceFunnel } from "./SetPieceFunnel";
 import { HabitualRange } from "./HabitualRange";
 import { MetricScale } from "./MetricScale";
 import { dashboardMetricDistribution, DashboardDistributionMetric } from "../../lib/dashboardDistribution";
-import { describeDistribution, sharedMetricMaximum } from "../../lib/distributionStatistics";
+import { describeDistribution, paddedMetricMaximum } from "../../lib/distributionStatistics";
 import { aggregateGoalkeepers } from "../../lib/dashboardAnalysis";
 import { phaseImpactDelta } from "../../lib/dashboardPhaseImpact";
 import { deriveCompetitiveProjection } from "../../lib/dashboardCompetitiveContext";
@@ -276,11 +276,10 @@ function Empty() {
   return <section className="rounded-3xl border border-dashed border-slate-700 p-10 text-center"><strong className="text-xl">Sin datos para esta intersección</strong><p className="mt-2 text-sm text-slate-500">Retira un filtro o usa el fixture poblado sin persistencia.</p><Link href="/dashboard?fixture=1" className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-cyan-300 px-4 text-xs font-black text-slate-950">ABRIR FIXTURE POBLADO</Link></section>;
 }
 
-function DuelRow({ label, metricKind, own, rival, ownPct, rivalPct, ownReference, rivalReference, records, habitualScope, mode, ownMetric, rivalMetric, comparisonEnabled }: { label: string; metricKind: DashboardSummaryMetric; own: number | null; rival: number | null; ownPct?: number | null; rivalPct?: number | null; ownReference?: number | null; rivalReference?: number | null; records: DashboardMatchRecord[]; habitualScope: DashboardScopeV2; mode: DashboardValueMode; ownMetric: DashboardDistributionMetric; rivalMetric: DashboardDistributionMetric; comparisonEnabled: boolean }) {
+function DuelRow({ label, metricKind, own, rival, ownPct, rivalPct, ownReference, rivalReference, records, habitualScope, mode, ownMetric, rivalMetric, comparisonEnabled, maximum }: { label: string; metricKind: DashboardSummaryMetric; own: number | null; rival: number | null; ownPct?: number | null; rivalPct?: number | null; ownReference?: number | null; rivalReference?: number | null; records: DashboardMatchRecord[]; habitualScope: DashboardScopeV2; mode: DashboardValueMode; ownMetric: DashboardDistributionMetric; rivalMetric: DashboardDistributionMetric; comparisonEnabled: boolean; maximum: number }) {
   const difference = own === null || rival === null ? null : own - rival;
   const ownDistribution = dashboardMetricDistribution(records, habitualScope, ownMetric, mode);
   const rivalDistribution = dashboardMetricDistribution(records, habitualScope, rivalMetric, mode);
-  const maximum = sharedMetricMaximum(own, rival, ownReference, rivalReference, ownDistribution.stats.max, rivalDistribution.stats.max);
   return <div className="grid grid-cols-[minmax(0,1fr)_6.5rem_minmax(0,1fr)] items-center gap-2 border-t border-slate-800 py-3 first:border-0">
     <div className="relative min-w-0"><div className="flex items-baseline justify-end gap-2"><span className="text-[10px] font-black text-cyan-300">{ownPct === undefined ? "" : format(ownPct, "%")}</span><strong className="text-2xl text-cyan-100">{format(own)}</strong></div><MetricScale value={own} reference={comparisonEnabled ? ownReference : undefined} stats={ownDistribution.stats} maximum={maximum} side="left" favorableWhenHigher={summaryMetricFavorableWhenHigher("CDA", metricKind)}/></div>
     <div className="flex flex-col items-center text-center"><span className="text-[9px] font-black tracking-wide text-slate-400">{label}</span><strong className="mt-0.5 block text-sm text-white">Dif. {difference !== null && difference > 0 ? "+" : ""}{format(difference)}</strong></div>
@@ -300,6 +299,18 @@ function Summary({ analysis, reference, mode, comparisonEnabled, scope, onScope,
   const goalsFor = normalized(own.goals);
   const goalsAgainst = normalized(rival.goals);
   const goalDifference = goalsFor === null || goalsAgainst === null ? null : goalsFor - goalsAgainst;
+  const summaryMetrics: Array<{ own: number | null; rival: number | null; ownMetric: DashboardDistributionMetric; rivalMetric: DashboardDistributionMetric }> = [
+    { own: normalized(own.total), rival: normalized(rival.total), ownMetric: "threatsFor", rivalMetric: "threatsAgainst" },
+    { own: normalized(own.outside), rival: normalized(rival.outside), ownMetric: "FOR.outside", rivalMetric: "AGAINST.outside" },
+    { own: normalized(own.onTarget), rival: normalized(rival.onTarget), ownMetric: "FOR.onTarget", rivalMetric: "AGAINST.onTarget" },
+    { own: normalized(rival.saves), rival: normalized(own.saves), ownMetric: "AGAINST.saves", rivalMetric: "FOR.saves" },
+    { own: goalsFor, rival: goalsAgainst, ownMetric: "goalsFor", rivalMetric: "goalsAgainst" },
+  ];
+  const summaryMaximum = paddedMetricMaximum(summaryMetrics.flatMap((metric) => {
+    const ownStats = dashboardMetricDistribution(allRecords, referenceScope, metric.ownMetric, mode).stats;
+    const rivalStats = dashboardMetricDistribution(allRecords, referenceScope, metric.rivalMetric, mode).stats;
+    return [metric.own, metric.rival, ownStats.p25, ownStats.p75, rivalStats.p25, rivalStats.p75];
+  }));
   const pending = own.pendingReview + rival.pendingReview;
   const losses = teamMetricValue(analysis, "possessionLosses", mode);
   const key = buildDashboardV2(allRecords, { ...scope, competitiveContext: "KEY" });
@@ -342,11 +353,11 @@ function Summary({ analysis, reference, mode, comparisonEnabled, scope, onScope,
   return <>
     <section data-dashboard-context-strip className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-2xl border border-indigo-800/70 bg-indigo-950/30 px-4 py-2 text-sm"><b>{analysis.samples} {analysis.samples === 1 ? "partido" : "partidos"}</b><span className="text-slate-500">·</span><b>{format(analysis.rates.observedMinutes, " min")}</b><span className="text-slate-500">·</span><b className="text-cyan-200">GF {format(goalsFor)}</b><span>—</span><b className="text-rose-200">{format(goalsAgainst)} GC</b><span className="text-slate-500">·</span><b>{goalDifference !== null && goalDifference > 0 ? "+" : ""}{format(goalDifference)}</b>{pending > 0 && <span className="text-amber-300">? {pending}</span>}</section>
     <section data-dashboard-duel className="rounded-3xl border border-slate-700 bg-slate-900 p-3 sm:p-4"><div className="grid grid-cols-[1fr_6.5rem_1fr] items-center text-[10px] font-black tracking-[.12em]"><span className="text-right text-cyan-300">CDA · REM</span><span className="text-center text-slate-500">DIF.</span><span className="text-rose-300">AME · RIVAL</span></div>
-      <DuelRow label="REM · AME" metricKind="VOLUME" own={normalized(own.total)} rival={normalized(rival.total)} ownReference={normalizedRef(ownRef.total)} rivalReference={normalizedRef(rivalRef.total)} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="threatsFor" rivalMetric="threatsAgainst" comparisonEnabled={comparisonEnabled}/>
-      <DuelRow label="FUERA" metricKind="OUTSIDE" own={normalized(own.outside)} rival={normalized(rival.outside)} ownPct={own.outsidePercentage} rivalPct={rival.outsidePercentage} ownReference={normalizedRef(ownRef.outside)} rivalReference={normalizedRef(rivalRef.outside)} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="FOR.outside" rivalMetric="AGAINST.outside" comparisonEnabled={comparisonEnabled}/>
-      <DuelRow label="A PUERTA" metricKind="ON_TARGET" own={normalized(own.onTarget)} rival={normalized(rival.onTarget)} ownPct={own.onTargetPercentage} rivalPct={rival.onTargetPercentage} ownReference={normalizedRef(ownRef.onTarget)} rivalReference={normalizedRef(rivalRef.onTarget)} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="FOR.onTarget" rivalMetric="AGAINST.onTarget" comparisonEnabled={comparisonEnabled}/>
-      <DuelRow label="PARADAS" metricKind="SAVES" own={normalized(rival.saves)} rival={normalized(own.saves)} ownPct={rival.goalkeeperSavePercentage} rivalPct={own.goalkeeperSavePercentage} ownReference={normalizedRef(rivalRef.saves)} rivalReference={normalizedRef(ownRef.saves)} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="AGAINST.saves" rivalMetric="FOR.saves" comparisonEnabled={comparisonEnabled}/>
-      <DuelRow label="GOLES" metricKind="GOALS" own={goalsFor} rival={goalsAgainst} ownPct={own.conversionPercentage} rivalPct={rival.conversionPercentage} ownReference={normalizedRef(ownRef.goals)} rivalReference={normalizedRef(rivalRef.goals)} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="goalsFor" rivalMetric="goalsAgainst" comparisonEnabled={comparisonEnabled}/>
+      <DuelRow label="REM · AME" metricKind="VOLUME" own={normalized(own.total)} rival={normalized(rival.total)} ownReference={normalizedRef(ownRef.total)} rivalReference={normalizedRef(rivalRef.total)} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="threatsFor" rivalMetric="threatsAgainst" comparisonEnabled={comparisonEnabled} maximum={summaryMaximum}/>
+      <DuelRow label="FUERA" metricKind="OUTSIDE" own={normalized(own.outside)} rival={normalized(rival.outside)} ownPct={own.outsidePercentage} rivalPct={rival.outsidePercentage} ownReference={normalizedRef(ownRef.outside)} rivalReference={normalizedRef(rivalRef.outside)} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="FOR.outside" rivalMetric="AGAINST.outside" comparisonEnabled={comparisonEnabled} maximum={summaryMaximum}/>
+      <DuelRow label="A PUERTA" metricKind="ON_TARGET" own={normalized(own.onTarget)} rival={normalized(rival.onTarget)} ownPct={own.onTargetPercentage} rivalPct={rival.onTargetPercentage} ownReference={normalizedRef(ownRef.onTarget)} rivalReference={normalizedRef(rivalRef.onTarget)} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="FOR.onTarget" rivalMetric="AGAINST.onTarget" comparisonEnabled={comparisonEnabled} maximum={summaryMaximum}/>
+      <DuelRow label="PARADAS" metricKind="SAVES" own={normalized(rival.saves)} rival={normalized(own.saves)} ownPct={rival.goalkeeperSavePercentage} rivalPct={own.goalkeeperSavePercentage} ownReference={normalizedRef(rivalRef.saves)} rivalReference={normalizedRef(ownRef.saves)} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="AGAINST.saves" rivalMetric="FOR.saves" comparisonEnabled={comparisonEnabled} maximum={summaryMaximum}/>
+      <DuelRow label="GOLES" metricKind="GOALS" own={goalsFor} rival={goalsAgainst} ownPct={own.conversionPercentage} rivalPct={rival.conversionPercentage} ownReference={normalizedRef(ownRef.goals)} rivalReference={normalizedRef(rivalRef.goals)} records={allRecords} habitualScope={referenceScope} mode={mode} ownMetric="goalsFor" rivalMetric="goalsAgainst" comparisonEnabled={comparisonEnabled} maximum={summaryMaximum}/>
     </section>
     <MatchMomentumPanel records={momentumRecords} matches={momentumMatches} selectedMatchIds={scope.matchIds}/>
     <FamilySection family="setPiece" title="RENDIMIENTO ABP" eyebrow="OPORTUNIDAD → REMATE → PUERTA → GOL"><SetPieceFunnel records={analysis.records} referenceRecords={reference.records}/></FamilySection>
@@ -412,8 +423,8 @@ function PhaseImpact({ analysis, reference, scope, onScope, referenceScope, allR
       impactStats: historical.map((values) => describeDistribution(values.map(({ value }) => phaseImpactDelta(value.volumePercentage, value.goalPercentage)))),
     };
   });
-  const actionMaximum = sharedMetricMaximum(...rows.flatMap((row) => [...row.actionValues, ...row.comparedActions, ...row.actionStats.flatMap((stats) => [stats.p25, stats.p75, stats.max])]));
-  const goalMaximum = sharedMetricMaximum(...rows.flatMap((row) => [...row.goalValues, ...row.comparedGoals, ...row.goalStats.flatMap((stats) => [stats.p25, stats.p75, stats.max])]));
+  const actionMaximum = paddedMetricMaximum(rows.flatMap((row) => [...row.actionValues, ...row.actionStats.flatMap((stats) => [stats.p25, stats.p75])]));
+  const goalMaximum = paddedMetricMaximum(rows.flatMap((row) => [...row.goalValues, ...row.goalStats.flatMap((stats) => [stats.p25, stats.p75])]));
   const signed = (value: number | null) => value === null ? "N/D" : `${value > 0 ? "+" : ""}${format(value)}`;
   return <FamilySection family="context" title="FASES" eyebrow="ACCIONES EN ESCALA COMÚN · GOLES EN ESCALA COMÚN"><div className="space-y-1.5">{rows.map((row) => {
     const { definition, current, actionValues, goalValues, comparedActions, comparedGoals, actionStats, goalStats, volumeStats, goalShareStats, impactStats } = row;

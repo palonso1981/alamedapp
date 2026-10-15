@@ -45,3 +45,11 @@ export function habitualPosition(value: number | null, stats: DistributionStats)
 export function sharedMetricMaximum(...values: Array<number | null | undefined>): number {
   return Math.max(1, ...values.filter((value): value is number => typeof value === "number" && Number.isFinite(value)));
 }
+
+export function paddedMetricMaximum(values: readonly (number | null | undefined)[], padding = .05): number {
+  return sharedMetricMaximum(...values) * (1 + Math.max(0, padding));
+}
+
+export function metricScalePercentage(candidate: number | null, maximum: number): number {
+  return candidate === null ? 0 : Math.max(0, Math.min(100, candidate / maximum * 100));
+}

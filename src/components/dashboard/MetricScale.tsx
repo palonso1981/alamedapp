@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { DistributionStats, habitualPosition } from "../../lib/distributionStatistics";
+import { DistributionStats, habitualPosition, metricScalePercentage } from "../../lib/distributionStatistics";
 import { evaluateDashboardDeviation } from "../../lib/dashboardSemantics";
 
 const format = (value: number | null, suffix = "") => value === null ? "N/D" : `${Number.isInteger(value) ? value : value.toFixed(1).replace(".", ",")}${suffix}`;
@@ -20,7 +20,7 @@ export function MetricScale({ value, reference, stats, maximum, side, tone = sid
   const host = useRef<HTMLDivElement>(null);
   const position = habitualPosition(value, stats);
   const evaluation = favorableWhenHigher === undefined ? null : evaluateDashboardDeviation(position, favorableWhenHigher);
-  const pct = (candidate: number | null) => candidate === null ? 0 : Math.max(0, Math.min(100, candidate / maximum * 100));
+  const pct = (candidate: number | null) => metricScalePercentage(candidate, maximum);
   useEffect(() => {
     if (!open) return;
     const close = (event: PointerEvent) => { if (!host.current?.contains(event.target as Node)) setOpen(false); };
