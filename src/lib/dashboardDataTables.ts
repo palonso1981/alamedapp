@@ -21,6 +21,13 @@ export interface HabitualMetric {
   range: [number, number] | null;
 }
 
+export function formatRoundedHabitualRange(metric: HabitualMetric, suffix = ""): string | null {
+  if (!metric.range) return null;
+  const lower = Math.round(metric.range[0]);
+  const upper = Math.round(metric.range[1]);
+  return lower === upper ? `${lower}${suffix}` : `${lower}–${upper}${suffix}`;
+}
+
 export interface DashboardPhaseDataRow {
   key: DashboardPhaseKey | "TOTAL";
   label: string;

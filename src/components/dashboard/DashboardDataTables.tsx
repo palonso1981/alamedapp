@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { DashboardMatchRecord } from "../../lib/dashboardAnalytics";
-import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows, DashboardPhaseDataRow, DashboardSetPieceSortKey, DashboardSituationSortKey, DashboardTableSortDirection, HabitualMetric, normalizeDashboardReferenceQuantity, sortDashboardSetPieceRows, sortDashboardSituationRows } from "../../lib/dashboardDataTables";
+import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows, DashboardPhaseDataRow, DashboardSetPieceSortKey, DashboardSituationSortKey, DashboardTableSortDirection, formatRoundedHabitualRange, HabitualMetric, normalizeDashboardReferenceQuantity, sortDashboardSetPieceRows, sortDashboardSituationRows } from "../../lib/dashboardDataTables";
 import { dashboardTimePercentage, evaluateDashboardDeviation, formatDashboardDuration } from "../../lib/dashboardSemantics";
 import { describeDistribution, MIN_MATCHES_FOR_HABITUAL_RANGE } from "../../lib/distributionStatistics";
 import { buildDashboardV2, DashboardScopeV2, DashboardValueMode, filterDashboardMatchSelection, normalizeDashboardCount, teamMetricValue } from "../../lib/dashboardV2";
@@ -19,16 +19,17 @@ function HabitualValue({ metric, suffix = "" }: { metric: HabitualMetric; suffix
 }
 
 function HabitualReference({ metric, suffix = "" }: { metric: HabitualMetric; suffix?: string }) {
-  if (!metric.range) return <span title={`Se necesitan ${MIN_MATCHES_FOR_HABITUAL_RANGE} partidos comparables`} className="mt-1 block text-[8px] font-normal text-slate-600">—</span>;
-  return <span title={`Rango habitual (P25–P75): ${range(metric, suffix)}`} aria-label={`Rango habitual, ${range(metric, suffix)}`} className="mt-1 flex items-center justify-end gap-1 text-[8px] font-normal text-amber-200/80"><span data-habitual-symbol aria-hidden="true" className="relative inline-block h-2 w-5 shrink-0"><span className="absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-amber-300/70"/><span className="absolute inset-y-0 left-0 w-px bg-amber-300/70"/><span className="absolute inset-y-0 right-0 w-px bg-amber-300/70"/></span><span>{range(metric, suffix)}</span></span>;
+  const rounded = formatRoundedHabitualRange(metric, suffix);
+  if (!rounded) return <span title={`Se necesitan ${MIN_MATCHES_FOR_HABITUAL_RANGE} partidos comparables`} className="text-[8px] font-normal italic text-slate-600">(—)</span>;
+  return <span data-habitual-reference title={`Rango habitual (P25–P75): ${range(metric, suffix)}`} aria-label={`Rango habitual, ${range(metric, suffix)}`} className="text-[8px] font-normal italic text-slate-500">({rounded})</span>;
 }
 
 function DeviationValue({ value, displayValue = value, habitual, suffix = "", positiveHigh }: { value: number | null; displayValue?: number | null; habitual: HabitualMetric; suffix?: string; positiveHigh: boolean }) {
   const position = value === null || !habitual.range ? "unavailable" : value > habitual.range[1] ? "above" : value < habitual.range[0] ? "below" : "within";
   const evaluation = evaluateDashboardDeviation(position, positiveHigh);
-  const style = evaluation === "FAVORABLE" ? "border-emerald-500/30 bg-emerald-950/35 text-emerald-200" : evaluation === "UNFAVORABLE" ? "border-rose-500/30 bg-rose-950/35 text-rose-200" : "border-transparent text-slate-200";
+  const style = evaluation === "FAVORABLE" ? "text-emerald-200" : evaluation === "UNFAVORABLE" ? "text-rose-200" : "text-slate-200";
   const description = position === "above" ? "Por encima de lo habitual" : position === "below" ? "Por debajo de lo habitual" : position === "within" ? "Dentro de lo habitual" : "Sin muestra habitual suficiente";
-  return <span title={description} data-deviation-position={position} data-deviation-evaluation={evaluation} className={`inline-flex min-w-12 items-center justify-end rounded-md border px-1.5 py-0.5 font-black ${style}`}>{position === "above" ? "↑ " : position === "below" ? "↓ " : ""}{format(displayValue, suffix)}</span>;
+  return <span title={description} data-deviation-position={position} data-deviation-evaluation={evaluation} className={`font-black ${style}`}>{position === "above" ? "↑ " : position === "below" ? "↓ " : ""}{format(displayValue, suffix)}</span>;
 }
 
 function phaseFilter(scope: DashboardScopeV2, row: DashboardPhaseDataRow): DashboardScopeV2 {
@@ -45,11 +46,46 @@ function PhaseTable({ title, rows, scope, onScope, side }: { title: string; rows
     body.sort((a, b) => { const left = sort === "label" ? a.label : a[sort] ?? -Infinity; const right = sort === "label" ? b.label : b[sort] ?? -Infinity; return (typeof left === "string" ? left.localeCompare(String(right), "es") : Number(left) - Number(right)) * (descending ? -1 : 1); });
     return total ? [...body, total] : body;
   }, [descending, rows, sort]);
-  const heading = (key: SortKey, label: string, title: string) => <button type="button" title={title} aria-label={`${title}. Ordenar`} onClick={() => { if (sort === key) setDescending((value) => !value); else { setSort(key); setDescending(true); } }} className="min-h-9 w-full text-right text-[9px] font-black tracking-wide text-slate-300">{label}{sort === key ? descending ? " ↓" : " ↑" : ""}</button>;
-  const numeric = "px-2 py-2.5 text-right tabular-nums whitespace-nowrap";
-  const goals = `${numeric} bg-amber-950/10`;
-  const metric = (value: number | null, habitual: HabitualMetric, suffix = "", positiveHigh = side === "FOR", showHabitual = true) => <div className="inline-flex min-w-16 flex-col items-end"><DeviationValue value={value} habitual={habitual} suffix={suffix} positiveHigh={positiveHigh}/>{showHabitual && <HabitualReference metric={habitual} suffix={suffix}/>}</div>;
-  return <section className="rounded-3xl border border-slate-700 bg-slate-900 p-3"><h2 className={`mb-3 text-lg font-black ${side === "FOR" ? "text-cyan-200" : "text-rose-200"}`}>{title}</h2><div className="overflow-x-auto rounded-2xl border border-slate-800"><table data-dashboard-data-table={side} className="min-w-[760px] w-full border-collapse text-[10px]"><thead className="sticky top-0 z-20 bg-slate-900"><tr className="border-b border-slate-800 text-[8px] tracking-[.14em] text-slate-500"><th rowSpan={2} className="sticky left-0 z-30 min-w-32 bg-slate-900 px-2 text-left"><button type="button" onClick={() => { setSort("label"); setDescending((value) => sort === "label" ? !value : false); }} className="min-h-14 text-left text-[9px] font-black text-slate-300">FASE</button></th><th colSpan={2} className="px-2 py-1 text-center">ACCIONES</th><th colSpan={4} className="border-l border-amber-800/40 bg-amber-950/10 px-2 py-1 text-center text-amber-200">GOLES</th></tr><tr className="border-b border-slate-700"><th className={numeric}>{heading("count", side === "FOR" ? "REM" : "AME", side === "FOR" ? "Remates realizados en esta fase" : "Amenazas recibidas en esta fase")}</th><th className={numeric}>{heading("volumePercentage", "% VOL", side === "FOR" ? "Peso de esta fase sobre el total de remates" : "Peso de esta fase sobre el total de amenazas")}</th><th className={`${goals} border-l border-amber-800/40`}>{heading("goals", side === "FOR" ? "GOL" : "GC", side === "FOR" ? "Goles marcados en esta fase" : "Goles encajados en esta fase")}</th><th className={goals}>{heading("efficiencyPercentage", "EFICACIA", side === "FOR" ? "Porcentaje de remates de esta fase que terminan en gol" : "Porcentaje de amenazas de esta fase que terminan en gol")}</th><th className={goals}>{heading("goalPercentage", "PESO", side === "FOR" ? "Porcentaje de todos los goles que se producen en esta fase" : "Porcentaje de todos los goles encajados que se producen en esta fase")}</th><th className={goals}>{heading("impact", "IMP", "Diferencia entre el peso de goles y el peso del volumen de la fase")}</th></tr></thead><tbody>{sorted.map((row) => { const active = row.key !== "TOTAL" && scope.phases.length === 1 && scope.phases[0] === row.key; return <tr key={row.key} onClick={() => row.key !== "TOTAL" && onScope(phaseFilter(scope, row))} className={`border-b border-slate-800 last:border-0 ${row.key === "TOTAL" ? "bg-slate-950 font-black" : "cursor-pointer hover:bg-slate-800/80"} ${active ? "ring-1 ring-inset ring-cyan-300" : ""}`}><th className="sticky left-0 z-10 bg-inherit px-2 py-3 text-left">{row.label}</th><td className={numeric}>{metric(row.count, row.countHabitual)}</td><td className={numeric}>{metric(row.volumePercentage, row.volumeHabitual, "%", side === "FOR", row.key !== "TOTAL")}</td><td className={`${goals} border-l border-amber-800/40`}>{metric(row.goals, row.goalCountHabitual)}</td><td className={goals}>{metric(row.efficiencyPercentage, row.efficiencyHabitual, "%", side === "FOR")}</td><td className={goals}>{metric(row.goalPercentage, row.goalHabitual, "%", side === "FOR", row.key !== "TOTAL")}</td><td className={`${goals} font-black text-amber-100`} title={row.impactHabitual.range ? `Impacto habitual ${range(row.impactHabitual, " pp")}` : "Impacto habitual sin muestra suficiente"}>{row.impact !== null && row.impact > 0 ? "+" : ""}{format(row.impact, " pp")}</td></tr>; })}</tbody></table></div><p className="mt-2 text-[9px] text-slate-500"><span aria-hidden="true" className="text-amber-200">|━|</span> Rango habitual P25–P75 del universo de referencia. Las cantidades respetan TOTAL/PJ/x40; porcentajes y ratios conservan su denominador canónico.</p></section>;
+  const heading = (key: SortKey, label: string, title: string) => <button type="button" title={title} aria-label={`${title}. Ordenar`} onClick={() => { if (sort === key) setDescending((value) => !value); else { setSort(key); setDescending(true); } }} className="min-h-8 w-full text-right text-[9px] font-black tracking-wide text-slate-300">{label}{sort === key ? descending ? " ↓" : " ↑" : ""}</button>;
+  const numeric = "px-1.5 py-2 text-right tabular-nums whitespace-nowrap";
+  const goals = `${numeric} bg-slate-800/20`;
+  const metric = (value: number | null, habitual: HabitualMetric, suffix = "", positiveHigh = side === "FOR", showHabitual = true) => <span className="inline-flex items-baseline justify-end gap-1"><DeviationValue value={value} habitual={habitual} suffix={suffix} positiveHigh={positiveHigh}/>{showHabitual && <HabitualReference metric={habitual} suffix={suffix}/>}</span>;
+  return <section className="rounded-3xl border border-slate-700 bg-slate-900 p-3">
+    <h2 className={`mb-2 text-lg font-black ${side === "FOR" ? "text-cyan-200" : "text-rose-200"}`}>{title}</h2>
+    <div className="overflow-x-auto rounded-2xl border border-slate-800">
+      <table data-dashboard-data-table={side} className="min-w-[720px] w-full table-fixed border-collapse text-[10px]">
+        <colgroup><col className="w-[24%]"/><col className="w-[12%]"/><col className="w-[12%]"/><col className="w-[10%]"/><col className="w-[16%]"/><col className="w-[12%]"/><col className="w-[14%]"/></colgroup>
+        <thead className="sticky top-0 z-20 bg-slate-900">
+          <tr className="border-b border-slate-800 text-[8px] tracking-[.14em] text-slate-500">
+            <th rowSpan={2} className="sticky left-0 z-30 bg-slate-900 pl-3 pr-2 text-left"><button type="button" onClick={() => { setSort("label"); setDescending((value) => sort === "label" ? !value : false); }} className="min-h-12 text-left text-[9px] font-black text-slate-300">FASE</button></th>
+            <th colSpan={2} className="px-1.5 py-0.5 text-center">ACCIONES</th>
+            <th colSpan={4} className="border-l border-slate-700/60 bg-slate-800/20 px-1.5 py-0.5 text-center text-slate-400">GOLES</th>
+          </tr>
+          <tr className="border-b border-slate-700">
+            <th className={numeric}>{heading("count", side === "FOR" ? "REM" : "AME", side === "FOR" ? "Remates realizados en esta fase" : "Amenazas recibidas en esta fase")}</th>
+            <th className={numeric}>{heading("volumePercentage", "% VOL", side === "FOR" ? "Peso de esta fase sobre el total de remates" : "Peso de esta fase sobre el total de amenazas")}</th>
+            <th className={`${goals} border-l border-slate-700/60`}>{heading("goals", side === "FOR" ? "GOL" : "GC", side === "FOR" ? "Goles marcados en esta fase" : "Goles encajados en esta fase")}</th>
+            <th className={goals}>{heading("efficiencyPercentage", "EFICACIA", side === "FOR" ? "Porcentaje de remates de esta fase que terminan en gol" : "Porcentaje de amenazas de esta fase que terminan en gol")}</th>
+            <th className={goals}>{heading("goalPercentage", "PESO", side === "FOR" ? "Porcentaje de todos los goles que se producen en esta fase" : "Porcentaje de todos los goles encajados que se producen en esta fase")}</th>
+            <th className={`${goals} pr-3`}>{heading("impact", "IMP", "Diferencia entre el peso de goles y el peso del volumen de la fase")}</th>
+          </tr>
+        </thead>
+        <tbody>{sorted.map((row) => {
+          const active = row.key !== "TOTAL" && scope.phases.length === 1 && scope.phases[0] === row.key;
+          return <tr key={row.key} onClick={() => row.key !== "TOTAL" && onScope(phaseFilter(scope, row))} className={`border-b border-slate-800 last:border-0 ${row.key === "TOTAL" ? "bg-slate-950 font-black" : "cursor-pointer hover:bg-slate-800/80"} ${active ? "ring-1 ring-inset ring-cyan-300" : ""}`}>
+            <th className="sticky left-0 z-10 bg-inherit py-2.5 pl-3 pr-2 text-left">{row.label}</th>
+            <td className={numeric}>{metric(row.count, row.countHabitual)}</td>
+            <td className={numeric}>{metric(row.volumePercentage, row.volumeHabitual, "%", side === "FOR", row.key !== "TOTAL")}</td>
+            <td className={`${goals} border-l border-slate-700/60`}>{metric(row.goals, row.goalCountHabitual)}</td>
+            <td className={goals}>{metric(row.efficiencyPercentage, row.efficiencyHabitual, "%", side === "FOR")}</td>
+            <td className={goals}>{metric(row.goalPercentage, row.goalHabitual, "%", side === "FOR", row.key !== "TOTAL")}</td>
+            <td className={`${goals} pr-3 font-black text-slate-200`} title={row.impactHabitual.range ? `Impacto habitual ${range(row.impactHabitual, " pp")}` : "Impacto habitual sin muestra suficiente"}>{row.impact !== null && row.impact > 0 ? "+" : ""}{format(row.impact, " pp")}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>
+    <p className="mt-1.5 text-[9px] text-slate-500">Entre paréntesis: rango habitual P25–P75 del universo de referencia. Las cantidades respetan TOTAL/PJ/x40; porcentajes y ratios conservan su denominador canónico.</p>
+  </section>;
 }
 
 function SetPieceTable({ title, rows, scope, onScope }: { title: string; rows: ReturnType<typeof buildDashboardSetPieceDataRows>; scope: DashboardScopeV2; onScope: (scope: DashboardScopeV2) => void }) {

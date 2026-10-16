@@ -8,7 +8,7 @@ import { buildDashboardV2, dashboardActiveFilterCount, DASHBOARD_AREAS, emptyDas
 import { aggregateGoalkeepers } from "./dashboardAnalysis";
 import { dashboardScopeToVideoFilters, dashboardVideoHref, suggestedDashboardCollectionName } from "./dashboardVideoContext";
 import { orderPhaseRows, phaseImpactDelta } from "./dashboardPhaseImpact";
-import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows, normalizeDashboardReferenceQuantity, sortDashboardSetPieceRows, sortDashboardSituationRows } from "./dashboardDataTables";
+import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows, formatRoundedHabitualRange, normalizeDashboardReferenceQuantity, sortDashboardSetPieceRows, sortDashboardSituationRows } from "./dashboardDataTables";
 import { buildGoalkeeperComparisonPanels, goalkeeperSaveOutcomePercentage, GOALKEEPER_SAVE_OUTCOMES, sortGoalkeeperRows } from "./dashboardGoalkeeperView";
 import { dashboardTimePercentage, evaluateDashboardDeviation, formatDashboardDuration, summaryMetricFavorableWhenHigher } from "./dashboardSemantics";
 
@@ -329,15 +329,16 @@ test("FASES mantiene orden fijo, dos tracks, filtro canónico y detalle estadís
   assert.ok(!source.includes("PhaseSignal"));
 });
 
-test("FASES comparte escala entre fases, separa acciones y goles y compacta vídeos", () => {
+test("FASES comparte una única escala cuantitativa entre fases, acciones y goles", () => {
   const source = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
   const phaseSource = source.slice(source.indexOf("function PhaseImpact"), source.indexOf("function GoalkeeperTable"));
-  assert.ok(source.includes("const actionMaximum = paddedMetricMaximum(rows.flatMap"));
-  assert.ok(source.includes("const goalMaximum = paddedMetricMaximum(rows.flatMap"));
+  assert.ok(source.includes("const commonMaximum = paddedMetricMaximum(rows.flatMap"));
+  assert.ok(!phaseSource.includes("actionMaximum"));
+  assert.ok(!phaseSource.includes("goalMaximum"));
   assert.ok(!phaseSource.includes("...row.comparedActions"));
   assert.ok(!phaseSource.includes("stats.max"));
-  assert.ok(source.includes("data-action-scale={actionMaximum}"));
-  assert.ok(source.includes("data-goal-scale={goalMaximum}"));
+  assert.ok(source.includes("data-common-scale={commonMaximum}"));
+  assert.equal(phaseSource.match(/maximum=\{commonMaximum\}/g)?.length, 2);
   assert.ok(source.includes('label="CDA" compact'));
   assert.ok(source.includes('label="RIV" compact'));
   assert.ok(phaseSource.includes('habitualPresentation="range"'));
@@ -371,6 +372,15 @@ test("escala visual común conserva proporciones y usa un margen pequeño", () =
   assert.ok(Math.abs(metricScalePercentage(24, paddedMetricMaximum([24, 15, 10, 8])) / metricScalePercentage(10, paddedMetricMaximum([24, 15, 10, 8])) - 2.4) < .0001);
 });
 
+test("escala absoluta de FASES trata igual la misma cantidad en cualquier métrica o lado", () => {
+  const commonMaximum = paddedMetricMaximum([1, 1, 8, 5, 24, 10, 5]);
+  assert.equal(metricScalePercentage(1, commonMaximum), metricScalePercentage(1, commonMaximum));
+  assert.ok(metricScalePercentage(8, commonMaximum) > metricScalePercentage(5, commonMaximum));
+  assert.ok(Math.abs(metricScalePercentage(24, commonMaximum) / metricScalePercentage(10, commonMaximum) - 2.4) < .0001);
+  assert.equal(metricScalePercentage(8, commonMaximum), metricScalePercentage(8, commonMaximum));
+  assert.equal(metricScalePercentage(5, commonMaximum), metricScalePercentage(5, commonMaximum));
+});
+
 test("RESUMEN y ABP usan etiquetas textuales sin iconos deportivos", () => {
   const summary = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
   const abp = readFileSync("src/components/dashboard/SetPieceFunnel.tsx", "utf8");
@@ -402,13 +412,25 @@ test("DATOS agrupa ACCIONES y GOLES, añade eficacia y conserva el scope", () =>
   assert.ok(data.includes("normalizeDashboardCount(rawCurrent, mode"));
   assert.ok(data.includes('data-dashboard-value-mode={mode}'));
   for (const label of ["ACCIONES", "GOLES", "% VOL", "EFICACIA", "PESO", "IMP"]) assert.ok(data.includes(`>${label}<`) || data.includes(`"${label}"`));
-  assert.ok(data.includes("data-habitual-symbol"));
+  assert.ok(data.includes("data-habitual-reference"));
+  assert.ok(!data.includes("data-habitual-symbol"));
+  assert.ok(!data.includes("|━|"));
+  assert.ok(data.includes("border-l border-slate-700/60"));
+  assert.ok(!data.includes("border-amber-800/40"));
   assert.ok(data.includes("row.efficiencyPercentage"));
   assert.ok(data.includes("row.goalCountHabitual"));
   assert.ok(!data.includes('header("HAB"'));
   assert.ok(page.includes("if (nextArea === area) return"));
   assert.ok(page.includes('scrollIntoView({ block: "start", behavior: "auto" })'));
   assert.ok(page.includes("onArea={changeArea}"));
+});
+
+test("DATOS redondea solo la presentación inline del rango habitual", () => {
+  const stats = describeDistribution([]);
+  assert.equal(formatRoundedHabitualRange({ stats, range: [2.5, 4.5] }), "3–5");
+  assert.equal(formatRoundedHabitualRange({ stats, range: [2.6, 3.4] }), "3");
+  assert.equal(formatRoundedHabitualRange({ stats, range: [23.7, 31.4] }, "%"), "24–31%");
+  assert.equal(formatRoundedHabitualRange({ stats, range: null }), null);
 });
 
 test("tabla principal de porteros cabe sin scroll y conserva cabeceras esenciales", () => {
