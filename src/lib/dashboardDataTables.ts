@@ -33,6 +33,9 @@ export interface DashboardPhaseDataRow {
   volumeEquivalent: [number, number] | null;
   goals: number | null;
   rawGoals: number;
+  goalCountHabitual: HabitualMetric;
+  efficiencyPercentage: number | null;
+  efficiencyHabitual: HabitualMetric;
   goalPercentage: number | null;
   goalHabitual: HabitualMetric;
   goalEquivalent: [number, number] | null;
@@ -40,7 +43,7 @@ export interface DashboardPhaseDataRow {
   impactHabitual: HabitualMetric;
 }
 
-interface PhaseRaw { count: number; goals: number; total: number; totalGoals: number; volume: number | null; goalShare: number | null; impact: number | null; }
+interface PhaseRaw { count: number; goals: number; total: number; totalGoals: number; volume: number | null; efficiency: number | null; goalShare: number | null; impact: number | null; }
 
 function isThreatEvent(event: MatchEvent): event is ThreatRecordedEvent {
   return event.type === "threat_recorded";
@@ -57,8 +60,9 @@ function phaseRaw(records: readonly DashboardMatchRecord[], definition: typeof D
   const goals = selected.filter(({ event }) => event.outcome === "GOL").length;
   const totalGoals = classified.filter(({ event }) => event.outcome === "GOL").length;
   const volume = classified.length ? selected.length / classified.length * 100 : null;
+  const efficiency = selected.length ? goals / selected.length * 100 : null;
   const goalShare = totalGoals ? goals / totalGoals * 100 : null;
-  return { count: selected.length, goals, total: classified.length, totalGoals, volume, goalShare, impact: volume === null || goalShare === null ? null : goalShare - volume };
+  return { count: selected.length, goals, total: classified.length, totalGoals, volume, efficiency, goalShare, impact: volume === null || goalShare === null ? null : goalShare - volume };
 }
 
 function habitual(values: readonly (number | null)[]): HabitualMetric {
@@ -70,30 +74,41 @@ function equivalent(total: number, metric: HabitualMetric): [number, number] | n
   return metric.range ? [total * metric.range[0] / 100, total * metric.range[1] / 100] : null;
 }
 
-export function buildDashboardPhaseDataRows(current: readonly DashboardMatchRecord[], referenceByMatch: readonly (readonly DashboardMatchRecord[])[], side: DashboardDataSide, mode: DashboardValueMode, observedMinutes: number): DashboardPhaseDataRow[] {
+export function buildDashboardPhaseDataRows(current: readonly DashboardMatchRecord[], referenceByMatch: readonly (readonly DashboardMatchRecord[])[], side: DashboardDataSide, mode: DashboardValueMode, observedMinutes: number, referenceObservedMinutes: readonly number[] = []): DashboardPhaseDataRow[] {
   const samples = current.length;
+  const referenceQuantity = (value: number, index: number) => normalizeDashboardReferenceQuantity(value, mode, samples, referenceObservedMinutes[index] ?? 40);
   const rows = DASHBOARD_DATA_PHASES.map((definition) => {
     const value = phaseRaw(current, definition, side);
     const reference = referenceByMatch.map((records) => phaseRaw(records, definition, side));
-    const countHabitual = habitual(reference.map((item) => item.count));
+    const countHabitual = habitual(reference.map((item, index) => referenceQuantity(item.count, index)));
     const volumeHabitual = habitual(reference.map((item) => item.volume));
+    const goalCountHabitual = habitual(reference.map((item, index) => referenceQuantity(item.goals, index)));
+    const efficiencyHabitual = habitual(reference.map((item) => item.efficiency));
     const goalHabitual = habitual(reference.map((item) => item.goalShare));
     const impactHabitual = habitual(reference.map((item) => item.impact));
     return {
       key: definition.key, label: definition.label,
       count: normalizeDashboardCount(value.count, mode, samples, observedMinutes), rawCount: value.count, countPerMatch: samples ? value.count / samples : null, countHabitual,
       volumePercentage: value.volume, volumeHabitual, volumeEquivalent: equivalent(value.total, volumeHabitual),
-      goals: normalizeDashboardCount(value.goals, mode, samples, observedMinutes), rawGoals: value.goals,
+      goals: normalizeDashboardCount(value.goals, mode, samples, observedMinutes), rawGoals: value.goals, goalCountHabitual,
+      efficiencyPercentage: value.efficiency, efficiencyHabitual,
       goalPercentage: value.goalShare, goalHabitual, goalEquivalent: equivalent(value.totalGoals, goalHabitual),
       impact: value.impact, impactHabitual,
     } satisfies DashboardPhaseDataRow;
   });
   const totals = rows.reduce((value, row) => ({ count: value.count + row.rawCount, goals: value.goals + row.rawGoals }), { count: 0, goals: 0 });
-  const totalCountHabitual = habitual(referenceByMatch.map((records) => DASHBOARD_DATA_PHASES.reduce((sum, definition) => sum + phaseRaw(records, definition, side).count, 0)));
+  const totalReference = referenceByMatch.map((records) => DASHBOARD_DATA_PHASES.reduce((sum, definition) => {
+    const value = phaseRaw(records, definition, side);
+    return { count: sum.count + value.count, goals: sum.goals + value.goals };
+  }, { count: 0, goals: 0 }));
+  const totalCountHabitual = habitual(totalReference.map((value, index) => referenceQuantity(value.count, index)));
+  const totalGoalCountHabitual = habitual(totalReference.map((value, index) => referenceQuantity(value.goals, index)));
+  const totalEfficiencyHabitual = habitual(totalReference.map((value) => ratio(value.goals, value.count)));
   return [...rows, {
     key: "TOTAL", label: "TOTAL", count: normalizeDashboardCount(totals.count, mode, samples, observedMinutes), rawCount: totals.count, countPerMatch: samples ? totals.count / samples : null, countHabitual: totalCountHabitual,
     volumePercentage: totals.count ? 100 : null, volumeHabitual: habitual([]), volumeEquivalent: null,
-    goals: normalizeDashboardCount(totals.goals, mode, samples, observedMinutes), rawGoals: totals.goals,
+    goals: normalizeDashboardCount(totals.goals, mode, samples, observedMinutes), rawGoals: totals.goals, goalCountHabitual: totalGoalCountHabitual,
+    efficiencyPercentage: ratio(totals.goals, totals.count), efficiencyHabitual: totalEfficiencyHabitual,
     goalPercentage: totals.goals ? 100 : null, goalHabitual: habitual([]), goalEquivalent: null, impact: null, impactHabitual: habitual([]),
   }];
 }

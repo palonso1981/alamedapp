@@ -74,6 +74,15 @@ test("DATOS deriva volumen, totales y ratios desde el evento de equipo", () => {
   assert.equal(total.rawGoals, body.reduce((sum, row) => sum + row.rawGoals, 0));
   assert.ok(Math.abs(body.reduce((sum, row) => sum + (row.volumePercentage ?? 0), 0) - 100) < 0.0001);
   assert.equal(total.volumePercentage, 100);
+  body.forEach((row) => {
+    assert.equal(row.efficiencyPercentage, row.rawCount ? row.rawGoals / row.rawCount * 100 : null);
+    assert.equal(row.goalPercentage, total.rawGoals ? row.rawGoals / total.rawGoals * 100 : null);
+    assert.equal(row.impact, row.volumePercentage === null || row.goalPercentage === null ? null : row.goalPercentage - row.volumePercentage);
+    for (const value of [row.efficiencyPercentage, row.goalPercentage, row.impact]) assert.ok(value === null || Number.isFinite(value));
+  });
+  assert.equal(total.efficiencyPercentage, total.rawCount ? total.rawGoals / total.rawCount * 100 : null);
+  assert.equal(total.goalPercentage, total.rawGoals ? 100 : null);
+  assert.equal(total.impact, null);
 });
 
 test("tablas ABP reutilizan solo córner y banda cercana", () => {
@@ -134,6 +143,11 @@ test("DATA mantiene TOTAL, por partido y por 40 sobre la misma cantidad", () => 
   const per40 = buildDashboardPhaseDataRows(records, refs, "FOR", "PER_40", analysis.rates.observedMinutes).find((row) => row.key === "TOTAL")!;
   assert.equal(perMatch.count, total.rawCount / records.length);
   assert.equal(per40.count, analysis.rates.observedMinutes > 0 ? total.rawCount * 40 / analysis.rates.observedMinutes : null);
+  assert.equal(perMatch.goals, total.rawGoals / records.length);
+  assert.equal(per40.goals, analysis.rates.observedMinutes > 0 ? total.rawGoals * 40 / analysis.rates.observedMinutes : null);
+  assert.equal(perMatch.efficiencyPercentage, total.efficiencyPercentage);
+  assert.equal(per40.efficiencyPercentage, total.efficiencyPercentage);
+  assert.equal(perMatch.goalPercentage, total.goalPercentage);
 });
 
 test("ABP normaliza cantidades en TOTAL, PJ y x40 sin alterar ratios", () => {
@@ -326,7 +340,16 @@ test("FASES comparte escala entre fases, separa acciones y goles y compacta víd
   assert.ok(source.includes("data-goal-scale={goalMaximum}"));
   assert.ok(source.includes('label="CDA" compact'));
   assert.ok(source.includes('label="RIV" compact'));
+  assert.ok(phaseSource.includes('habitualPresentation="range"'));
   assert.ok(!phaseSource.includes("Dif."));
+});
+
+test("FASES representa HAB como intervalo fino separado de la barra actual", () => {
+  const scale = readFileSync("src/components/dashboard/MetricScale.tsx", "utf8");
+  assert.ok(scale.includes('habitualPresentation?: "band" | "range"'));
+  assert.ok(scale.includes("data-habitual-range"));
+  assert.ok(scale.includes("data-current-bar"));
+  assert.ok(scale.includes('habitualPresentation === "range"'));
 });
 
 test("RESUMEN escala las cantidades visibles y conserva porcentajes como microdato", () => {
@@ -373,12 +396,16 @@ test("DATOS no dibuja marcador neutral y conserva semántica favorable", () => {
   assert.ok(!source.includes('position === "within" ? "· "'));
 });
 
-test("DATOS normaliza SITUACIONES, destaca porcentaje de gol y cambia pestaña sin perder scope", () => {
+test("DATOS agrupa ACCIONES y GOLES, añade eficacia y conserva el scope", () => {
   const data = readFileSync("src/components/dashboard/DashboardDataTables.tsx", "utf8");
   const page = readFileSync("src/components/dashboard/DashboardV2Page.tsx", "utf8");
   assert.ok(data.includes("normalizeDashboardCount(rawCurrent, mode"));
   assert.ok(data.includes('data-dashboard-value-mode={mode}'));
-  assert.ok(data.includes("border-l border-slate-700/60 bg-amber-950/10 font-black text-amber-100"));
+  for (const label of ["ACCIONES", "GOLES", "% VOL", "EFICACIA", "PESO", "IMP"]) assert.ok(data.includes(`>${label}<`) || data.includes(`"${label}"`));
+  assert.ok(data.includes("data-habitual-symbol"));
+  assert.ok(data.includes("row.efficiencyPercentage"));
+  assert.ok(data.includes("row.goalCountHabitual"));
+  assert.ok(!data.includes('header("HAB"'));
   assert.ok(page.includes("if (nextArea === area) return"));
   assert.ok(page.includes('scrollIntoView({ block: "start", behavior: "auto" })'));
   assert.ok(page.includes("onArea={changeArea}"));
