@@ -1,6 +1,8 @@
 import {
   CompetitionType,
   MatchEvent,
+  KeeperBodyPart,
+  SaveOutcome,
   ThreatOutcome,
   ThreatPhase,
   ThreatRecordedEvent,
@@ -28,7 +30,11 @@ import { GOAL_FRAME } from "./goalTarget";
 import { CompetitiveContext, competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, PlayingStateContext, ScoreStateContext } from "./dashboardCompetitiveContext";
 
 export type DashboardValueMode = "TOTALS" | "PER_MATCH" | "PER_40";
-export type DashboardArea = "SUMMARY" | "TEAM" | "PLAYERS" | "GOALKEEPERS" | "COMBINATIONS" | "MAPS";
+export type DashboardArea = "SUMMARY" | "DATA" | "PLAYERS" | "GOALKEEPERS" | "COMBINATIONS" | "MAPS";
+export const DASHBOARD_AREAS: readonly DashboardArea[] = ["SUMMARY", "DATA", "PLAYERS", "GOALKEEPERS", "COMBINATIONS", "MAPS"];
+export function normalizeDashboardArea(value: string | null): DashboardArea {
+  return value === "TEAM" ? "SUMMARY" : DASHBOARD_AREAS.includes(value as DashboardArea) ? value as DashboardArea : "SUMMARY";
+}
 export type DashboardPhaseFilter = ThreatPhase | "SET_PIECE";
 export type DashboardCompetition = CompetitionType | "UNSPECIFIED" | "ALL";
 export type DashboardSetPieceTraceability = "ALL_CLASSIFIED" | "LINKED_RESTART_ONLY";
@@ -61,6 +67,8 @@ export interface DashboardScopeV2 {
   originZones: PitchOriginZone[];
   targetZones: GoalZoneV1[];
   outcomes: ThreatOutcome[];
+  keeperBodyParts: KeeperBodyPart[];
+  saveOutcomes: SaveOutcome[];
   threatSides: ThreatSide[];
   setPieceTraceability: DashboardSetPieceTraceability;
   outcomeGroup: "ALL" | "ON_TARGET";
@@ -69,6 +77,17 @@ export interface DashboardScopeV2 {
   playingState: PlayingStateContext;
   scoreState: ScoreStateContext;
   includeArchived: boolean;
+}
+
+export function dashboardActiveFilterCount(scope: DashboardScopeV2): number {
+  return (scope.period === "ALL" ? 0 : 1)
+    + scope.matchIds.length + scope.rivals.length + scope.venues.length + scope.results.length
+    + scope.phases.length + scope.originZones.length + scope.targetZones.length + scope.outcomes.length
+    + scope.keeperBodyParts.length + scope.saveOutcomes.length + scope.playerIds.length + scope.goalkeeperIds.length
+    + scope.threatSides.length
+    + (scope.outcomeGroup === "ALL" ? 0 : 1) + (scope.originDistance === "ALL" ? 0 : 1)
+    + (scope.competitiveContext === "ALL" ? 0 : 1) + (scope.playingState === "ALL" ? 0 : 1)
+    + (scope.scoreState === "ALL" ? 0 : 1) + (scope.setPieceTraceability === "ALL_CLASSIFIED" ? 0 : 1);
 }
 
 export interface DashboardViewState {
@@ -140,6 +159,8 @@ export function emptyDashboardScope(
     originZones: [],
     targetZones: [],
     outcomes: [],
+    keeperBodyParts: [],
+    saveOutcomes: [],
     threatSides: [],
     setPieceTraceability: "ALL_CLASSIFIED",
     outcomeGroup: "ALL",
@@ -225,6 +246,9 @@ export function threatMatches(
     const target = deriveGoalZoneV1(event.defensive.goalTarget, GOAL_FRAME);
     if (target.startsWith("OUT_") || !scope.targetZones.includes(target as GoalZoneV1)) return false;
   }
+  const keeperBodyPart = event.defensive?.version === 2 ? event.defensive.keeperBodyPart : undefined;
+  if (scope.keeperBodyParts.length > 0 && (!keeperBodyPart || !scope.keeperBodyParts.includes(keeperBodyPart))) return false;
+  if (scope.saveOutcomes.length > 0 && (!event.defensive?.saveOutcome || !scope.saveOutcomes.includes(event.defensive.saveOutcome))) return false;
   if (scope.playerIds.length > 0 && (!event.playerId || !scope.playerIds.includes(event.playerId))) return false;
   return true;
 }
@@ -304,6 +328,33 @@ export function normalizedPhaseValue(
   mode: DashboardValueMode,
 ): number | null {
   return normalizeDashboardCount(analysis.analytics.phases[phase][side], mode, analysis.samples, analysis.rates.observedMinutes);
+}
+
+export interface PhaseImpactShare {
+  phaseEvents: number;
+  totalEvents: number;
+  phaseGoals: number;
+  totalGoals: number;
+  volumePercentage: number | null;
+  goalPercentage: number | null;
+}
+
+/** Peso de una fase sobre el volumen y sobre los goles del mismo lado. */
+export function phaseImpactShare(records: readonly DashboardMatchRecord[], phase: ThreatPhase, side: ThreatSide): PhaseImpactShare {
+  const entries = records.flatMap((record) => record.session.events
+    .filter((event): event is ThreatRecordedEvent => event.type === "threat_recorded" && isActiveMatchEvent(event) && event.side === side)
+    .map((event) => ({ event, phase: effectiveThreatPhase(record.session.events, event) })));
+  const inPhase = entries.filter((entry) => entry.phase === phase);
+  const totalGoals = entries.filter((entry) => entry.event.outcome === "GOL").length;
+  const phaseGoals = inPhase.filter((entry) => entry.event.outcome === "GOL").length;
+  return {
+    phaseEvents: inPhase.length,
+    totalEvents: entries.length,
+    phaseGoals,
+    totalGoals,
+    volumePercentage: entries.length > 0 ? inPhase.length / entries.length * 100 : null,
+    goalPercentage: totalGoals > 0 ? phaseGoals / totalGoals * 100 : null,
+  };
 }
 
 export function phaseScaleMaximum(
@@ -575,7 +626,9 @@ export function filterDashboardEventSelection(
     || scope.outcomeGroup !== "ALL"
     || scope.originDistance !== "ALL"
     || scope.originZones.length > 0
-    || scope.targetZones.length > 0;
+    || scope.targetZones.length > 0
+    || scope.keeperBodyParts.length > 0
+    || scope.saveOutcomes.length > 0;
   const hasPlayerFilter = scope.playerIds.length > 0;
 
   if (!hasThreatFilter && !hasPlayerFilter) return filtered;
@@ -707,6 +760,8 @@ export function buildDashboardV2(
     const record = originals.find((candidate) => candidate.catalog.matchId === trend.matchId);
     trend.pjForMinutes = record ? deriveCompetitiveProjection(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, "PJ_CDA", scope.scoreState).observed : 0;
     trend.pjAgainstMinutes = record ? deriveCompetitiveProjection(record.session, scope.period, scope.competitiveContext, scope.goalkeeperIds, "PJ_RIVAL", scope.scoreState).observed : 0;
+    trend.keyMinutes = record ? deriveCompetitiveProjection(record.session, scope.period, "KEY", scope.goalkeeperIds, scope.playingState, scope.scoreState).observed : 0;
+    trend.goldMinutes = record ? deriveCompetitiveProjection(record.session, scope.period, "GOLD", scope.goalkeeperIds, scope.playingState, scope.scoreState).observed : 0;
   }
   return analysis;
 }
@@ -1002,7 +1057,7 @@ export function stableSortByMetric<T>(
     .map(({ item }) => item);
 }
 
-const LIST_KEYS = ["matchIds", "venues", "results", "rivals", "phases", "playerIds", "goalkeeperIds", "originZones", "targetZones", "outcomes", "threatSides"] as const;
+const LIST_KEYS = ["matchIds", "venues", "results", "rivals", "phases", "playerIds", "goalkeeperIds", "originZones", "targetZones", "outcomes", "keeperBodyParts", "saveOutcomes", "threatSides"] as const;
 
 export function scopeToSearchParams(scope: DashboardScopeV2, prefix: "a" | "r"): URLSearchParams {
   const params = new URLSearchParams();
@@ -1056,6 +1111,8 @@ export function scopeFromSearchParams(
     originZones: read<PitchOriginZone>("originZones"),
     targetZones: read<GoalZoneV1>("targetZones"),
     outcomes: read<ThreatOutcome>("outcomes"),
+    keeperBodyParts: read<KeeperBodyPart>("keeperBodyParts"),
+    saveOutcomes: read<SaveOutcome>("saveOutcomes"),
     threatSides: read<ThreatSide>("threatSides"),
   };
 }

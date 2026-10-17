@@ -15,6 +15,8 @@ export interface CombinationRow {
   byMatch: CombinationMatch[]; quintets: Array<{ ids: string[]; minutes: number; percent: number }>;
   points: { total: number; possible: number; perMatch: number | null; positive: number; draws: number; negative: number };
 }
+export type CombinationSortKey = "minutes" | "matches" | "goals" | "danger" | "deltaGoals" | "deltaDanger" | "gf" | "shots" | "gc" | "threats" | "points" | "pointsPercentage";
+export type CombinationSortDirection = "ASC" | "DESC";
 interface ContextMatch { record: DashboardMatchRecord; minutes: number; intervals: Array<{ minutes: number; ids: string[] }>; events: Array<{ event: MatchEvent; ids: string[]; selected: boolean }>; totals: CombinationCounts }
 export interface CombinationsContext { matches: ContextMatch[]; players: Player[]; minutes: number; excludedMinutes: number; minimumMinutes: number; counts: CombinationCounts }
 const zero = (): CombinationCounts => ({ gf: 0, gc: 0, shots: 0, threats: 0 });
@@ -114,4 +116,38 @@ export function rankCombinations(context: CombinationsContext, size: Combination
 export function compareCombinations(context: CombinationsContext, a: readonly string[], b: readonly string[], withoutGoalkeepers = false) {
   validateCombination(b, combinationPlayers(context, a.length as CombinationSize, withoutGoalkeepers), a.length as CombinationSize);
   return { a: analyzeCombination(context, a, withoutGoalkeepers), b: analyzeCombination(context, b, withoutGoalkeepers) };
+}
+
+export function combinationPointsPercentage(row: Pick<CombinationRow, "points">): number | null {
+  return row.points.possible > 0 ? row.points.total / row.points.possible * 100 : null;
+}
+
+function combinationSortValue(row: CombinationRow, key: CombinationSortKey): number | null {
+  if (key === "minutes" || key === "matches") return row[key];
+  if (key === "points") return row.points.total;
+  if (key === "pointsPercentage") return combinationPointsPercentage(row);
+  if (key === "deltaGoals") return row.differential.goals;
+  if (key === "deltaDanger") return row.differential.danger;
+  return row.rates[key];
+}
+
+export function sortCombinationRows(rows: readonly CombinationRow[], key: CombinationSortKey, direction: CombinationSortDirection): CombinationRow[] {
+  const sign = direction === "ASC" ? 1 : -1;
+  return [...rows].sort((left, right) => {
+    const a = combinationSortValue(left, key); const b = combinationSortValue(right, key);
+    if (a === null && b === null) return left.key.localeCompare(right.key);
+    if (a === null) return 1;
+    if (b === null) return -1;
+    const primary = (a - b) * sign;
+    if (primary) return primary;
+    if (key === "points") {
+      const possible = (left.points.possible - right.points.possible) * sign;
+      if (possible) return possible;
+    }
+    if (key === "pointsPercentage") {
+      const total = (left.points.total - right.points.total) * sign;
+      if (total) return total;
+    }
+    return left.key.localeCompare(right.key);
+  });
 }

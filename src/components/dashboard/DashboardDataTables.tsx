@@ -1,0 +1,142 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { DashboardMatchRecord } from "../../lib/dashboardAnalytics";
+import { buildDashboardPhaseDataRows, buildDashboardSetPieceDataRows, DashboardPhaseDataRow, DashboardSetPieceSortKey, DashboardSituationSortKey, DashboardTableSortDirection, formatRoundedHabitualRange, HabitualMetric, normalizeDashboardReferenceQuantity, sortDashboardSetPieceRows, sortDashboardSituationRows } from "../../lib/dashboardDataTables";
+import { dashboardTimePercentage, evaluateDashboardDeviation, formatDashboardDuration } from "../../lib/dashboardSemantics";
+import { describeDistribution, MIN_MATCHES_FOR_HABITUAL_RANGE } from "../../lib/distributionStatistics";
+import { buildDashboardV2, DashboardScopeV2, DashboardValueMode, filterDashboardMatchSelection, normalizeDashboardCount, teamMetricValue } from "../../lib/dashboardV2";
+
+type Analysis = ReturnType<typeof buildDashboardV2>;
+type SortKey = "label" | "count" | "volumePercentage" | "goals" | "efficiencyPercentage" | "goalPercentage" | "impact";
+const format = (value: number | null, suffix = "") => value === null ? "—" : `${Number.isInteger(value) ? value : value.toFixed(1).replace(".", ",")}${suffix}`;
+const range = (metric: HabitualMetric, suffix = "") => metric.range ? `${format(metric.range[0])}–${format(metric.range[1])}${suffix}` : `N insuf. (${metric.stats.n}/${MIN_MATCHES_FOR_HABITUAL_RANGE})`;
+const equivalent = (value: [number, number] | null, suffix = "") => value ? `${format(value[0])}–${format(value[1])}${suffix}` : "—";
+
+function HabitualValue({ metric, suffix = "" }: { metric: HabitualMetric; suffix?: string }) {
+  if (metric.range) return <span className="text-amber-100">{range(metric, suffix)}</span>;
+  return <span title={`Se necesitan ${MIN_MATCHES_FOR_HABITUAL_RANGE} partidos comparables`} className="whitespace-nowrap text-[8px] font-normal text-slate-500">N insuf. · {metric.stats.n}/{MIN_MATCHES_FOR_HABITUAL_RANGE}</span>;
+}
+
+function HabitualReference({ metric, suffix = "" }: { metric: HabitualMetric; suffix?: string }) {
+  const rounded = formatRoundedHabitualRange(metric, suffix);
+  if (!rounded) return <span title={`Se necesitan ${MIN_MATCHES_FOR_HABITUAL_RANGE} partidos comparables`} className="text-[8px] font-normal italic text-slate-600">(—)</span>;
+  return <span data-habitual-reference title={`Rango habitual (P25–P75): ${range(metric, suffix)}`} aria-label={`Rango habitual, ${range(metric, suffix)}`} className="text-[8px] font-normal italic text-slate-500">({rounded})</span>;
+}
+
+function DeviationValue({ value, displayValue = value, habitual, suffix = "", positiveHigh }: { value: number | null; displayValue?: number | null; habitual: HabitualMetric; suffix?: string; positiveHigh: boolean }) {
+  const position = value === null || !habitual.range ? "unavailable" : value > habitual.range[1] ? "above" : value < habitual.range[0] ? "below" : "within";
+  const evaluation = evaluateDashboardDeviation(position, positiveHigh);
+  const style = evaluation === "FAVORABLE" ? "text-emerald-200" : evaluation === "UNFAVORABLE" ? "text-rose-200" : "text-slate-200";
+  const description = position === "above" ? "Por encima de lo habitual" : position === "below" ? "Por debajo de lo habitual" : position === "within" ? "Dentro de lo habitual" : "Sin muestra habitual suficiente";
+  return <span title={description} data-deviation-position={position} data-deviation-evaluation={evaluation} className={`font-black ${style}`}>{position === "above" ? "↑ " : position === "below" ? "↓ " : ""}{format(displayValue, suffix)}</span>;
+}
+
+function phaseFilter(scope: DashboardScopeV2, row: DashboardPhaseDataRow): DashboardScopeV2 {
+  if (row.key === "TOTAL") return scope;
+  const value = row.key;
+  return { ...scope, phases: scope.phases.length === 1 && scope.phases[0] === value ? [] : [value] };
+}
+
+function PhaseTable({ title, rows, scope, onScope, side }: { title: string; rows: DashboardPhaseDataRow[]; scope: DashboardScopeV2; onScope: (scope: DashboardScopeV2) => void; side: "FOR" | "AGAINST" }) {
+  const [sort, setSort] = useState<SortKey>("count");
+  const [descending, setDescending] = useState(true);
+  const sorted = useMemo(() => {
+    const body = rows.filter((row) => row.key !== "TOTAL"); const total = rows.find((row) => row.key === "TOTAL");
+    body.sort((a, b) => { const left = sort === "label" ? a.label : a[sort] ?? -Infinity; const right = sort === "label" ? b.label : b[sort] ?? -Infinity; return (typeof left === "string" ? left.localeCompare(String(right), "es") : Number(left) - Number(right)) * (descending ? -1 : 1); });
+    return total ? [...body, total] : body;
+  }, [descending, rows, sort]);
+  const heading = (key: SortKey, label: string, title: string) => <button type="button" title={title} aria-label={`${title}. Ordenar`} onClick={() => { if (sort === key) setDescending((value) => !value); else { setSort(key); setDescending(true); } }} className="min-h-8 w-full text-right text-[9px] font-black tracking-wide text-slate-300">{label}{sort === key ? descending ? " ↓" : " ↑" : ""}</button>;
+  const numeric = "px-1.5 py-2 text-right tabular-nums whitespace-nowrap";
+  const goals = `${numeric} bg-slate-800/20`;
+  const metric = (value: number | null, habitual: HabitualMetric, suffix = "", positiveHigh = side === "FOR", showHabitual = true) => <span className="inline-flex items-baseline justify-end gap-1"><DeviationValue value={value} habitual={habitual} suffix={suffix} positiveHigh={positiveHigh}/>{showHabitual && <HabitualReference metric={habitual} suffix={suffix}/>}</span>;
+  return <section className="rounded-3xl border border-slate-700 bg-slate-900 p-3">
+    <h2 className={`mb-2 text-lg font-black ${side === "FOR" ? "text-cyan-200" : "text-rose-200"}`}>{title}</h2>
+    <div className="overflow-x-auto rounded-2xl border border-slate-800">
+      <table data-dashboard-data-table={side} className="min-w-[720px] w-full table-fixed border-collapse text-[10px]">
+        <colgroup><col className="w-[24%]"/><col className="w-[12%]"/><col className="w-[12%]"/><col className="w-[10%]"/><col className="w-[16%]"/><col className="w-[12%]"/><col className="w-[14%]"/></colgroup>
+        <thead className="sticky top-0 z-20 bg-slate-900">
+          <tr className="border-b border-slate-800 text-[8px] tracking-[.14em] text-slate-500">
+            <th rowSpan={2} className="sticky left-0 z-30 bg-slate-900 pl-3 pr-2 text-left"><button type="button" onClick={() => { setSort("label"); setDescending((value) => sort === "label" ? !value : false); }} className="min-h-12 text-left text-[9px] font-black text-slate-300">FASE</button></th>
+            <th colSpan={2} className="px-1.5 py-0.5 text-center">ACCIONES</th>
+            <th colSpan={4} className="border-l border-slate-700/60 bg-slate-800/20 px-1.5 py-0.5 text-center text-slate-400">GOLES</th>
+          </tr>
+          <tr className="border-b border-slate-700">
+            <th className={numeric}>{heading("count", side === "FOR" ? "REM" : "AME", side === "FOR" ? "Remates realizados en esta fase" : "Amenazas recibidas en esta fase")}</th>
+            <th className={numeric}>{heading("volumePercentage", "% VOL", side === "FOR" ? "Peso de esta fase sobre el total de remates" : "Peso de esta fase sobre el total de amenazas")}</th>
+            <th className={`${goals} border-l border-slate-700/60`}>{heading("goals", side === "FOR" ? "GOL" : "GC", side === "FOR" ? "Goles marcados en esta fase" : "Goles encajados en esta fase")}</th>
+            <th className={goals}>{heading("efficiencyPercentage", "EFICACIA", side === "FOR" ? "Porcentaje de remates de esta fase que terminan en gol" : "Porcentaje de amenazas de esta fase que terminan en gol")}</th>
+            <th className={goals}>{heading("goalPercentage", "PESO", side === "FOR" ? "Porcentaje de todos los goles que se producen en esta fase" : "Porcentaje de todos los goles encajados que se producen en esta fase")}</th>
+            <th className={`${goals} pr-3`}>{heading("impact", "IMP", "Diferencia entre el peso de goles y el peso del volumen de la fase")}</th>
+          </tr>
+        </thead>
+        <tbody>{sorted.map((row) => {
+          const active = row.key !== "TOTAL" && scope.phases.length === 1 && scope.phases[0] === row.key;
+          return <tr key={row.key} onClick={() => row.key !== "TOTAL" && onScope(phaseFilter(scope, row))} className={`border-b border-slate-800 last:border-0 ${row.key === "TOTAL" ? "bg-slate-950 font-black" : "cursor-pointer hover:bg-slate-800/80"} ${active ? "ring-1 ring-inset ring-cyan-300" : ""}`}>
+            <th className="sticky left-0 z-10 bg-inherit py-2.5 pl-3 pr-2 text-left">{row.label}</th>
+            <td className={numeric}>{metric(row.count, row.countHabitual)}</td>
+            <td className={numeric}>{metric(row.volumePercentage, row.volumeHabitual, "%", side === "FOR", row.key !== "TOTAL")}</td>
+            <td className={`${goals} border-l border-slate-700/60`}>{metric(row.goals, row.goalCountHabitual)}</td>
+            <td className={goals}>{metric(row.efficiencyPercentage, row.efficiencyHabitual, "%", side === "FOR")}</td>
+            <td className={goals}>{metric(row.goalPercentage, row.goalHabitual, "%", side === "FOR", row.key !== "TOTAL")}</td>
+            <td className={`${goals} pr-3 font-black text-slate-200`} title={row.impactHabitual.range ? `Impacto habitual ${range(row.impactHabitual, " pp")}` : "Impacto habitual sin muestra suficiente"}>{row.impact !== null && row.impact > 0 ? "+" : ""}{format(row.impact, " pp")}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>
+    <p className="mt-1.5 text-[9px] text-slate-500">Entre paréntesis: rango habitual P25–P75 del universo de referencia. Las cantidades respetan TOTAL/PJ/x40; porcentajes y ratios conservan su denominador canónico.</p>
+  </section>;
+}
+
+function SetPieceTable({ title, rows, scope, onScope }: { title: string; rows: ReturnType<typeof buildDashboardSetPieceDataRows>; scope: DashboardScopeV2; onScope: (scope: DashboardScopeV2) => void }) {
+  const [sort, setSort] = useState<DashboardSetPieceSortKey>("opportunities");
+  const [direction, setDirection] = useState<DashboardTableSortDirection>("DESC");
+  const phases = (key: "ALL" | "CORNER" | "KICK_IN") => key === "ALL" ? ["SET_PIECE_CORNER", "SET_PIECE_KICK_IN"] as const : key === "CORNER" ? ["SET_PIECE_CORNER"] as const : ["SET_PIECE_KICK_IN"] as const;
+  const cell = "px-2 py-2.5 text-right tabular-nums whitespace-nowrap";
+  const sorted = useMemo(() => sortDashboardSetPieceRows(rows, sort, direction), [direction, rows, sort]);
+  const heading = (key: DashboardSetPieceSortKey, label: string, title: string, left = false) => <button type="button" title={title} onClick={() => { if (sort === key) setDirection((value) => value === "DESC" ? "ASC" : "DESC"); else { setSort(key); setDirection("DESC"); } }} className={`min-h-9 w-full text-[9px] font-black ${left || key === "label" ? "text-left" : "text-right"}`}>{label}{sort === key ? direction === "DESC" ? " ↓" : " ↑" : ""}</button>;
+  const goalPercentageClass = `${cell} border-l border-slate-700/60 bg-amber-950/10 font-black text-amber-100`;
+  return <section data-dashboard-data-table="ABP" className="rounded-3xl border border-slate-700 bg-slate-900 p-3"><h2 className="mb-3 text-lg font-black text-amber-200">{title}</h2><div className="overflow-x-auto"><table className="min-w-[1080px] w-full border-collapse text-[10px]"><thead className="sticky top-0 z-20 bg-slate-900"><tr className="border-b border-slate-700"><th className="px-2 text-left">{heading("label", "TIPO", "Tipo de ABP")}</th><th className={cell}>{heading("opportunities", "ABP", "Acciones a balón parado")}</th><th className={cell}>{heading("habitual", "HAB", "Habitual ABP por partido")}</th><th className={cell}>{heading("withShot", "REM", "ABP que generan remate")}</th><th className={cell}>{heading("shotPct", "% REM", "Conversión a remate")}</th><th className={cell}>{heading("shotHabitual", "HAB %", "Conversión habitual a remate")}</th><th className={cell}>{heading("shotEquivalent", "HAB #", "Remates equivalentes al porcentaje habitual")}</th><th className={cell}>{heading("withOnTarget", "PUERTA", "ABP con remate a puerta")}</th><th className={cell}>{heading("targetPct", "% PUE", "Conversión a puerta")}</th><th className={cell}>{heading("targetHabitual", "HAB %", "Conversión habitual a puerta")}</th><th className={cell}>{heading("targetEquivalent", "HAB #", "Remates a puerta equivalentes al porcentaje habitual")}</th><th className={cell}>{heading("withGoal", "GOL", "ABP con gol")}</th><th className={goalPercentageClass}>{heading("goalPct", "% GOL", "Conversión a gol")}</th><th className={cell}>{heading("goalHabitual", "HAB %G", "Conversión habitual a gol")}</th><th className={cell}>{heading("goalEquivalent", "HAB #G", "Goles equivalentes al porcentaje habitual")}</th></tr></thead><tbody>{sorted.map((row) => <tr key={row.key} onClick={() => { const values = [...phases(row.key)]; const active = values.length === scope.phases.length && values.every((value) => scope.phases.includes(value)); onScope({ ...scope, phases: active ? [] : values }); }} className={`cursor-pointer border-b border-slate-800 hover:bg-slate-800/80 ${row.key === "ALL" ? "bg-slate-950 font-black" : ""}`}><th className="px-2 py-3 text-left">{row.label}</th><td className={cell}>{format(row.current.opportunities)}</td><td className={cell}><HabitualValue metric={row.opportunityHabitual}/></td><td className={cell}>{format(row.current.withShot)}</td><td className={cell}>{format(row.shotPct, "%")}</td><td className={cell}><HabitualValue metric={row.shotHabitual} suffix="%"/></td><td className={cell}>{equivalent(row.shotEquivalent)}</td><td className={cell}>{format(row.current.withOnTarget)}</td><td className={cell}>{format(row.targetPct, "%")}</td><td className={cell}><HabitualValue metric={row.targetHabitual} suffix="%"/></td><td className={cell}>{equivalent(row.targetEquivalent)}</td><td className={cell}>{format(row.current.withGoal)}</td><td className={goalPercentageClass}>{format(row.goalPct, "%")}</td><td className={cell}><HabitualValue metric={row.goalHabitual} suffix="%"/></td><td className={cell}>{equivalent(row.goalEquivalent)}</td></tr>)}</tbody></table></div><p className="mt-2 text-[9px] text-slate-500">TODAS permanece fija arriba y equivale exclusivamente a Córner + Banda cercana. Faltas y penaltis quedan fuera.</p></section>;
+}
+
+interface SituationRow { key: string; label: string; current: number; rawCurrent: number; percentage: number | null; perMatch: number | null; habitual: HabitualMetric; relevant: Array<{ id: string; label: string; value: number }>; }
+
+export function DashboardDataTables({ analysis, referenceScope, allRecords, scope, onScope, mode }: { analysis: Analysis; referenceScope: DashboardScopeV2; allRecords: DashboardMatchRecord[]; scope: DashboardScopeV2; onScope: (scope: DashboardScopeV2) => void; mode: DashboardValueMode }) {
+  const [situation, setSituation] = useState<SituationRow | null>(null);
+  const [situationSort, setSituationSort] = useState<DashboardSituationSortKey>("current");
+  const [situationDirection, setSituationDirection] = useState<DashboardTableSortDirection>("DESC");
+  const referenceMatches = useMemo(() => filterDashboardMatchSelection(allRecords, referenceScope), [allRecords, referenceScope]);
+  const referenceAnalyses = useMemo(() => referenceMatches.map((record) => buildDashboardV2([record], { ...referenceScope, matchIds: [record.catalog.matchId] })), [referenceMatches, referenceScope]);
+  const referenceByMatch = useMemo(() => referenceAnalyses.map((value) => value.records), [referenceAnalyses]);
+  const referenceObservedMinutes = useMemo(() => referenceAnalyses.map((value) => value.rates.observedMinutes), [referenceAnalyses]);
+  const attack = useMemo(() => buildDashboardPhaseDataRows(analysis.records, referenceByMatch, "FOR", mode, analysis.rates.observedMinutes, referenceObservedMinutes), [analysis, mode, referenceByMatch, referenceObservedMinutes]);
+  const defense = useMemo(() => buildDashboardPhaseDataRows(analysis.records, referenceByMatch, "AGAINST", mode, analysis.rates.observedMinutes, referenceObservedMinutes), [analysis, mode, referenceByMatch, referenceObservedMinutes]);
+  const abpFor = useMemo(() => buildDashboardSetPieceDataRows(analysis.records, referenceByMatch, "FOR", mode, analysis.rates.observedMinutes, referenceObservedMinutes), [analysis.records, analysis.rates.observedMinutes, mode, referenceByMatch, referenceObservedMinutes]);
+  const abpAgainst = useMemo(() => buildDashboardSetPieceDataRows(analysis.records, referenceByMatch, "AGAINST", mode, analysis.rates.observedMinutes, referenceObservedMinutes), [analysis.records, analysis.rates.observedMinutes, mode, referenceByMatch, referenceObservedMinutes]);
+  const situations = useMemo<SituationRow[]>(() => {
+    const single = referenceMatches.map((record) => ({ record, value: buildDashboardV2([record], { ...referenceScope, matchIds: [record.catalog.matchId] }) }));
+    const build = (key: string, label: string, rawCurrent: number, read: (value: Analysis) => number, temporal = false): SituationRow => { const values = single.map(({ value }) => normalizeDashboardReferenceQuantity(read(value), mode, analysis.samples, value.rates.observedMinutes)); const stats = describeDistribution(values); return { key, label, rawCurrent, current: normalizeDashboardCount(rawCurrent, mode, analysis.samples, analysis.rates.observedMinutes) ?? 0, percentage: temporal ? dashboardTimePercentage(rawCurrent, analysis.rates.observedMinutes) : null, perMatch: analysis.samples ? rawCurrent / analysis.samples : null, habitual: { stats, range: stats.n >= MIN_MATCHES_FOR_HABITUAL_RANGE && stats.p25 !== null && stats.p75 !== null ? [stats.p25, stats.p75] : null }, relevant: single.map(({ record, value }) => ({ id: record.catalog.matchId, label: `${record.catalog.date} · ${record.catalog.opponent}`, value: read(value) })).filter((item) => item.value > 0) }; };
+    return [
+      build("losses", "PÉRDIDAS", teamMetricValue(analysis, "possessionLosses", "TOTALS") ?? 0, (value) => teamMetricValue(value, "possessionLosses", "TOTALS") ?? 0),
+      build("key", "MINUTOS CLAVE", analysis.teamKeyMinutes, (value) => value.teamKeyMinutes, true),
+      build("gold", "MINUTOS DE ORO", analysis.teamGoldMinutes, (value) => value.teamGoldMinutes, true),
+      build("pj", "PORTERO-JUGADOR", analysis.flyingGoalkeeper.for.minutes + analysis.flyingGoalkeeper.against.minutes, (value) => value.flyingGoalkeeper.for.minutes + value.flyingGoalkeeper.against.minutes, true),
+    ];
+  }, [analysis, mode, referenceMatches, referenceScope]);
+  const sortedSituations = useMemo(() => sortDashboardSituationRows(situations, situationSort, situationDirection), [situationDirection, situationSort, situations]);
+  const situationHeading = (key: DashboardSituationSortKey, label: string, left = false) => <button type="button" onClick={() => { if (situationSort === key) setSituationDirection((value) => value === "DESC" ? "ASC" : "DESC"); else { setSituationSort(key); setSituationDirection("DESC"); } }} className={`min-h-9 w-full text-[9px] font-black ${left ? "text-left" : "text-right"}`}>{label}{situationSort === key ? situationDirection === "DESC" ? " ↓" : " ↑" : ""}</button>;
+  const tabular = useMemo(() => [["ATAQUE"], ["Fase", "REM", "% volumen", "Goles", "Eficacia", "Peso", "Impacto"], ...attack.map((row) => [row.label, format(row.count), format(row.volumePercentage), format(row.goals), format(row.efficiencyPercentage), format(row.goalPercentage), format(row.impact)]), [], ["DEFENSA"], ["Fase", "AME", "% volumen", "GC", "Eficacia", "Peso", "Impacto"], ...defense.map((row) => [row.label, format(row.count), format(row.volumePercentage), format(row.goals), format(row.efficiencyPercentage), format(row.goalPercentage), format(row.impact)])], [attack, defense]);
+  const copy = async () => navigator.clipboard.writeText(tabular.map((row) => row.join("\t")).join("\n"));
+  const analyzeSituation = (row: SituationRow) => {
+    if (row.key === "key" || row.key === "gold") onScope({ ...scope, competitiveContext: row.key === "key" ? "KEY" : "GOLD" });
+    if (row.key === "pj") onScope({ ...scope, playingState: "PJ_CDA" });
+    setSituation(null);
+  };
+  const csv = () => { const content = tabular.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n"); const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([`\ufeff${content}`], { type: "text/csv;charset=utf-8" })); link.download = `alamedapp-datos-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(link.href); };
+  return <section className="space-y-5" aria-label="Datos del Dashboard"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[9px] font-black tracking-[.16em] text-cyan-300">MISMO SCOPE · MISMA VERDAD</p><h1 className="text-2xl font-black">DATOS</h1></div><div className="flex gap-2"><button type="button" onClick={() => void copy()} className="min-h-10 rounded-xl border border-slate-700 px-3 text-[9px] font-black">COPIAR TABLA</button><button type="button" onClick={csv} className="min-h-10 rounded-xl bg-emerald-800 px-3 text-[9px] font-black">EXPORTAR CSV</button></div></div>
+    <PhaseTable title="ATAQUE" rows={attack} scope={scope} onScope={onScope} side="FOR"/><PhaseTable title="DEFENSA" rows={defense} scope={scope} onScope={onScope} side="AGAINST"/>
+    <SetPieceTable title="ABP — A FAVOR" rows={abpFor} scope={scope} onScope={onScope}/><SetPieceTable title="ABP — EN CONTRA" rows={abpAgainst} scope={scope} onScope={onScope}/>
+    <section data-dashboard-data-table="SITUATIONS" data-dashboard-value-mode={mode} className="rounded-3xl border border-slate-700 bg-slate-900 p-3"><h2 className="mb-3 text-lg font-black">SITUACIONES</h2><div className="overflow-x-auto rounded-2xl border border-slate-800"><table className="min-w-[660px] w-full border-collapse text-[10px]"><thead className="sticky top-0 z-20 bg-slate-900 text-slate-400"><tr className="border-b border-slate-700"><th className="px-4 text-left">{situationHeading("label", "SITUACIÓN", true)}</th><th className="px-3 text-right">{situationHeading("current", mode === "TOTALS" ? "TOTAL" : mode === "PER_MATCH" ? "PJ" : "x40")}</th><th className="px-3 text-right">{situationHeading("perMatch", "/PJ")}</th><th className="px-3 text-right">{situationHeading("habitual", "HAB")}</th><th className="px-3 text-right">{situationHeading("matches", "PARTIDOS")}</th></tr></thead><tbody>{sortedSituations.map((row) => <tr key={row.key} onClick={() => setSituation(row)} className="min-h-14 cursor-pointer border-b border-slate-800 last:border-0 hover:bg-slate-800/70"><th className="px-4 py-3 text-left text-xs font-black">{row.label}</th><td className="px-3 py-3 text-right tabular-nums"><strong className="text-sm">{row.percentage === null ? format(row.current) : formatDashboardDuration(row.current)}</strong>{row.percentage !== null && <span className="ml-2 text-[9px] font-black text-indigo-200">· {format(row.percentage, "%")}</span>}</td><td className="px-3 py-3 text-right tabular-nums">{format(row.perMatch)}</td><td className="px-3 py-3 text-right tabular-nums"><HabitualValue metric={row.habitual}/></td><td className="px-3 py-3 text-right tabular-nums">{row.relevant.length}</td></tr>)}</tbody></table></div></section>
+    {situation && <div role="dialog" aria-modal="true" aria-label={`Detalle ${situation.label}`} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-3" onClick={() => setSituation(null)}><section className="max-h-[82vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-indigo-600 bg-slate-900 p-4" onClick={(event) => event.stopPropagation()}><div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black">{situation.label} · PARTIDO A PARTIDO</h2>{situation.percentage !== null && <p className="text-xs text-indigo-200">{formatDashboardDuration(situation.rawCurrent)} · {format(situation.percentage, "%")} del tiempo total del scope ({formatDashboardDuration(analysis.rates.observedMinutes)})</p>}</div><div className="flex gap-2">{situation.key !== "losses" && <button type="button" onClick={() => analyzeSituation(situation)} className="min-h-10 rounded-xl border border-indigo-700 px-3 text-xs font-black text-indigo-200">ANALIZAR</button>}<button type="button" onClick={() => setSituation(null)} className="min-h-10 rounded-xl border border-slate-700 px-3 text-xs font-black">CERRAR</button></div></div><div className="mt-3 space-y-1.5">{situation.relevant.length ? situation.relevant.map((item) => <article key={item.id} className="rounded-xl bg-slate-950 px-3 py-2"><b>{item.label}</b><span className="ml-2 text-slate-400">{format(item.value)}</span></article>) : <p className="text-slate-500">Sin partidos relevantes en este scope.</p>}</div>{situation.key === "losses" && <p className="mt-3 text-[10px] text-slate-500">PÉRDIDAS no expone ANALIZAR porque el scope actual no dispone de un filtro canónico específico; no se aplica una aproximación.</p>}</section></div>}
+  </section>;
+}

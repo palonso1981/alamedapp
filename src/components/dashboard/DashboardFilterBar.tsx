@@ -1,13 +1,13 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import {
   DashboardPhaseFilter,
   DashboardReferencePreset,
   DashboardScopeV2,
   DashboardValueMode,
 } from "../../lib/dashboardV2";
-import { Season, TeamProfile, ThreatOutcome } from "../../types";
+import { KeeperBodyPart, SaveOutcome, Season, TeamProfile, ThreatOutcome } from "../../types";
 import { SearchableMatchCombobox } from "./SearchableMatchCombobox";
 import { MultiMatchCombobox } from "./MultiMatchCombobox";
 import { SearchableMatch } from "../../lib/dashboardSelectors";
@@ -55,6 +55,8 @@ export interface DashboardFilterBarProps {
 }
 
 export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams, seasons, matches, rivals, players = [], goalkeepers = [], referencePreset, referenceScope, mode, onScope, onReferencePreset, onReferenceScope, onMode, onRefresh, fixture, comparison, comparisonEnabled = true, onComparisonEnabled, fixedPer40 = false }: DashboardFilterBarProps) {
+  const advancedRef = useRef<HTMLDetailsElement>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const patch = (changes: Partial<DashboardScopeV2>) => onScope({ ...scope, ...changes });
   const chips: Array<{ key: string; label: string; clear: () => void }> = [];
   if (scope.period !== "ALL") chips.push({ key: "period", label: `P${scope.period}`, clear: () => patch({ period: "ALL" }) });
@@ -66,6 +68,8 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
   scope.originZones.forEach((zone) => chips.push({ key: zone, label: zone, clear: () => patch({ originZones: scope.originZones.filter((item) => item !== zone) }) }));
   scope.targetZones.forEach((zone) => chips.push({ key: `target-${zone}`, label: `Portería ${zone.replaceAll("_", " ")}`, clear: () => patch({ targetZones: scope.targetZones.filter((item) => item !== zone) }) }));
   scope.outcomes.forEach((outcome) => chips.push({ key: outcome, label: outcome, clear: () => patch({ outcomes: scope.outcomes.filter((item) => item !== outcome) }) }));
+  scope.keeperBodyParts.forEach((part) => chips.push({ key: `body-${part}`, label: `Cuerpo ${part.replaceAll("_", " ")}`, clear: () => patch({ keeperBodyParts: scope.keeperBodyParts.filter((item) => item !== part) }) }));
+  scope.saveOutcomes.forEach((outcome) => chips.push({ key: `save-${outcome}`, label: outcome === "CATCH" ? "Blocaje" : outcome === "CLEARANCE" ? "Despeje" : "Rechace", clear: () => patch({ saveOutcomes: scope.saveOutcomes.filter((item) => item !== outcome) }) }));
   if (scope.outcomeGroup === "ON_TARGET") chips.push({ key: "on-target", label: "A puerta", clear: () => patch({ outcomeGroup: "ALL" }) });
   if (scope.originDistance !== "ALL") chips.push({ key: "distance", label: scope.originDistance === "NEAR" ? "Zona cercana" : "Zona lejana", clear: () => patch({ originDistance: "ALL" }) });
   if (scope.competitiveContext !== "ALL") chips.push({ key: "context", label: scope.competitiveContext === "KEY" ? "Minutos clave" : "Minutos de oro", clear: () => patch({ competitiveContext: "ALL" }) });
@@ -75,9 +79,27 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
   scope.goalkeeperIds.forEach((id) => chips.push({ key: `keeper-${id}`, label: `Portero ${goalkeepers.find((keeper) => keeper.playerId === id)?.name ?? id}`, clear: () => patch({ goalkeeperIds: scope.goalkeeperIds.filter((item) => item !== id) }) }));
   scope.threatSides.forEach((side) => chips.push({ key: `side-${side}`, label: side === "FOR" ? "Amenazas CDA" : "Amenazas rival", clear: () => patch({ threatSides: scope.threatSides.filter((item) => item !== side) }) }));
   if (scope.setPieceTraceability === "LINKED_RESTART_ONLY") chips.push({ key: "linked-restart", label: "ABP con vínculo", clear: () => patch({ setPieceTraceability: "ALL_CLASSIFIED" }) });
-  const clearAll = () => patch({ matchIds: [], period: "ALL", venues: [], results: [], rivals: [], phases: [], playerIds: [], goalkeeperIds: [], originZones: [], targetZones: [], outcomes: [], threatSides: [], setPieceTraceability: "ALL_CLASSIFIED", outcomeGroup: "ALL", originDistance: "ALL", competitiveContext: "ALL", playingState: "ALL", scoreState: "ALL" });
+  const clearAll = () => patch({ matchIds: [], period: "ALL", venues: [], results: [], rivals: [], phases: [], playerIds: [], goalkeeperIds: [], originZones: [], targetZones: [], outcomes: [], keeperBodyParts: [], saveOutcomes: [], threatSides: [], setPieceTraceability: "ALL_CLASSIFIED", outcomeGroup: "ALL", originDistance: "ALL", competitiveContext: "ALL", playingState: "ALL", scoreState: "ALL" });
+  useEffect(() => {
+    if (!advancedOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!advancedRef.current?.contains(event.target as Node)) {
+        advancedRef.current!.open = false;
+        setAdvancedOpen(false);
+      }
+    };
+    const closeEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && advancedRef.current) {
+        advancedRef.current.open = false;
+        setAdvancedOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeEscape);
+    return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeEscape); };
+  }, [advancedOpen]);
 
-  return <><div data-dashboard-sticky-context className="sticky top-16 z-30 overflow-hidden rounded-b-3xl border border-t-0 border-slate-700 bg-slate-950/95 shadow-2xl backdrop-blur sm:rounded-3xl"><section className="p-3">
+  return <><div data-dashboard-filter-context className="overflow-hidden rounded-3xl border border-slate-700 bg-slate-950/95 shadow-xl"><section className="p-3">
     <div className="flex items-center gap-2 overflow-x-auto pb-1">
       {fixture || !onClub ? <span className="shrink-0 rounded-xl bg-cyan-950 px-3 py-2 text-[10px] font-black text-cyan-200">{fixture ? "FIXTURE LOCAL" : clubName}</span> : <select aria-label="Club" value={scope.clubId} onChange={(event) => onClub(event.target.value)} className="min-h-10 min-w-36 rounded-xl bg-cyan-950 px-3 text-[10px] font-black text-cyan-100">{clubs.map((club) => <option key={club.clubId} value={club.clubId}>{club.name}</option>)}</select>}
       <select aria-label="Equipo" value={scope.teamId} onChange={(event) => { const teamId = event.target.value; patch({ teamId, seasonId: seasons.find((season) => season.teamId === teamId && season.current)?.seasonId ?? seasons.find((season) => season.teamId === teamId)?.seasonId ?? "", matchIds: [] }); }} className="min-h-10 min-w-36 rounded-xl bg-slate-800 px-3 text-xs font-black">
@@ -108,14 +130,17 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
         {fixedPer40 ? <span className="text-[10px] font-black text-cyan-300">COMBINACIONES · x40 · RESTO DEL MISMO CONTEXTO</span> : <div className="flex rounded-xl bg-slate-900 p-1">{(["TOTALS", "PER_MATCH", "PER_40"] as DashboardValueMode[]).map((item) => <button key={item} type="button" onClick={() => onMode(item)} className={`min-h-8 rounded-lg px-2 text-[9px] font-black ${mode === item ? "bg-white text-slate-950" : "text-slate-500"}`}>{item === "TOTALS" ? "TOTALES" : item === "PER_MATCH" ? "POR PARTIDO" : "POR 40"}</button>)}</div>}
       </div>
     </div>
-    </section>{comparisonEnabled && comparison}</div>{comparisonEnabled && (referencePreset === "MATCH" || referencePreset === "CUSTOM") && <ReferenceBuilder preset={referencePreset} scope={referenceScope} analysis={scope} matches={matches} rivals={rivals} onChange={onReferenceScope}/>}<details data-dashboard-advanced-filters className="rounded-2xl border border-slate-800 bg-slate-900/80 px-3 py-2">
+    </section>{comparisonEnabled && comparison}</div>{comparisonEnabled && (referencePreset === "MATCH" || referencePreset === "CUSTOM") && <ReferenceBuilder preset={referencePreset} scope={referenceScope} analysis={scope} matches={matches} rivals={rivals} onChange={onReferenceScope}/>}<details ref={advancedRef} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)} id="dashboard-advanced-filters" data-dashboard-advanced-filters className="rounded-2xl border border-slate-800 bg-slate-900/80 px-3 py-2">
       <summary className="cursor-pointer text-[10px] font-black text-slate-400">FILTROS AVANZADOS · {chips.length}</summary>
-      <div className="mt-3 space-y-3">
+      <div data-advanced-filter-panel className="fixed inset-x-3 top-28 z-50 max-h-[calc(100vh-8rem)] space-y-3 overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950 p-4 shadow-2xl sm:left-auto sm:right-5 sm:w-[min(46rem,calc(100vw-2.5rem))]">
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-slate-950 pb-2"><b className="text-xs text-white">FILTROS AVANZADOS · {chips.length}</b><div className="flex gap-2">{chips.length > 0 && <button type="button" onClick={clearAll} className="min-h-9 rounded-xl bg-amber-950 px-3 text-[10px] font-black text-amber-200">LIMPIAR TODO</button>}<button type="button" onClick={() => { if (advancedRef.current) advancedRef.current.open = false; setAdvancedOpen(false); }} className="min-h-9 rounded-xl border border-slate-700 px-3 text-[10px] font-black">CERRAR ×</button></div></div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">SEDE · RESULTADO</span>{(["HOME", "AWAY"] as const).map((value) => <MultiButton key={value} active={scope.venues.includes(value)} onClick={() => patch({ venues: toggle(scope.venues, value) })}>{value === "HOME" ? "LOCAL" : "VISITANTE"}</MultiButton>)}{(["WIN", "DRAW", "LOSS"] as const).map((value) => <MultiButton key={value} active={scope.results.includes(value)} onClick={() => patch({ results: toggle(scope.results, value) })}>{value === "WIN" ? "VICTORIA" : value === "DRAW" ? "EMPATE" : "DERROTA"}</MultiButton>)}</div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">RIVALES · OR DENTRO DE LA DIMENSIÓN</span>{rivals.map((rival) => <MultiButton key={rival} active={scope.rivals.includes(rival)} onClick={() => patch({ rivals: toggle(scope.rivals, rival) })}>{rival}</MultiButton>)}</div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">FASE</span>{PHASES.map(([value, label]) => <MultiButton key={value} active={scope.phases.includes(value)} onClick={() => patch({ phases: toggle(scope.phases, value) })}>{label}</MultiButton>)}</div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">LADO · TRAZABILIDAD ABP</span>{(["FOR", "AGAINST"] as const).map((value) => <MultiButton key={value} active={scope.threatSides.includes(value)} onClick={() => patch({ threatSides: toggle(scope.threatSides, value) })}>{value === "FOR" ? "CDA" : "RIVAL"}</MultiButton>)}<MultiButton active={scope.setPieceTraceability === "LINKED_RESTART_ONLY"} onClick={() => patch({ setPieceTraceability: scope.setPieceTraceability === "LINKED_RESTART_ONLY" ? "ALL_CLASSIFIED" : "LINKED_RESTART_ONLY" })}>SOLO VÍNCULO CONFIRMADO</MultiButton></div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">ORIGEN · RESULTADO</span>{ZONES.map((value) => <MultiButton key={value} active={scope.originZones.includes(value)} onClick={() => patch({ originZones: toggle(scope.originZones, value) })}>{value}</MultiButton>)}{(["GOL", "PARADA", "FUERA"] as ThreatOutcome[]).map((value) => <MultiButton key={value} active={scope.outcomes.includes(value)} onClick={() => patch({ outcomes: toggle(scope.outcomes, value) })}>{value}</MultiButton>)}</div>
+        <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">PORTERO · PARTE DEL CUERPO</span>{(["HEAD", "TORSO", "LEFT_ARM_HAND", "RIGHT_ARM_HAND", "LEFT_LEG_FOOT", "RIGHT_LEG_FOOT"] as KeeperBodyPart[]).map((value) => <MultiButton key={value} active={scope.keeperBodyParts.includes(value)} onClick={() => patch({ keeperBodyParts: toggle(scope.keeperBodyParts, value) })}>{value.replaceAll("_", " ")}</MultiButton>)}</div>
+        <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">PORTERO · TIPO DE PARADA</span>{(["CATCH", "CLEARANCE", "REBOUND"] as SaveOutcome[]).map((value) => <MultiButton key={value} active={scope.saveOutcomes.includes(value)} onClick={() => patch({ saveOutcomes: toggle(scope.saveOutcomes, value) })}>{value === "CATCH" ? "BLOCAJE" : value === "CLEARANCE" ? "DESPEJE" : "RECHACE"}</MultiButton>)}</div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">AGRUPACIONES OBJETIVAS</span><MultiButton active={scope.originDistance === "NEAR"} onClick={() => patch({ originDistance: scope.originDistance === "NEAR" ? "ALL" : "NEAR" })}>ZONA CERCANA</MultiButton><MultiButton active={scope.originDistance === "FAR"} onClick={() => patch({ originDistance: scope.originDistance === "FAR" ? "ALL" : "FAR" })}>ZONA LEJANA</MultiButton><MultiButton active={scope.outcomeGroup === "ON_TARGET"} onClick={() => patch({ outcomeGroup: scope.outcomeGroup === "ON_TARGET" ? "ALL" : "ON_TARGET", outcomes: [] })}>A PUERTA</MultiButton></div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500">CONTEXTO TEMPORAL</span>{(["ALL", "KEY", "GOLD"] as const).map((value) => <MultiButton key={value} active={scope.competitiveContext === value} onClick={() => patch({ competitiveContext: value })}>{value === "ALL" ? "TODOS" : value === "KEY" ? "MINUTOS CLAVE" : "MINUTOS DE ORO"}</MultiButton>)}</div>
         <div className="flex flex-wrap gap-2"><span className="w-full text-[9px] font-black text-slate-500" title="Filtra por la situación instantánea del marcador desde la perspectiva de CDA.">ESTADO MARCADOR</span>{(["ALL", "LEADING", "DRAWING", "TRAILING"] as const).map((value) => <MultiButton key={value} active={scope.scoreState === value} onClick={() => patch({ scoreState: value })}>{value === "ALL" ? "TODOS" : value === "LEADING" ? "GANANDO" : value === "DRAWING" ? "EMPATANDO" : "PERDIENDO"}</MultiButton>)}</div>
