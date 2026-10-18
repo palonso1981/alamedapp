@@ -1,7 +1,8 @@
 import { canonicalLineupReplay, periodDurations, periodOffsets, eventGlobalMinute } from "./matchMomentum";
 import { MatchEvent, MatchSession } from "../types";
 import { DashboardPeriod } from "./dashboardAnalytics";
-import { compareEventPosition, deriveGlobalMinute, goalkeeperAtPosition, isActiveMatchEvent, replayMatch } from "./matchEngine";
+import { compareEventPosition, deriveGlobalMinute, goalkeeperAtPosition, isActiveMatchEvent } from "./matchEngine";
+import { replayDashboardMatch } from "./dashboardReplayCache";
 
 export type CompetitiveContext = "ALL" | "KEY" | "GOLD";
 export type PlayingStateContext = "ALL" | "PJ_CDA" | "PJ_RIVAL";
@@ -138,7 +139,7 @@ export function deriveScoreStateIntervals(
   const end = matchEnd(session);
   const [scopeStart, scopeEnd] = periodBounds(session, period, end);
   if (scopeEnd <= scopeStart) return [];
-  const goals = replayMatch(session.players, session.events).timeline
+  const goals = replayDashboardMatch(session.players, session.events).timeline
     .map((entry) => entry.event)
     .filter((event): event is Extract<MatchEvent, { type: "threat_recorded" }> => event.type === "threat_recorded" && event.outcome === "GOL");
   let scoreFor = 0;
@@ -180,12 +181,17 @@ export function isCompetitiveMoment(context: CompetitiveContext, period: number,
   return context === "KEY" || deriveGlobalMinute(period, minute) >= GOLD_WINDOW_START_GLOBAL_MINUTE;
 }
 
+const competitiveProjectionCache = new WeakMap<MatchSession, Map<string, CompetitiveProjection>>();
+
 /**
  * Convención de borde: un evento pertenece al marcador inmediatamente anterior
  * a él; si es gol, el marcador nuevo rige desde ese mismo minuto hasta el
  * siguiente evento. Sin segundos deportivos, no se inventa una fracción menor.
  */
 export function deriveCompetitiveProjection(session: MatchSession, period: DashboardPeriod, context: CompetitiveContext, goalkeeperIds: readonly string[] = [], playingState: PlayingStateContext = "ALL", scoreContext: ScoreStateContext = "ALL"): CompetitiveProjection {
+  const cacheKey = `${period}:${context}:${[...goalkeeperIds].sort().join(",")}:${playingState}:${scoreContext}`;
+  const cached = competitiveProjectionCache.get(session)?.get(cacheKey);
+  if (cached) return cached;
   const end = matchEnd(session);
   const [scopeStart, scopeEnd] = periodBounds(session, period, end);
   const projection: CompetitiveProjection = { observed: 0, byPlayer: {}, byGoalkeeper: {}, eventIds: new Set<string>(), intervals: [] };
@@ -226,6 +232,9 @@ export function deriveCompetitiveProjection(session: MatchSession, period: Dashb
     entry.lineupPlayerIds.forEach((id) => { projection.byPlayer[id] = (projection.byPlayer[id] ?? 0) + duration; });
     if (goalkeeper?.status === "PLAYER") projection.byGoalkeeper[goalkeeper.playerId] = (projection.byGoalkeeper[goalkeeper.playerId] ?? 0) + duration;
   });
+  const byKey = competitiveProjectionCache.get(session) ?? new Map<string, CompetitiveProjection>();
+  byKey.set(cacheKey, projection);
+  competitiveProjectionCache.set(session, byKey);
   return projection;
 }
 

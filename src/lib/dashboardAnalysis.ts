@@ -21,8 +21,8 @@ import {
   deriveGlobalMinute,
   isActiveMatchEvent,
   REGULATION_MATCH_CLOCK,
-  replayMatch,
 } from "./matchEngine";
+import { replayDashboardMatch } from "./dashboardReplayCache";
 import { deriveGoalZoneV1, GoalZoneV1 } from "./spatialZones";
 import { GOAL_FRAME } from "./goalTarget";
 import { formatFutsalPosition } from "./positionFormat";
@@ -320,7 +320,7 @@ function eventsFor(session: MatchSession, period: DashboardPeriod): MatchEvent[]
 
 function resultFor(record: DashboardMatchRecord): Exclude<ResultFilter, "ALL"> | null {
   if (!record.session.matchFinished && record.catalog.status !== "FINISHED") return null;
-  const score = replayMatch(record.session.players, record.session.events).score;
+  const score = replayDashboardMatch(record.session.players, record.session.events).score;
   return score.for > score.against ? "WIN" : score.for < score.against ? "LOSS" : "DRAW";
 }
 
@@ -513,7 +513,7 @@ export function buildDashboardAnalysis(
   for (const record of selected) {
     const { session } = record;
     const events = eventsFor(session, period);
-    const replay = replayMatch(session.players, events, { currentClock: endClock(session, period) });
+    const replay = replayDashboardMatch(session.players, events, { currentClock: endClock(session, period) });
     const matchObserved = observedMinutes(session, period);
     const squad = new Set(events.filter((event) => event.type === "lineup_initialized").flatMap((event) => event.type === "lineup_initialized" ? event.squadPlayerIds : []));
     const matchOnCourtScore = new Map<string, { goalsFor: number; goalsAgainst: number }>();

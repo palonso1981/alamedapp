@@ -42,6 +42,8 @@
     "src/lib/dashboardAnalysis.test.ts",
     "src/lib/dashboardV2.ts",
     "src/lib/dashboardV2.test.ts",
+    "src/lib/dashboardAnalyticsSnapshots.ts",
+    "src/lib/dashboardAnalyticsSnapshots.test.ts",
     "src/lib/dashboardDistribution.ts",
     "src/lib/distributionStatistics.ts",
     "src/lib/dashboardRedesign.test.ts",

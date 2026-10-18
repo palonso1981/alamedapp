@@ -24,7 +24,8 @@ import {
   ResultFilter,
   VenueFilter,
 } from "./dashboardAnalysis";
-import { effectiveThreatPhase, isActiveMatchEvent, replayMatch } from "./matchEngine";
+import { effectiveThreatPhase, isActiveMatchEvent } from "./matchEngine";
+import { replayDashboardMatch } from "./dashboardReplayCache";
 import { deriveGoalZoneV1, GoalZoneV1 } from "./spatialZones";
 import { GOAL_FRAME } from "./goalTarget";
 import { CompetitiveContext, competitiveEventIds, deriveCompetitiveMinutes, deriveCompetitiveProjection, PlayingStateContext, ScoreStateContext } from "./dashboardCompetitiveContext";
@@ -212,7 +213,7 @@ export function homogeneousComparisonMode(
 
 function matchResult(record: DashboardMatchRecord): Exclude<ResultFilter, "ALL"> | null {
   if (!record.session.matchFinished && record.catalog.status !== "FINISHED") return null;
-  const score = replayMatch(record.session.players, record.session.events).score;
+  const score = replayDashboardMatch(record.session.players, record.session.events).score;
   return score.for > score.against ? "WIN" : score.for < score.against ? "LOSS" : "DRAW";
 }
 
@@ -649,7 +650,7 @@ export function filterDashboardEventSelection(
   }));
 }
 
-export function buildDashboardV2(
+function buildDashboardV2Raw(
   records: readonly DashboardMatchRecord[],
   scope: DashboardScopeV2,
 ): DashboardAnalysis {
@@ -764,6 +765,446 @@ export function buildDashboardV2(
     trend.goldMinutes = record ? deriveCompetitiveProjection(record.session, scope.period, "GOLD", scope.goalkeeperIds, scope.playingState, scope.scoreState).observed : 0;
   }
   return analysis;
+}
+
+/** Reserved for explicit snapshot regeneration and parity tests. */
+export function buildDashboardV2Uncached(
+  records: readonly DashboardMatchRecord[],
+  scope: DashboardScopeV2,
+): DashboardAnalysis {
+  return buildDashboardV2Raw(records, scope);
+}
+
+export interface DashboardBuildMetrics {
+  calls: number;
+  cacheHits: number;
+  rawBuilds: number;
+  rawMilliseconds: number;
+  matchesProcessed: number;
+  eventsProcessed: number;
+}
+
+const DASHBOARD_ANALYSIS_CACHE_LIMIT = 240;
+const dashboardAnalysisCache = new Map<string, DashboardAnalysis>();
+const dashboardSourceFingerprintCache = new WeakMap<object, string>();
+export interface DashboardSnapshotPlayerContext {
+  playerId: string;
+  availableMinutes: number;
+  targetMinutes?: number;
+  trend: PlayerAnalysis["trend"][number];
+}
+
+const registeredMatchSnapshots = new Map<string, { sourceFingerprint: string; analysis: DashboardAnalysis; playerContexts: DashboardSnapshotPlayerContext[] }>();
+const dashboardBuildMetricsState: DashboardBuildMetrics = {
+  calls: 0,
+  cacheHits: 0,
+  rawBuilds: 0,
+  rawMilliseconds: 0,
+  matchesProcessed: 0,
+  eventsProcessed: 0,
+};
+
+function hashText(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/**
+ * Fingerprint exclusively of sport/analytics source data. Video segments,
+ * anchors, collections and other audiovisual metadata are intentionally not
+ * included, so those edits never invalidate analytics.
+ */
+export function dashboardAnalyticsSourceFingerprint(record: DashboardMatchRecord): string {
+  const cached = dashboardSourceFingerprintCache.get(record as object);
+  if (cached) return cached;
+  const preparation = record.session.preparation;
+  const source = {
+    matchId: record.catalog.matchId,
+    status: record.catalog.status,
+    archivedAt: record.catalog.archivedAt ?? null,
+    deletedAt: record.catalog.deletedAt ?? null,
+    preparation: preparation ? {
+      clubId: preparation.clubId ?? null,
+      teamId: preparation.teamId,
+      seasonId: preparation.seasonId ?? null,
+      opponent: preparation.opponent,
+      venue: preparation.venue,
+      date: preparation.date,
+      competitionType: preparation.competitionType ?? null,
+      status: preparation.status,
+      calledPlayerIds: preparation.calledPlayerIds,
+      starterPlayerIds: preparation.starterPlayerIds,
+      startingGoalkeeperId: preparation.startingGoalkeeperId ?? null,
+      targetMinutes: preparation.targetMinutes,
+      archivedAt: preparation.archivedAt ?? null,
+      deletedAt: preparation.deletedAt ?? null,
+    } : null,
+    players: record.session.players,
+    period: record.session.period,
+    minute: record.session.minute,
+    closedPeriods: record.session.closedPeriods ?? [],
+    matchFinished: record.session.matchFinished ?? false,
+    events: record.session.events,
+  };
+  const fingerprint = `a1-${hashText(JSON.stringify(source))}`;
+  dashboardSourceFingerprintCache.set(record as object, fingerprint);
+  return fingerprint;
+}
+
+function normalizedScopeKey(scope: DashboardScopeV2): string {
+  const normalized = {
+    ...scope,
+    matchIds: [...scope.matchIds].sort(),
+    venues: [...scope.venues].sort(),
+    results: [...scope.results].sort(),
+    rivals: [...scope.rivals].sort(),
+    phases: [...scope.phases].sort(),
+    playerIds: [...scope.playerIds].sort(),
+    goalkeeperIds: [...scope.goalkeeperIds].sort(),
+    originZones: [...scope.originZones].sort(),
+    targetZones: [...scope.targetZones].sort(),
+    outcomes: [...scope.outcomes].sort(),
+    keeperBodyParts: [...scope.keeperBodyParts].sort(),
+    saveOutcomes: [...scope.saveOutcomes].sort(),
+    threatSides: [...scope.threatSides].sort(),
+  };
+  return JSON.stringify(normalized);
+}
+
+export function dashboardAnalysisCacheKey(
+  records: readonly DashboardMatchRecord[],
+  scope: DashboardScopeV2,
+): string {
+  const sources = records
+    .map((record) => `${record.catalog.matchId}:${dashboardAnalyticsSourceFingerprint(record)}`)
+    .sort()
+    .join("|");
+  return `${sources}::${normalizedScopeKey(scope)}`;
+}
+
+function writeDashboardAnalysisCache(key: string, analysis: DashboardAnalysis): void {
+  if (dashboardAnalysisCache.has(key)) dashboardAnalysisCache.delete(key);
+  dashboardAnalysisCache.set(key, analysis);
+  while (dashboardAnalysisCache.size > DASHBOARD_ANALYSIS_CACHE_LIMIT) {
+    const oldest = dashboardAnalysisCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    dashboardAnalysisCache.delete(oldest);
+  }
+}
+
+export function primeDashboardAnalysisCache(
+  records: readonly DashboardMatchRecord[],
+  scope: DashboardScopeV2,
+  analysis: DashboardAnalysis,
+): void {
+  writeDashboardAnalysisCache(dashboardAnalysisCacheKey(records, scope), {
+    ...analysis,
+    records: [...records],
+  });
+}
+
+function snapshotPeriodKey(matchId: string, period: DashboardPeriod): string {
+  return `${matchId}:${period}`;
+}
+
+export function primeDashboardMatchSnapshot(
+  record: DashboardMatchRecord,
+  period: DashboardPeriod,
+  sourceFingerprint: string,
+  analysis: DashboardAnalysis,
+  playerContexts: DashboardSnapshotPlayerContext[] = [],
+): void {
+  dashboardAnalysisCache.clear();
+  registeredMatchSnapshots.set(snapshotPeriodKey(record.catalog.matchId, period), {
+    sourceFingerprint,
+    analysis: { ...analysis, records: [record] },
+    playerContexts,
+  });
+}
+
+function supportsMatchSnapshot(scope: DashboardScopeV2): boolean {
+  return scope.phases.length === 0
+    && scope.playerIds.length === 0
+    && scope.goalkeeperIds.length === 0
+    && scope.originZones.length === 0
+    && scope.targetZones.length === 0
+    && scope.outcomes.length === 0
+    && scope.keeperBodyParts.length === 0
+    && scope.saveOutcomes.length === 0
+    && scope.threatSides.length === 0
+    && scope.setPieceTraceability === "ALL_CLASSIFIED"
+    && scope.outcomeGroup === "ALL"
+    && scope.originDistance === "ALL"
+    && scope.competitiveContext === "ALL"
+    && scope.playingState === "ALL"
+    && scope.scoreState === "ALL";
+}
+
+function registeredSnapshotFor(
+  records: readonly DashboardMatchRecord[],
+  scope: DashboardScopeV2,
+): DashboardAnalysis | null {
+  if (records.length !== 1 || !supportsMatchSnapshot(scope)) return null;
+  const filtered = filterDashboardDataset(records, scope);
+  if (filtered.length !== 1) return null;
+  const record = records[0];
+  const snapshot = registeredMatchSnapshots.get(snapshotPeriodKey(record.catalog.matchId, scope.period));
+  return snapshot ? { ...snapshot.analysis, records: filtered } : null;
+}
+
+function aggregateRegisteredSnapshots(
+  records: readonly DashboardMatchRecord[],
+  scope: DashboardScopeV2,
+): DashboardAnalysis | null {
+  if (!supportsMatchSnapshot(scope)) return null;
+  const selected = filterDashboardMatchSelection(records, scope);
+  if (selected.length === 0) return null;
+  const filtered = filterDashboardDataset(selected, scope);
+  const entries = selected.map((record) => registeredMatchSnapshots.get(snapshotPeriodKey(record.catalog.matchId, scope.period)));
+  if (entries.some((entry) => !entry)) return null;
+  const validEntries = entries as Array<NonNullable<typeof entries[number]>>;
+  const values = validEntries.map((entry) => entry.analysis);
+  if (values.length === 1) return { ...values[0], records: [...selected] };
+
+  const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+  const analytics = clone(values[0].analytics);
+  const scalarAnalytics = ["matches", "finishedMatches", "wins", "draws", "losses", "goalsFor", "goalsAgainst"] as const;
+  const playerStats = new Map(analytics.players.map((player) => [player.playerId, player]));
+  const goalkeeperStats = new Map(analytics.goalkeepers.map((keeper) => [keeper.playerId, keeper]));
+  for (const next of values.slice(1).map((value) => value.analytics)) {
+    for (const key of scalarAnalytics) analytics[key] += next[key];
+    for (const side of ["FOR", "AGAINST"] as const) {
+      for (const key of ["total", "GOL", "PARADA", "FUERA", "BLOQUEADO"] as const) analytics.threats[side][key] += next.threats[side][key];
+      analytics.discipline[side === "FOR" ? "for" : "against"].fouls += next.discipline[side === "FOR" ? "for" : "against"].fouls;
+      analytics.discipline[side === "FOR" ? "for" : "against"].yellowCards += next.discipline[side === "FOR" ? "for" : "against"].yellowCards;
+      analytics.discipline[side === "FOR" ? "for" : "against"].redCards += next.discipline[side === "FOR" ? "for" : "against"].redCards;
+    }
+    for (const key of Object.keys(analytics.secondPlay) as Array<keyof typeof analytics.secondPlay>) analytics.secondPlay[key] += next.secondPlay[key];
+    for (const phase of Object.keys(analytics.phases) as Array<keyof typeof analytics.phases>) {
+      analytics.phases[phase].FOR += next.phases[phase].FOR;
+      analytics.phases[phase].AGAINST += next.phases[phase].AGAINST;
+    }
+    for (const player of next.players) {
+      const current = playerStats.get(player.playerId);
+      if (!current) { playerStats.set(player.playerId, clone(player)); continue; }
+      current.matches += player.matches;
+      current.minutes += player.minutes;
+      current.goals += player.goals;
+      current.assists += player.assists;
+      current.threats += player.threats;
+      if (player.targetMinutes !== undefined) current.targetMinutes = (current.targetMinutes ?? 0) + player.targetMinutes;
+    }
+    for (const keeper of next.goalkeepers) {
+      const current = goalkeeperStats.get(keeper.playerId);
+      if (!current) { goalkeeperStats.set(keeper.playerId, clone(keeper)); continue; }
+      current.minutes += keeper.minutes;
+      current.threatsAgainst += keeper.threatsAgainst;
+      current.goalsAgainst += keeper.goalsAgainst;
+      current.saves += keeper.saves;
+      current.outside += keeper.outside;
+      for (const part of Object.keys(current.bodyParts) as KeeperBodyPart[]) current.bodyParts[part] += keeper.bodyParts[part];
+      for (const outcome of Object.keys(current.saveOutcomes) as SaveOutcome[]) current.saveOutcomes[outcome] += keeper.saveOutcomes[outcome];
+    }
+    analytics.pitchPoints.push(...clone(next.pitchPoints));
+    analytics.goalPoints.push(...clone(next.goalPoints));
+    analytics.quality.push(...clone(next.quality));
+    for (const key of Object.keys(analytics.missing) as Array<keyof typeof analytics.missing>) analytics.missing[key] += next.missing[key];
+  }
+  analytics.players = Array.from(playerStats.values()).sort((a, b) => b.minutes - a.minutes || a.number - b.number);
+  analytics.goalkeepers = Array.from(goalkeeperStats.values()).map((keeper) => ({
+    ...keeper,
+    savePercentage: keeper.saves + keeper.goalsAgainst > 0 ? keeper.saves / (keeper.saves + keeper.goalsAgainst) * 100 : null,
+  })).sort((a, b) => b.minutes - a.minutes || a.number - b.number);
+
+  const samples = values.reduce((sum, value) => sum + value.samples, 0);
+  const observedMinutes = values.reduce((sum, value) => sum + value.rates.observedMinutes, 0);
+  const teamKeyMinutes = values.reduce((sum, value) => sum + value.teamKeyMinutes, 0);
+  const teamGoldMinutes = values.reduce((sum, value) => sum + value.teamGoldMinutes, 0);
+  const mergedPlayers = new Map<string, PlayerAnalysis>();
+  const additivePlayerKeys: Array<keyof PlayerAnalysis> = [
+    "matches", "minutes", "availableMinutes", "keyMinutes", "goldMinutes", "goals", "assists", "ownThreats", "ownOnTarget", "ownNear",
+    "possessionLosses", "foulsCommitted", "foulsReceived", "criticalFoulsCommitted", "criticalFoulsReceived", "yellowCards", "redCards", "onCourtPoints",
+  ];
+  const additiveOnCourtKeys = ["threatsFor", "threatsAgainst", "goalsFor", "goalsAgainst", "foulsFor", "foulsAgainst", "threatsForOnTarget", "threatsAgainstOnTarget", "threatsForNear", "threatsAgainstNear"] as const;
+  for (const value of values) for (const player of value.players) {
+    const current = mergedPlayers.get(player.playerId);
+    if (!current) { mergedPlayers.set(player.playerId, clone(player)); continue; }
+    for (const key of additivePlayerKeys) (current[key] as number) += player[key] as number;
+    if (player.targetMinutes !== undefined) current.targetMinutes = (current.targetMinutes ?? 0) + player.targetMinutes;
+    for (const outcome of ["GOL", "PARADA", "FUERA", "BLOQUEADO"] as const) current.ownOutcomes[outcome] += player.ownOutcomes[outcome];
+    current.ownShotPoints.push(...clone(player.ownShotPoints));
+    current.trend.push(...clone(player.trend));
+    for (const key of additiveOnCourtKeys) current.onCourt[key] += player.onCourt[key];
+  }
+  validEntries.forEach((entry) => entry.playerContexts.forEach((context) => {
+    if (entry.analysis.players.some((player) => player.playerId === context.playerId)) return;
+    const player = mergedPlayers.get(context.playerId);
+    if (!player) return;
+    player.availableMinutes += context.availableMinutes;
+    if (context.targetMinutes !== undefined) player.targetMinutes = (player.targetMinutes ?? 0) + context.targetMinutes;
+    player.trend.push(clone(context.trend));
+  }));
+  const players = Array.from(mergedPlayers.values()).map((player) => {
+    player.participationPercentage = player.availableMinutes > 0 ? player.minutes / player.availableMinutes * 100 : null;
+    player.averageMinutes = player.matches > 0 ? player.minutes / player.matches : null;
+    player.keyMinutesPerMatch = player.matches > 0 ? player.keyMinutes / player.matches : null;
+    player.keyMinutesPercentage = teamKeyMinutes > 0 ? player.keyMinutes / teamKeyMinutes * 100 : null;
+    player.goldMinutesPerMatch = player.matches > 0 ? player.goldMinutes / player.matches : null;
+    player.goldMinutesPercentage = teamGoldMinutes > 0 ? player.goldMinutes / teamGoldMinutes * 100 : null;
+    player.goalsPerMatch = player.matches > 0 ? player.goals / player.matches : null;
+    player.goals40 = per40(player.goals, player.minutes);
+    player.assistsPerMatch = player.matches > 0 ? player.assists / player.matches : null;
+    player.assists40 = per40(player.assists, player.minutes);
+    player.ownThreatsPerMatch = player.matches > 0 ? player.ownThreats / player.matches : null;
+    player.ownThreats40 = per40(player.ownThreats, player.minutes);
+    player.ownOnTargetPercentage = player.ownThreats > 0 ? player.ownOnTarget / player.ownThreats * 100 : null;
+    player.ownNearPercentage = player.ownThreats > 0 ? player.ownNear / player.ownThreats * 100 : null;
+    player.possessionLossesPerMatch = player.matches > 0 ? player.possessionLosses / player.matches : null;
+    player.possessionLosses40 = per40(player.possessionLosses, player.minutes);
+    for (const key of ["foulsCommitted", "foulsReceived", "criticalFoulsCommitted", "criticalFoulsReceived"] as const) {
+      player[`${key}PerMatch` as "foulsCommittedPerMatch"] = player.matches > 0 ? player[key] / player.matches : null;
+      player[`${key}40` as "foulsCommitted40"] = per40(player[key], player.minutes);
+    }
+    player.onCourtPointsPerMatch = player.matches > 0 ? player.onCourtPoints / player.matches : null;
+    player.onCourt.goalDifference = player.onCourt.goalsFor - player.onCourt.goalsAgainst;
+    player.onCourt.threatsFor40 = per40(player.onCourt.threatsFor, player.minutes);
+    player.onCourt.threatsAgainst40 = per40(player.onCourt.threatsAgainst, player.minutes);
+    player.onCourt.threatDifference40 = per40(player.onCourt.threatsFor - player.onCourt.threatsAgainst, player.minutes);
+    player.onCourt.goalsFor40 = per40(player.onCourt.goalsFor, player.minutes);
+    player.onCourt.goalsAgainst40 = per40(player.onCourt.goalsAgainst, player.minutes);
+    player.onCourt.goalDifference40 = per40(player.onCourt.goalDifference, player.minutes);
+    player.onCourt.foulsFor40 = per40(player.onCourt.foulsFor, player.minutes);
+    player.onCourt.foulsAgainst40 = per40(player.onCourt.foulsAgainst, player.minutes);
+    player.lowSample = player.minutes < 20;
+    player.trend.sort((a, b) => a.date.localeCompare(b.date));
+    return player;
+  }).sort((a, b) => b.minutes - a.minutes || a.number - b.number);
+
+  const mergedGoalkeepers = new Map<string, DashboardAnalysis["goalkeepers"][number]>();
+  for (const value of values) for (const keeper of value.goalkeepers) {
+    const current = mergedGoalkeepers.get(keeper.playerId);
+    if (!current) { mergedGoalkeepers.set(keeper.playerId, clone(keeper)); continue; }
+    for (const key of ["minutes", "threatsAgainst", "interiorThreats", "saves", "goalsAgainst", "keyMinutes", "goldMinutes"] as const) current[key] += keeper[key];
+    for (const part of Object.keys(current.bodyParts) as KeeperBodyPart[]) current.bodyParts[part] += keeper.bodyParts[part];
+    for (const outcome of Object.keys(current.saveOutcomes) as SaveOutcome[]) current.saveOutcomes[outcome] += keeper.saveOutcomes[outcome];
+    current.goalPoints.push(...clone(keeper.goalPoints));
+    current.originPoints.push(...clone(keeper.originPoints));
+  }
+  const goalkeepers = Array.from(mergedGoalkeepers.values()).map((keeper) => ({
+    ...keeper,
+    threatsAgainst40: per40(keeper.threatsAgainst, keeper.minutes),
+    goalsAgainst40: per40(keeper.goalsAgainst, keeper.minutes),
+    savePercentage: keeper.saves + keeper.goalsAgainst > 0 ? keeper.saves / (keeper.saves + keeper.goalsAgainst) * 100 : null,
+    keyMinutesPercentage: teamKeyMinutes > 0 ? keeper.keyMinutes / teamKeyMinutes * 100 : null,
+    goldMinutesPercentage: teamGoldMinutes > 0 ? keeper.goldMinutes / teamGoldMinutes * 100 : null,
+  })).sort((a, b) => b.minutes - a.minutes || a.number - b.number);
+
+  const mergeZones = <Z extends DashboardAnalysis["pitchZones"] | DashboardAnalysis["goalZones"]>(read: (analysis: DashboardAnalysis) => Z): Z => {
+    const zones = clone(read(values[0]));
+    for (const value of values.slice(1)) read(value).forEach((zone, index) => {
+      zones[index].threats += zone.threats; zones[index].goals += zone.goals; zones[index].saves += zone.saves; zones[index].outside += zone.outside;
+    });
+    zones.forEach((zone) => { zone.goalPercentage = zone.threats > 0 ? zone.goals / zone.threats * 100 : null; const inside = zone.saves + zone.goals; zone.savePercentage = inside > 0 ? zone.saves / inside * 100 : null; });
+    return zones;
+  };
+  const mergePlayingState = (side: "for" | "against") => {
+    const result = clone(values[0].flyingGoalkeeper[side]);
+    for (const value of values.slice(1)) for (const key of ["minutes", "matchesWithState", "threatsFor", "threatsAgainst", "goalsFor", "goalsAgainst", "onTargetFor", "onTargetAgainst"] as const) result[key] += value.flyingGoalkeeper[side][key];
+    result.minutesPerMatch = samples > 0 ? result.minutes / samples : null;
+    result.minutesPerMatchWithState = result.matchesWithState > 0 ? result.minutes / result.matchesWithState : null;
+    return result;
+  };
+  return {
+    records: filtered, samples, analytics,
+    rates: {
+      observedMinutes,
+      threatsFor40: per40(analytics.threats.FOR.total, observedMinutes), threatsAgainst40: per40(analytics.threats.AGAINST.total, observedMinutes),
+      goalsFor40: per40(analytics.goalsFor, observedMinutes), goalsAgainst40: per40(analytics.goalsAgainst, observedMinutes),
+      foulsFor40: per40(analytics.discipline.for.fouls, observedMinutes), foulsAgainst40: per40(analytics.discipline.against.fouls, observedMinutes),
+      possessionLosses40: per40(values.reduce((sum, value) => sum + value.possessionLosses, 0), observedMinutes),
+    },
+    players, goalkeepers, teamKeyMinutes, teamGoldMinutes,
+    trends: values.flatMap((value) => clone(value.trends)).sort((a, b) => a.date.localeCompare(b.date)),
+    pitchZones: mergeZones((analysis) => analysis.pitchZones),
+    goalZones: mergeZones((analysis) => analysis.goalZones),
+    criticalFouls: { for: values.reduce((sum, value) => sum + value.criticalFouls.for, 0), against: values.reduce((sum, value) => sum + value.criticalFouls.against, 0) },
+    possessionLosses: values.reduce((sum, value) => sum + value.possessionLosses, 0),
+    flyingGoalkeeper: { for: mergePlayingState("for"), against: mergePlayingState("against") },
+  };
+}
+
+export function buildDashboardV2(
+  records: readonly DashboardMatchRecord[],
+  scope: DashboardScopeV2,
+): DashboardAnalysis {
+  dashboardBuildMetricsState.calls += 1;
+  const key = dashboardAnalysisCacheKey(records, scope);
+  const cached = dashboardAnalysisCache.get(key);
+  if (cached) {
+    dashboardBuildMetricsState.cacheHits += 1;
+    dashboardAnalysisCache.delete(key);
+    dashboardAnalysisCache.set(key, cached);
+    return cached;
+  }
+  const snapshot = registeredSnapshotFor(records, scope);
+  if (snapshot) {
+    dashboardBuildMetricsState.cacheHits += 1;
+    writeDashboardAnalysisCache(key, snapshot);
+    return snapshot;
+  }
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const analysis = buildDashboardV2Raw(records, scope);
+  const finishedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  dashboardBuildMetricsState.rawBuilds += 1;
+  dashboardBuildMetricsState.rawMilliseconds += finishedAt - startedAt;
+  dashboardBuildMetricsState.matchesProcessed += records.length;
+  dashboardBuildMetricsState.eventsProcessed += records.reduce((total, record) => total + record.session.events.length, 0);
+  writeDashboardAnalysisCache(key, analysis);
+  return analysis;
+}
+
+/**
+ * Summary/Data fast path. It aggregates complete per-match materialized views
+ * for canonical scopes and deliberately falls back to the proven event-based
+ * engine for filters whose granular semantics are not covered in V1.
+ */
+export function buildDashboardV2FromSnapshots(
+  records: readonly DashboardMatchRecord[],
+  scope: DashboardScopeV2,
+): DashboardAnalysis {
+  dashboardBuildMetricsState.calls += 1;
+  const key = dashboardAnalysisCacheKey(records, scope);
+  const cached = dashboardAnalysisCache.get(key);
+  if (cached) {
+    dashboardBuildMetricsState.cacheHits += 1;
+    return cached;
+  }
+  const aggregated = aggregateRegisteredSnapshots(records, scope);
+  if (aggregated) {
+    dashboardBuildMetricsState.cacheHits += 1;
+    writeDashboardAnalysisCache(key, aggregated);
+    return aggregated;
+  }
+  return buildDashboardV2(records, scope);
+}
+
+export function dashboardBuildMetrics(): Readonly<DashboardBuildMetrics> {
+  return { ...dashboardBuildMetricsState };
+}
+
+export function resetDashboardAnalysisCache(): void {
+  dashboardAnalysisCache.clear();
+  registeredMatchSnapshots.clear();
+  dashboardBuildMetricsState.calls = 0;
+  dashboardBuildMetricsState.cacheHits = 0;
+  dashboardBuildMetricsState.rawBuilds = 0;
+  dashboardBuildMetricsState.rawMilliseconds = 0;
+  dashboardBuildMetricsState.matchesProcessed = 0;
+  dashboardBuildMetricsState.eventsProcessed = 0;
 }
 
 function summarizePlayingState(
