@@ -16,6 +16,7 @@ import {
   DASHBOARD_ANALYTICS_SCHEMA_VERSION,
   hydrateDashboardAnalyticsSnapshots,
   inspectDashboardAnalyticsSnapshots,
+  missingDashboardSnapshotMatchIds,
   readDashboardAnalyticsSnapshots,
   updateDashboardAnalyticsSnapshots,
 } from "./dashboardAnalyticsSnapshots";
@@ -128,6 +129,24 @@ test("actualización incremental procesa únicamente dirty y full rebuild proces
   const rebuilt: number[] = [];
   await updateDashboardAnalyticsSnapshots([dirtyFirst, second], { storage, rebuildAll: true, now: () => 3000, yieldBetweenMatches: false, onProgress: ({ total }) => rebuilt.push(total) });
   assert.deepEqual(rebuilt, [2, 2]);
+});
+
+test("bootstrap automático procesa MISSING y conserva DIRTY para actualización manual", async () => {
+  const storage = new MemoryStorage();
+  const [first, second, third] = buildDashboardFixture();
+  await updateDashboardAnalyticsSnapshots([first], { storage, now: () => 1000, yieldBetweenMatches: false });
+  const changedFirst = withChangedThreat(first);
+  const before = inspectDashboardAnalyticsSnapshots([changedFirst, second, third], readDashboardAnalyticsSnapshots(storage));
+  assert.deepEqual(before.map((item) => item.state), ["DIRTY", "MISSING", "MISSING"]);
+  const missingIds = missingDashboardSnapshotMatchIds(before);
+  assert.deepEqual(missingIds, [second.catalog.matchId, third.catalog.matchId]);
+  await updateDashboardAnalyticsSnapshots(
+    [changedFirst, second, third].filter((record) => missingIds.includes(record.catalog.matchId)),
+    { storage, now: () => 2000, yieldBetweenMatches: false },
+  );
+  const after = inspectDashboardAnalyticsSnapshots([changedFirst, second, third], readDashboardAnalyticsSnapshots(storage));
+  assert.deepEqual(after.map((item) => item.state), ["DIRTY", "CURRENT", "CURRENT"]);
+  assert.equal(after[0].snapshot?.calculatedAt, 1000);
 });
 
 test("stale-while-revalidate conserva snapshot previo y después adopta el nuevo", async () => {

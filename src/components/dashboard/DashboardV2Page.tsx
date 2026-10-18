@@ -38,7 +38,7 @@ import { isActiveMatchEvent } from "../../lib/matchEngine";
 import { DashboardDataTables } from "./DashboardDataTables";
 import { buildGoalkeeperComparisonPanels, goalkeeperClassifiedSaves, goalkeeperSaveOutcomePercentage, GOALKEEPER_SAVE_OUTCOMES, GoalkeeperSortDirection, GoalkeeperSortKey, GoalkeeperTableRow, sortGoalkeeperRows } from "../../lib/dashboardGoalkeeperView";
 import { dashboardTimePercentage, formatDashboardDuration, DashboardSummaryMetric, summaryMetricFavorableWhenHigher } from "../../lib/dashboardSemantics";
-import { DashboardSnapshotInspection, hydrateDashboardAnalyticsSnapshots, updateDashboardAnalyticsSnapshots } from "../../lib/dashboardAnalyticsSnapshots";
+import { DashboardSnapshotInspection, hydrateDashboardAnalyticsSnapshots, missingDashboardSnapshotMatchIds, updateDashboardAnalyticsSnapshots } from "../../lib/dashboardAnalyticsSnapshots";
 import { beginDashboardInteraction, finishDashboardInteractionAfterPaint } from "../../lib/dashboardPerformance";
 
 const AREAS: Array<[DashboardArea, string]> = [["SUMMARY", "RESUMEN"], ["DATA", "DATOS"], ["PLAYERS", "JUGADORES"], ["GOALKEEPERS", "PORTEROS"], ["COMBINATIONS", "COMBINACIONES"], ["MAPS", "MAPAS / ZONAS"]];
@@ -149,6 +149,7 @@ export function DashboardV2Page({ canViewIndividualAnalytics = true }: { canView
   const [snapshotProgress, setSnapshotProgress] = useState<{ completed: number; total: number } | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const navigationRef = useRef<HTMLElement>(null);
+  const autoBootstrapKeyRef = useRef<string | null>(null);
 
   useEffect(() => ensureRegistry(), [ensureRegistry]);
   useEffect(() => {
@@ -188,6 +189,8 @@ export function DashboardV2Page({ canViewIndividualAnalytics = true }: { canView
     [analyticsRecords, snapshotRevision],
   );
   const staleSnapshotCount = snapshotInspections.filter((inspection) => inspection.state !== "CURRENT").length;
+  const missingSnapshotIds = useMemo(() => missingDashboardSnapshotMatchIds(snapshotInspections), [snapshotInspections]);
+  const missingSnapshotKey = missingSnapshotIds.join("|");
   const currentSnapshots = snapshotInspections.filter((inspection) => inspection.state === "CURRENT" && inspection.snapshot);
   const lastSnapshotUpdate = currentSnapshots.length > 0
     ? Math.max(...currentSnapshots.map((inspection) => inspection.snapshot!.calculatedAt))
@@ -208,6 +211,24 @@ export function DashboardV2Page({ canViewIndividualAnalytics = true }: { canView
       setSnapshotProgress(null);
     }
   };
+  useEffect(() => {
+    if (!ready || analyticsRecords.length === 0 || missingSnapshotIds.length === 0) return;
+    if (autoBootstrapKeyRef.current === missingSnapshotKey) return;
+    autoBootstrapKeyRef.current = missingSnapshotKey;
+    const missing = new Set(missingSnapshotIds);
+    const candidates = analyticsRecords.filter((record) => missing.has(record.catalog.matchId));
+    setSnapshotError(null);
+    setSnapshotProgress({ completed: 0, total: candidates.length });
+    void updateDashboardAnalyticsSnapshots(candidates, {
+      onProgress: ({ completed, total }) => setSnapshotProgress({ completed, total }),
+    }).then(() => {
+      setSnapshotRevision((value) => value + 1);
+    }).catch((error) => {
+      setSnapshotError(error instanceof Error ? error.message : "No se pudieron preparar las estadísticas.");
+    }).finally(() => {
+      setSnapshotProgress(null);
+    });
+  }, [analyticsRecords, missingSnapshotIds, missingSnapshotKey, ready]);
   const clubs = clubIds.map((clubId) => useTeamStore.getState().teams[clubId]?.club).filter((club): club is NonNullable<typeof club> => Boolean(club && club.active && !club.archivedAt && !club.deletedAt));
   useEffect(() => {
     if (!ready || fixture || scope.clubId === currentClubId) return;
@@ -219,9 +240,10 @@ export function DashboardV2Page({ canViewIndividualAnalytics = true }: { canView
   const matches = useMemo(() => visibleMatchCatalog(resolvedRecords.map((record) => record.catalog), scope.includeArchived).filter((match) => matchCatalogClubId(match) === scope.clubId && match.teamId === scope.teamId && match.seasonId === scope.seasonId).map((match) => { const record = resolvedRecords.find((item) => item.catalog.matchId === match.matchId); const score = record ? replayDashboardMatch(record.session.players, record.session.events).score : null; const competitionType = record ? matchCompetition(record) : undefined; return { ...match, matchday: record?.session.preparation?.matchday, competitionType, competitionLabel: competitionType ? ({ LEAGUE: "Liga", CUP: "Copa", FRIENDLY: "Amistoso", OTHER: "Otra", UNSPECIFIED: "Sin clasificar" } as const)[competitionType] : undefined, scoreLabel: score ? `${score.for}-${score.against}` : undefined }; }).sort((a, b) => b.date.localeCompare(a.date)), [resolvedRecords, scope.clubId, scope.includeArchived, scope.seasonId, scope.teamId]);
   const rivals = useMemo(() => Array.from(new Set(matches.map((match) => match.opponent))).sort(), [matches]);
   const snapshotArea = area === "SUMMARY" || area === "DATA";
-  const analysis = useMemo(() => snapshotArea ? buildDashboardV2FromSnapshots(resolvedRecords, scope) : buildDashboardV2(resolvedRecords, scope), [resolvedRecords, scope, snapshotArea]);
-  const goalkeeperOverview = useMemo(() => snapshotArea ? buildDashboardV2FromSnapshots(resolvedRecords, { ...scope, goalkeeperIds: [] }) : buildDashboardV2(resolvedRecords, { ...scope, goalkeeperIds: [] }), [resolvedRecords, scope, snapshotArea]);
-  const reference = useMemo(() => snapshotArea ? buildDashboardV2FromSnapshots(resolvedRecords, referenceScope) : buildDashboardV2(resolvedRecords, referenceScope), [referenceScope, resolvedRecords, snapshotArea]);
+  const preparingInitialSnapshots = snapshotArea && missingSnapshotIds.length > 0;
+  const analysis = useMemo(() => preparingInitialSnapshots ? buildDashboardV2FromSnapshots([], scope) : snapshotArea ? buildDashboardV2FromSnapshots(resolvedRecords, scope) : buildDashboardV2(resolvedRecords, scope), [preparingInitialSnapshots, resolvedRecords, scope, snapshotArea]);
+  const goalkeeperOverview = useMemo(() => preparingInitialSnapshots ? buildDashboardV2FromSnapshots([], { ...scope, goalkeeperIds: [] }) : snapshotArea ? buildDashboardV2FromSnapshots(resolvedRecords, { ...scope, goalkeeperIds: [] }) : buildDashboardV2(resolvedRecords, { ...scope, goalkeeperIds: [] }), [preparingInitialSnapshots, resolvedRecords, scope, snapshotArea]);
+  const reference = useMemo(() => preparingInitialSnapshots ? buildDashboardV2FromSnapshots([], referenceScope) : snapshotArea ? buildDashboardV2FromSnapshots(resolvedRecords, referenceScope) : buildDashboardV2(resolvedRecords, referenceScope), [preparingInitialSnapshots, referenceScope, resolvedRecords, snapshotArea]);
   const naturalGoalkeepers = useMemo(() => new Set((workspace?.players ?? []).filter((player) => player.primaryPosition === "GOALKEEPER").map((player) => player.playerId)), [workspace?.players]);
   const fieldPlayers = useMemo(() => analysis.players.filter((player) => fixture ? player.position !== "PORTERO" : !naturalGoalkeepers.has(player.playerId)), [analysis.players, fixture, naturalGoalkeepers]);
   const scores = useMemo(() => buildPlayerScores(fieldPlayers), [fieldPlayers]);
@@ -259,20 +281,22 @@ export function DashboardV2Page({ canViewIndividualAnalytics = true }: { canView
     <AnalyticsSnapshotStatus inspections={snapshotInspections} lastUpdatedAt={lastSnapshotUpdate} progress={snapshotProgress} error={snapshotError} onUpdate={() => void updateSnapshots(false)} onRebuild={() => void updateSnapshots(true)}/>
     <nav ref={navigationRef} aria-label="Secciones del Dashboard" className="scroll-mt-28 flex gap-2 overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/95 p-2 shadow-xl">{AREAS.filter(([key]) => key !== "COMBINATIONS" || canViewIndividualAnalytics).map(([key, label]) => <button key={key} type="button" onPointerDown={() => beginDashboardInteraction("change-dashboard-tab")} onClick={() => changeArea(key)} className={`min-h-11 shrink-0 rounded-xl px-4 text-xs font-black ${area === key ? "bg-cyan-300 text-slate-950" : "text-slate-400"}`}>{label}</button>)}</nav>
     <StickyDashboardNav anchor={navigationRef} area={area} canViewIndividualAnalytics={canViewIndividualAnalytics} filterCount={dashboardActiveFilterCount(scope)} scope={scope} matches={matches} videoHref={videoHref} videoCount={videoCount} mode={mode} onMode={setMode} onArea={changeArea} onScope={setScope}/>
-    {!ready ? <p className="p-10 text-center text-slate-500">Preparando análisis…</p> : area === "COMBINATIONS" ? <DashboardCombinations rosterPlayers={fixture ? undefined : workspace?.players} records={resolvedRecords} scope={scope} canViewIndividualAnalytics={canViewIndividualAnalytics} /> : analysis.analytics.matches === 0 ? <Empty /> : <>{area === "SUMMARY" && <Summary analysis={analysis} reference={reference} mode={mode} comparisonEnabled={comparisonEnabled} scope={scope} onScope={setScope} referenceScope={referenceScope} allRecords={resolvedRecords} momentumRecords={resolvedRecords} momentumMatches={matches} />}{area === "DATA" && <DashboardDataTables analysis={analysis} referenceScope={referenceScope} allRecords={resolvedRecords} scope={scope} onScope={setScope} mode={mode}/>} {area === "PLAYERS" && <><div className="flex flex-wrap items-center justify-between gap-2"><SectionTitle eyebrow="PORTEROS NATURALES EN SU ANÁLISIS ESPECÍFICO">JUGADORES</SectionTitle><DashboardVideoLink records={resolvedRecords} scope={scope} label="VÍDEOS DEL SCOPE"/></div><PlayerTableV2 analysis={analysis} players={fieldPlayers} scores={scores} mode={mode} detailQuery={query} /></>}{area === "GOALKEEPERS" && <Goalkeepers analysis={analysis} overview={goalkeeperOverview} query={query} onPoint={setSelectedPoint} scope={scope} onScope={setScope} mode={mode} allRecords={resolvedRecords} onNavigate={(href) => router.push(href)}/>} {area === "MAPS" && <Maps analysis={analysis} scope={scope} onScope={setScope} onPoint={setSelectedPoint} allRecords={resolvedRecords} />}</>}
+    {!ready ? <p className="p-10 text-center text-slate-500">Preparando análisis…</p> : preparingInitialSnapshots ? <div className="rounded-2xl border border-cyan-900/60 bg-cyan-950/20 p-10 text-center"><p className="text-sm font-black text-cyan-200">PREPARANDO ESTADÍSTICAS…</p><p className="mt-2 text-xs text-slate-400">{snapshotProgress?.completed ?? 0} / {snapshotProgress?.total ?? missingSnapshotIds.length} partidos</p><p className="mt-3 text-[10px] text-slate-600">Puedes seguir usando los filtros y controles mientras termina la preparación.</p></div> : area === "COMBINATIONS" ? <DashboardCombinations rosterPlayers={fixture ? undefined : workspace?.players} records={resolvedRecords} scope={scope} canViewIndividualAnalytics={canViewIndividualAnalytics} /> : analysis.analytics.matches === 0 ? <Empty /> : <>{area === "SUMMARY" && <Summary analysis={analysis} reference={reference} mode={mode} comparisonEnabled={comparisonEnabled} scope={scope} onScope={setScope} referenceScope={referenceScope} allRecords={resolvedRecords} momentumRecords={resolvedRecords} momentumMatches={matches} />}{area === "DATA" && <DashboardDataTables analysis={analysis} referenceScope={referenceScope} allRecords={resolvedRecords} scope={scope} onScope={setScope} mode={mode}/>} {area === "PLAYERS" && <><div className="flex flex-wrap items-center justify-between gap-2"><SectionTitle eyebrow="PORTEROS NATURALES EN SU ANÁLISIS ESPECÍFICO">JUGADORES</SectionTitle><DashboardVideoLink records={resolvedRecords} scope={scope} label="VÍDEOS DEL SCOPE"/></div><PlayerTableV2 analysis={analysis} players={fieldPlayers} scores={scores} mode={mode} detailQuery={query} /></>}{area === "GOALKEEPERS" && <Goalkeepers analysis={analysis} overview={goalkeeperOverview} query={query} onPoint={setSelectedPoint} scope={scope} onScope={setScope} mode={mode} allRecords={resolvedRecords} onNavigate={(href) => router.push(href)}/>} {area === "MAPS" && <Maps analysis={analysis} scope={scope} onScope={setScope} onPoint={setSelectedPoint} allRecords={resolvedRecords} />}</>}
   </main>{selectedPoint && <EventTracePanel records={analysis.records} point={selectedPoint} onClose={() => setSelectedPoint(null)} returnTo={`/dashboard?${query}#maps`}/>}</div>;
 }
 
 function AnalyticsSnapshotStatus({ inspections, lastUpdatedAt, progress, error, onUpdate, onRebuild }: { inspections: DashboardSnapshotInspection[]; lastUpdatedAt: number | null; progress: { completed: number; total: number } | null; error: string | null; onUpdate: () => void; onRebuild: () => void }) {
   const pending = inspections.filter((inspection) => inspection.state !== "CURRENT").length;
   const missing = inspections.filter((inspection) => inspection.state === "MISSING").length;
+  const initialPreparation = missing > 0 && !error;
   const status = progress
-    ? progress.total > 1 ? `ACTUALIZANDO ESTADÍSTICAS · ${progress.completed}/${progress.total} PARTIDOS` : "ACTUALIZANDO 1 PARTIDO"
+    ? initialPreparation ? `PREPARANDO ESTADÍSTICAS · ${progress.completed}/${progress.total} PARTIDOS` : progress.total > 1 ? `ACTUALIZANDO ESTADÍSTICAS · ${progress.completed}/${progress.total} PARTIDOS` : "ACTUALIZANDO 1 PARTIDO"
+    : initialPreparation ? `PREPARANDO ESTADÍSTICAS · 0/${missing} PARTIDOS`
     : pending > 0 ? `${pending} ${pending === 1 ? "PARTIDO PENDIENTE" : "PARTIDOS PENDIENTES"} DE ACTUALIZAR`
       : "ESTADÍSTICAS ACTUALIZADAS";
   return <section data-analytics-snapshot-status data-pending={pending} className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-3 py-2 ${pending > 0 ? "border-amber-800 bg-amber-950/25" : "border-emerald-900 bg-emerald-950/20"}`}>
     <div><strong className={`text-[10px] tracking-[.12em] ${pending > 0 ? "text-amber-200" : "text-emerald-200"}`}>{status}</strong><p className="mt-0.5 text-[9px] text-slate-500">{lastUpdatedAt ? `Última actualización: ${new Date(lastUpdatedAt).toLocaleString("es-ES")}` : `${missing}/${inspections.length} partidos sin precálculo`}{pending > 0 && lastUpdatedAt ? " · Se mantiene el último snapshot válido hasta actualizar." : ""}</p>{error && <p role="alert" className="mt-1 text-[9px] font-bold text-rose-300">{error}</p>}</div>
-    <div className="flex items-center gap-2">{pending > 0 && <button type="button" disabled={Boolean(progress)} onClick={onUpdate} className="min-h-9 rounded-xl bg-amber-300 px-3 text-[9px] font-black text-slate-950 disabled:opacity-50">ACTUALIZAR ESTADÍSTICAS</button>}<details className="relative"><summary className="cursor-pointer list-none rounded-xl border border-slate-700 px-3 py-2 text-[9px] font-black text-slate-400">OPCIONES</summary><div className="absolute right-0 z-20 mt-1 w-48 rounded-xl border border-slate-700 bg-slate-950 p-2 shadow-xl"><button type="button" disabled={Boolean(progress)} onClick={onRebuild} className="min-h-9 w-full rounded-lg px-2 text-left text-[9px] font-black text-slate-300 hover:bg-slate-800 disabled:opacity-50">REGENERAR TODO</button><p className="px-2 pt-1 text-[8px] text-slate-600">Recuperación, cambio de esquema o diagnóstico.</p></div></details></div>
+    <div className="flex items-center gap-2">{pending > 0 && !initialPreparation && <button type="button" disabled={Boolean(progress)} onClick={onUpdate} className="min-h-9 rounded-xl bg-amber-300 px-3 text-[9px] font-black text-slate-950 disabled:opacity-50">ACTUALIZAR ESTADÍSTICAS</button>}<details className="relative"><summary className="cursor-pointer list-none rounded-xl border border-slate-700 px-3 py-2 text-[9px] font-black text-slate-400">OPCIONES</summary><div className="absolute right-0 z-20 mt-1 w-48 rounded-xl border border-slate-700 bg-slate-950 p-2 shadow-xl"><button type="button" disabled={Boolean(progress)} onClick={onRebuild} className="min-h-9 w-full rounded-lg px-2 text-left text-[9px] font-black text-slate-300 hover:bg-slate-800 disabled:opacity-50">REGENERAR TODO</button><p className="px-2 pt-1 text-[8px] text-slate-600">Recuperación, cambio de esquema o diagnóstico.</p></div></details></div>
   </section>;
 }
 

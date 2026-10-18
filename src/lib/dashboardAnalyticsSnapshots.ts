@@ -47,6 +47,14 @@ export interface DashboardSnapshotProgress {
   matchId: string;
 }
 
+export function missingDashboardSnapshotMatchIds(
+  inspections: readonly DashboardSnapshotInspection[],
+): string[] {
+  return inspections
+    .filter((inspection) => inspection.state === "MISSING")
+    .map((inspection) => inspection.matchId);
+}
+
 function browserStorage(): AnalyticsSnapshotStorage | null {
   return typeof window === "undefined" ? null : window.localStorage;
 }
