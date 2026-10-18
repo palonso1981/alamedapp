@@ -357,7 +357,7 @@ export function upsertVideoCalibration(
   if (event.period !== input.period || !segment.periods.includes(input.period)) throw new Error("La calibración no pertenece al periodo del evento.");
   if (input.syncSegmentId !== videoSyncSegmentId(segment.id, input.period)) throw new Error("El segmento de sincronización no es coherente.");
   if (!videoEventTime(event)) throw new Error("Este evento no conserva un instante LIVE fiable.");
-  if (!Number.isSafeInteger(input.videoSecond) || input.videoSecond < 0) throw new Error("El tiempo de vídeo no es válido.");
+  if (!Number.isFinite(input.videoSecond) || input.videoSecond < 0) throw new Error("El tiempo de vídeo no es válido.");
   const now = input.now ?? Date.now();
   const previous = (session.videoCalibrations ?? []).find((item) => item.id === input.id);
   const calibration: MatchVideoCalibration = {

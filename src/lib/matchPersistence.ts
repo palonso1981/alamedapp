@@ -220,7 +220,7 @@ function isVideoSegment(value: unknown): value is MatchVideoSegment {
     Array.isArray(value.periods) && value.periods.length > 0 &&
     value.periods.every((period) => period === 1 || period === 2) &&
     typeof value.leadSeconds === "number" && Number.isInteger(value.leadSeconds) && value.leadSeconds >= 0 && value.leadSeconds <= 20 &&
-    Array.isArray(value.anchors) && value.anchors.every((anchor) => isObject(anchor) && typeof anchor.id === "string" && typeof anchor.eventId === "string" && typeof anchor.videoSecond === "number" && Number.isSafeInteger(anchor.videoSecond) && anchor.videoSecond >= 0) &&
+    Array.isArray(value.anchors) && value.anchors.every((anchor) => isObject(anchor) && typeof anchor.id === "string" && typeof anchor.eventId === "string" && typeof anchor.videoSecond === "number" && Number.isFinite(anchor.videoSecond) && anchor.videoSecond >= 0) &&
     typeof value.createdAt === "number" &&
     typeof value.updatedAt === "number";
 }
@@ -231,7 +231,7 @@ function isVideoEventOverride(value: unknown, expectedMatchId: string): value is
     typeof value.eventId === "string" &&
     typeof value.segmentId === "string" &&
     (value.syncSegmentId === undefined || typeof value.syncSegmentId === "string") &&
-    typeof value.videoSecond === "number" && Number.isSafeInteger(value.videoSecond) && value.videoSecond >= 0 &&
+    typeof value.videoSecond === "number" && Number.isFinite(value.videoSecond) && value.videoSecond >= 0 &&
     (value.status === undefined || value.status === "VERIFIED") &&
     (value.timeSource === undefined || ["observedAt", "createdAt", "manual"].includes(String(value.timeSource))) &&
     typeof value.createdAt === "number" &&
@@ -242,7 +242,7 @@ function isVideoCalibration(value: unknown, expectedMatchId: string): value is M
   return isObject(value) && value.matchId === expectedMatchId && typeof value.id === "string" &&
     typeof value.segmentId === "string" && typeof value.syncSegmentId === "string" &&
     (value.period === 1 || value.period === 2) && typeof value.eventId === "string" &&
-    typeof value.videoSecond === "number" && Number.isSafeInteger(value.videoSecond) && value.videoSecond >= 0 &&
+    typeof value.videoSecond === "number" && Number.isFinite(value.videoSecond) && value.videoSecond >= 0 &&
     (value.kind === "INITIAL" || value.kind === "RECALIBRATION") &&
     typeof value.createdAt === "number" && typeof value.updatedAt === "number";
 }
