@@ -17,8 +17,8 @@ import {
   goalkeeperAtPosition,
   isActiveMatchEvent,
   REGULATION_MATCH_CLOCK,
-  replayMatch,
 } from "./matchEngine";
+import { replayDashboardMatch } from "./dashboardReplayCache";
 import {
   matchCatalogClubId,
   MatchCatalogEntry,
@@ -247,7 +247,7 @@ function goalkeeperMinutes(
   endClock: { period: number; minute: number },
 ): Map<string, number> {
   const result = new Map<string, number>();
-  const replay = replayMatch(session.players, events, { currentClock: endClock });
+  const replay = replayDashboardMatch(session.players, events, { currentClock: endClock });
   const sorted = replay.timeline;
   const end = deriveGlobalMinute(endClock.period, endClock.minute);
   sorted.forEach((entry, index) => {
@@ -268,16 +268,26 @@ function goalkeeperMinutes(
   return result;
 }
 
+const goalkeeperThreatCache = new WeakMap<MatchSession, Map<string, string | null>>();
+
 export function normalGoalkeeperForThreat(
   session: MatchSession,
   event: ThreatRecordedEvent,
 ): string | null {
-  const entry = replayMatch(session.players, session.events).timeline.find(
+  const cached = goalkeeperThreatCache.get(session)?.get(event.id);
+  if (cached !== undefined) return cached;
+  const entry = replayDashboardMatch(session.players, session.events).timeline.find(
     (candidate) => candidate.event.id === event.id,
   );
-  if (entry?.gameContexts.includes("FLYING_GOALKEEPER")) return null;
-  const goalkeeper = goalkeeperAtPosition(session.players, session.events, event);
-  return goalkeeper.status === "PLAYER" ? goalkeeper.playerId : null;
+  let result: string | null = null;
+  if (!entry?.gameContexts.includes("FLYING_GOALKEEPER")) {
+    const goalkeeper = goalkeeperAtPosition(session.players, session.events, event);
+    result = goalkeeper.status === "PLAYER" ? goalkeeper.playerId : null;
+  }
+  const byEvent = goalkeeperThreatCache.get(session) ?? new Map<string, string | null>();
+  byEvent.set(event.id, result);
+  goalkeeperThreatCache.set(session, byEvent);
+  return result;
 }
 
 export function filterDashboardMatches(
@@ -336,7 +346,7 @@ export function buildDashboardAnalytics(
   for (const { catalog, session } of selected) {
     const events = activeEvents(session, period);
     const endClock = matchEndClock(session, period);
-    const replay = replayMatch(session.players, events, { currentClock: endClock });
+    const replay = replayDashboardMatch(session.players, events, { currentClock: endClock });
     const targetMinutes = session.preparation?.targetMinutes ?? {};
     const appeared = new Set(
       replay.timeline.flatMap((entry) => entry.lineupPlayerIds),

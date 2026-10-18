@@ -20,7 +20,7 @@ function HabitualValue({ metric, suffix = "" }: { metric: HabitualMetric; suffix
 
 function HabitualReference({ metric, suffix = "" }: { metric: HabitualMetric; suffix?: string }) {
   const rounded = formatRoundedHabitualRange(metric, suffix);
-  if (!rounded) return <span title={`Se necesitan ${MIN_MATCHES_FOR_HABITUAL_RANGE} partidos comparables`} className="text-[8px] font-normal italic text-slate-600">(—)</span>;
+  if (!rounded) return null;
   return <span data-habitual-reference title={`Rango habitual (P25–P75): ${range(metric, suffix)}`} aria-label={`Rango habitual, ${range(metric, suffix)}`} className="text-[8px] font-normal italic text-slate-500">({rounded})</span>;
 }
 

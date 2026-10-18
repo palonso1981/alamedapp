@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { beginDashboardInteraction, finishDashboardInteractionAfterPaint } from "../../lib/dashboardPerformance";
 import {
   filterSearchableMatches,
   matchSelectionLabel,
@@ -69,6 +70,10 @@ export function MultiMatchCombobox({
     };
   }, [open]);
 
+  useEffect(() => {
+    if (open) finishDashboardInteractionAfterPaint("open-match-selector");
+  }, [open]);
+
   return (
     <div
       ref={rootRef}
@@ -81,7 +86,7 @@ export function MultiMatchCombobox({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={`${id}-list`}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => { beginDashboardInteraction("open-match-selector"); setOpen((current) => !current); }}
         className="flex min-h-11 w-full items-center gap-2 rounded-xl bg-slate-800 px-3 text-left text-xs font-black focus:outline-none focus:ring-2 focus:ring-cyan-400"
       >
         <span className="block min-w-0 flex-1 truncate">

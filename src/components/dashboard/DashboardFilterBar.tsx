@@ -11,6 +11,7 @@ import { KeeperBodyPart, SaveOutcome, Season, TeamProfile, ThreatOutcome } from 
 import { SearchableMatchCombobox } from "./SearchableMatchCombobox";
 import { MultiMatchCombobox } from "./MultiMatchCombobox";
 import { SearchableMatch } from "../../lib/dashboardSelectors";
+import { beginDashboardInteraction, finishDashboardInteractionAfterPaint } from "../../lib/dashboardPerformance";
 
 const PHASES: Array<[DashboardPhaseFilter, string]> = [
   ["POSITIONAL", "Posicional"], ["TRANSITION", "Transición"], ["SET_PIECE", "ABP"],
@@ -98,6 +99,9 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
     document.addEventListener("keydown", closeEscape);
     return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeEscape); };
   }, [advancedOpen]);
+  useEffect(() => {
+    if (advancedOpen) finishDashboardInteractionAfterPaint("open-advanced-filters");
+  }, [advancedOpen]);
 
   return <><div data-dashboard-filter-context className="overflow-hidden rounded-3xl border border-slate-700 bg-slate-950/95 shadow-xl"><section className="p-3">
     <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -110,7 +114,7 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
         {!fixture && seasons.filter((season) => season.teamId === scope.teamId).map((season) => <option key={season.seasonId} value={season.seasonId}>{season.label}</option>)}
         {fixture && <option value={scope.seasonId}>2026-27</option>}
       </select>
-      <select aria-label="Competición" value={scope.competition} onChange={(event) => patch({ competition: event.target.value as DashboardScopeV2["competition"] })} className="min-h-10 min-w-32 rounded-xl bg-indigo-950 px-3 text-xs font-black text-indigo-100"><option value="LEAGUE">Liga</option><option value="CUP">Copa</option><option value="FRIENDLY">Amistoso</option><option value="OTHER">Otra</option><option value="ALL">Todas</option><option value="UNSPECIFIED">Sin clasificar</option></select>
+      <select aria-label="Competición" value={scope.competition} onPointerDown={() => { beginDashboardInteraction("open-competition-selector"); finishDashboardInteractionAfterPaint("open-competition-selector"); }} onChange={(event) => patch({ competition: event.target.value as DashboardScopeV2["competition"] })} className="min-h-10 min-w-32 rounded-xl bg-indigo-950 px-3 text-xs font-black text-indigo-100"><option value="LEAGUE">Liga</option><option value="CUP">Copa</option><option value="FRIENDLY">Amistoso</option><option value="OTHER">Otra</option><option value="ALL">Todas</option><option value="UNSPECIFIED">Sin clasificar</option></select>
       <MultiMatchCombobox matches={matches} values={scope.matchIds} onChange={(matchIds) => patch({ matchIds })}/>
       <select aria-label="Portero funcional" value={scope.goalkeeperIds.length === 1 ? scope.goalkeeperIds[0] : "ALL"} onChange={(event) => patch({ goalkeeperIds: event.target.value === "ALL" ? [] : [event.target.value] })} className="min-h-10 min-w-40 rounded-xl bg-sky-950 px-3 text-xs font-black text-sky-100"><option value="ALL">Todos los porteros</option>{goalkeepers.map((keeper) => <option key={keeper.playerId} value={keeper.playerId}>🥅 {keeper.name}</option>)}</select>
       {(["ALL", 1, 2] as const).map((period) => <MultiButton key={period} active={scope.period === period} onClick={() => patch({ period })}>{period === "ALL" ? "TODO" : `P${period}`}</MultiButton>)}
@@ -127,10 +131,10 @@ export function DashboardFilterBar({ clubName, clubs = [], onClub, scope, teams,
         {comparisonEnabled && <select aria-label="Referencia" value={referencePreset} onChange={(event) => onReferencePreset(event.target.value as DashboardReferencePreset)} className="min-h-9 rounded-xl bg-amber-950/70 px-3 text-[10px] font-black text-amber-100">
           <optgroup label="Preset"><option value="SEASON">Media temporada</option><option value="HOME">Media local</option><option value="AWAY">Media visitante</option><option value="WINS">Victorias</option><option value="DRAWS">Empates</option><option value="LOSSES">Derrotas</option><option value="P1">Media P1</option><option value="P2">Media P2</option><option value="FILTERED">Selección filtrada</option></optgroup><optgroup label="Flexible"><option value="MATCH">Partido concreto</option><option value="CUSTOM">Referencia personalizada</option></optgroup>
         </select>}
-        {fixedPer40 ? <span className="text-[10px] font-black text-cyan-300">COMBINACIONES · x40 · RESTO DEL MISMO CONTEXTO</span> : <div className="flex rounded-xl bg-slate-900 p-1">{(["TOTALS", "PER_MATCH", "PER_40"] as DashboardValueMode[]).map((item) => <button key={item} type="button" onClick={() => onMode(item)} className={`min-h-8 rounded-lg px-2 text-[9px] font-black ${mode === item ? "bg-white text-slate-950" : "text-slate-500"}`}>{item === "TOTALS" ? "TOTALES" : item === "PER_MATCH" ? "POR PARTIDO" : "POR 40"}</button>)}</div>}
+        {fixedPer40 ? <span className="text-[10px] font-black text-cyan-300">COMBINACIONES · x40 · RESTO DEL MISMO CONTEXTO</span> : <div className="flex rounded-xl bg-slate-900 p-1">{(["TOTALS", "PER_MATCH", "PER_40"] as DashboardValueMode[]).map((item) => <button key={item} type="button" onPointerDown={() => beginDashboardInteraction("change-dashboard-mode")} onClick={() => onMode(item)} className={`min-h-8 rounded-lg px-2 text-[9px] font-black ${mode === item ? "bg-white text-slate-950" : "text-slate-500"}`}>{item === "TOTALS" ? "TOTALES" : item === "PER_MATCH" ? "POR PARTIDO" : "POR 40"}</button>)}</div>}
       </div>
     </div>
-    </section>{comparisonEnabled && comparison}</div>{comparisonEnabled && (referencePreset === "MATCH" || referencePreset === "CUSTOM") && <ReferenceBuilder preset={referencePreset} scope={referenceScope} analysis={scope} matches={matches} rivals={rivals} onChange={onReferenceScope}/>}<details ref={advancedRef} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)} id="dashboard-advanced-filters" data-dashboard-advanced-filters className="rounded-2xl border border-slate-800 bg-slate-900/80 px-3 py-2">
+    </section>{comparisonEnabled && comparison}</div>{comparisonEnabled && (referencePreset === "MATCH" || referencePreset === "CUSTOM") && <ReferenceBuilder preset={referencePreset} scope={referenceScope} analysis={scope} matches={matches} rivals={rivals} onChange={onReferenceScope}/>}<details ref={advancedRef} onPointerDown={() => beginDashboardInteraction("open-advanced-filters")} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)} id="dashboard-advanced-filters" data-dashboard-advanced-filters className="rounded-2xl border border-slate-800 bg-slate-900/80 px-3 py-2">
       <summary className="cursor-pointer text-[10px] font-black text-slate-400">FILTROS AVANZADOS · {chips.length}</summary>
       <div data-advanced-filter-panel className="fixed inset-x-3 top-28 z-50 max-h-[calc(100vh-8rem)] space-y-3 overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950 p-4 shadow-2xl sm:left-auto sm:right-5 sm:w-[min(46rem,calc(100vw-2.5rem))]">
         <div className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-slate-950 pb-2"><b className="text-xs text-white">FILTROS AVANZADOS · {chips.length}</b><div className="flex gap-2">{chips.length > 0 && <button type="button" onClick={clearAll} className="min-h-9 rounded-xl bg-amber-950 px-3 text-[10px] font-black text-amber-200">LIMPIAR TODO</button>}<button type="button" onClick={() => { if (advancedRef.current) advancedRef.current.open = false; setAdvancedOpen(false); }} className="min-h-9 rounded-xl border border-slate-700 px-3 text-[10px] font-black">CERRAR ×</button></div></div>

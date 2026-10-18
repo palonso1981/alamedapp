@@ -19,8 +19,8 @@ import { DashboardMatchRecord } from "../../lib/dashboardAnalytics";
 import { buildDashboardFixture, DASHBOARD_FIXTURE_CLUB_ID, DASHBOARD_FIXTURE_SEASON_ID, DASHBOARD_FIXTURE_TEAM_ID } from "../../lib/dashboardFixture";
 import { listMatchCatalog, matchCatalogClubId, visibleMatchCatalog } from "../../lib/matchCatalog";
 import { loadMatchSession } from "../../lib/matchPersistence";
-import { buildDashboardV2, buildPlayerScores, comparisonEnabledFromSearchParams, dashboardActiveFilterCount, DashboardArea, DashboardReferencePreset, DashboardScopeV2, DashboardValueMode, defaultDashboardCompetition, emptyDashboardScope, filterDashboardMatchSelection, hasDashboardScopeSearchParams, matchCompetition, mergeDashboardSearchParams, normalizeDashboardArea, normalizeDashboardCount, phaseImpactShare, referenceScopeForPreset, scopeFromSearchParams, teamMetricValue, teamThreatProfile } from "../../lib/dashboardV2";
-import { replayMatch } from "../../lib/matchEngine";
+import { buildDashboardV2, buildDashboardV2FromSnapshots, buildPlayerScores, comparisonEnabledFromSearchParams, dashboardActiveFilterCount, DashboardArea, DashboardReferencePreset, DashboardScopeV2, DashboardValueMode, defaultDashboardCompetition, emptyDashboardScope, filterDashboardMatchSelection, hasDashboardScopeSearchParams, matchCompetition, mergeDashboardSearchParams, normalizeDashboardArea, normalizeDashboardCount, phaseImpactShare, referenceScopeForPreset, scopeFromSearchParams, teamMetricValue, teamThreatProfile } from "../../lib/dashboardV2";
+import { replayDashboardMatch } from "../../lib/dashboardReplayCache";
 import { useTeamStore } from "../../store/useTeamStore";
 import { ThreatPhase } from "../../types";
 import { dashboardVideoHref, dashboardVideoItems, DashboardVideoOverride } from "../../lib/dashboardVideoContext";
@@ -38,6 +38,8 @@ import { isActiveMatchEvent } from "../../lib/matchEngine";
 import { DashboardDataTables } from "./DashboardDataTables";
 import { buildGoalkeeperComparisonPanels, goalkeeperClassifiedSaves, goalkeeperSaveOutcomePercentage, GOALKEEPER_SAVE_OUTCOMES, GoalkeeperSortDirection, GoalkeeperSortKey, GoalkeeperTableRow, sortGoalkeeperRows } from "../../lib/dashboardGoalkeeperView";
 import { dashboardTimePercentage, formatDashboardDuration, DashboardSummaryMetric, summaryMetricFavorableWhenHigher } from "../../lib/dashboardSemantics";
+import { DashboardSnapshotInspection, hydrateDashboardAnalyticsSnapshots, updateDashboardAnalyticsSnapshots } from "../../lib/dashboardAnalyticsSnapshots";
+import { beginDashboardInteraction, finishDashboardInteractionAfterPaint } from "../../lib/dashboardPerformance";
 
 const AREAS: Array<[DashboardArea, string]> = [["SUMMARY", "RESUMEN"], ["DATA", "DATOS"], ["PLAYERS", "JUGADORES"], ["GOALKEEPERS", "PORTEROS"], ["COMBINATIONS", "COMBINACIONES"], ["MAPS", "MAPAS / ZONAS"]];
 const PHASE_LABEL: Record<ThreatPhase, string> = { POSITIONAL: "POSICIONAL", TRANSITION: "TRANSICIÓN", SET_PIECE_CORNER: "CÓRNER", SET_PIECE_FREE_KICK: "FALTA", SET_PIECE_KICK_IN: "BANDA", FLYING_GOALKEEPER: "P-J", PENALTY: "PENALTI", DOUBLE_PENALTY: "DOBLE PENALTI", UNSPECIFIED: "SIN FASE" };
@@ -143,6 +145,9 @@ export function DashboardV2Page({ canViewIndividualAnalytics = true }: { canView
   const [comparisonEnabled, setComparisonEnabled] = useState(true);
   const [ready, setReady] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState<TraceablePoint | null>(null);
+  const [snapshotRevision, setSnapshotRevision] = useState(0);
+  const [snapshotProgress, setSnapshotProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const navigationRef = useRef<HTMLElement>(null);
 
   useEffect(() => ensureRegistry(), [ensureRegistry]);
@@ -174,6 +179,35 @@ export function DashboardV2Page({ canViewIndividualAnalytics = true }: { canView
     () => fixture ? records : withCurrentPlayerIdentity(records, workspace?.players ?? []),
     [fixture, records, workspace?.players],
   );
+  const analyticsRecords = useMemo(() => resolvedRecords.filter((record) => !record.catalog.deletedAt && !record.session.preparation?.deletedAt), [resolvedRecords]);
+  const snapshotInspections = useMemo(
+    () => {
+      void snapshotRevision;
+      return hydrateDashboardAnalyticsSnapshots(analyticsRecords);
+    },
+    [analyticsRecords, snapshotRevision],
+  );
+  const staleSnapshotCount = snapshotInspections.filter((inspection) => inspection.state !== "CURRENT").length;
+  const currentSnapshots = snapshotInspections.filter((inspection) => inspection.state === "CURRENT" && inspection.snapshot);
+  const lastSnapshotUpdate = currentSnapshots.length > 0
+    ? Math.max(...currentSnapshots.map((inspection) => inspection.snapshot!.calculatedAt))
+    : null;
+  const updateSnapshots = async (rebuildAll = false) => {
+    if (snapshotProgress || analyticsRecords.length === 0) return;
+    setSnapshotError(null);
+    setSnapshotProgress({ completed: 0, total: rebuildAll ? analyticsRecords.length : staleSnapshotCount });
+    try {
+      await updateDashboardAnalyticsSnapshots(analyticsRecords, {
+        rebuildAll,
+        onProgress: ({ completed, total }) => setSnapshotProgress({ completed, total }),
+      });
+      setSnapshotRevision((value) => value + 1);
+    } catch (error) {
+      setSnapshotError(error instanceof Error ? error.message : "No se pudieron guardar las estadísticas precalculadas.");
+    } finally {
+      setSnapshotProgress(null);
+    }
+  };
   const clubs = clubIds.map((clubId) => useTeamStore.getState().teams[clubId]?.club).filter((club): club is NonNullable<typeof club> => Boolean(club && club.active && !club.archivedAt && !club.deletedAt));
   useEffect(() => {
     if (!ready || fixture || scope.clubId === currentClubId) return;
@@ -182,11 +216,12 @@ export function DashboardV2Page({ canViewIndividualAnalytics = true }: { canView
     setScope((current) => ({ ...emptyDashboardScope(currentClubId, teamId, seasonId), period: current.period }));
     setRecords(readLocalRecords());
   }, [currentClubId, fixture, ready, scope.clubId, seasons, teams]);
-  const matches = useMemo(() => visibleMatchCatalog(resolvedRecords.map((record) => record.catalog), scope.includeArchived).filter((match) => matchCatalogClubId(match) === scope.clubId && match.teamId === scope.teamId && match.seasonId === scope.seasonId).map((match) => { const record = resolvedRecords.find((item) => item.catalog.matchId === match.matchId); const score = record ? replayMatch(record.session.players, record.session.events).score : null; const competitionType = record ? matchCompetition(record) : undefined; return { ...match, matchday: record?.session.preparation?.matchday, competitionType, competitionLabel: competitionType ? ({ LEAGUE: "Liga", CUP: "Copa", FRIENDLY: "Amistoso", OTHER: "Otra", UNSPECIFIED: "Sin clasificar" } as const)[competitionType] : undefined, scoreLabel: score ? `${score.for}-${score.against}` : undefined }; }).sort((a, b) => b.date.localeCompare(a.date)), [resolvedRecords, scope.clubId, scope.includeArchived, scope.seasonId, scope.teamId]);
+  const matches = useMemo(() => visibleMatchCatalog(resolvedRecords.map((record) => record.catalog), scope.includeArchived).filter((match) => matchCatalogClubId(match) === scope.clubId && match.teamId === scope.teamId && match.seasonId === scope.seasonId).map((match) => { const record = resolvedRecords.find((item) => item.catalog.matchId === match.matchId); const score = record ? replayDashboardMatch(record.session.players, record.session.events).score : null; const competitionType = record ? matchCompetition(record) : undefined; return { ...match, matchday: record?.session.preparation?.matchday, competitionType, competitionLabel: competitionType ? ({ LEAGUE: "Liga", CUP: "Copa", FRIENDLY: "Amistoso", OTHER: "Otra", UNSPECIFIED: "Sin clasificar" } as const)[competitionType] : undefined, scoreLabel: score ? `${score.for}-${score.against}` : undefined }; }).sort((a, b) => b.date.localeCompare(a.date)), [resolvedRecords, scope.clubId, scope.includeArchived, scope.seasonId, scope.teamId]);
   const rivals = useMemo(() => Array.from(new Set(matches.map((match) => match.opponent))).sort(), [matches]);
-  const analysis = useMemo(() => buildDashboardV2(resolvedRecords, scope), [resolvedRecords, scope]);
-  const goalkeeperOverview = useMemo(() => buildDashboardV2(resolvedRecords, { ...scope, goalkeeperIds: [] }), [resolvedRecords, scope]);
-  const reference = useMemo(() => buildDashboardV2(resolvedRecords, referenceScope), [resolvedRecords, referenceScope]);
+  const snapshotArea = area === "SUMMARY" || area === "DATA";
+  const analysis = useMemo(() => snapshotArea ? buildDashboardV2FromSnapshots(resolvedRecords, scope) : buildDashboardV2(resolvedRecords, scope), [resolvedRecords, scope, snapshotArea]);
+  const goalkeeperOverview = useMemo(() => snapshotArea ? buildDashboardV2FromSnapshots(resolvedRecords, { ...scope, goalkeeperIds: [] }) : buildDashboardV2(resolvedRecords, { ...scope, goalkeeperIds: [] }), [resolvedRecords, scope, snapshotArea]);
+  const reference = useMemo(() => snapshotArea ? buildDashboardV2FromSnapshots(resolvedRecords, referenceScope) : buildDashboardV2(resolvedRecords, referenceScope), [referenceScope, resolvedRecords, snapshotArea]);
   const naturalGoalkeepers = useMemo(() => new Set((workspace?.players ?? []).filter((player) => player.primaryPosition === "GOALKEEPER").map((player) => player.playerId)), [workspace?.players]);
   const fieldPlayers = useMemo(() => analysis.players.filter((player) => fixture ? player.position !== "PORTERO" : !naturalGoalkeepers.has(player.playerId)), [analysis.players, fixture, naturalGoalkeepers]);
   const scores = useMemo(() => buildPlayerScores(fieldPlayers), [fieldPlayers]);
@@ -208,6 +243,8 @@ export function DashboardV2Page({ canViewIndividualAnalytics = true }: { canView
     const query = mergeDashboardSearchParams({ analysis: scope, reference: referenceScope, referencePreset, mode, area, comparisonEnabled }, new URLSearchParams(searchParams.toString()));
     if (query !== searchParams.toString()) router.replace(`/dashboard?${query}`, { scroll: false });
   }, [area, comparisonEnabled, mode, ready, referencePreset, referenceScope, router, scope, searchParams]);
+  useEffect(() => { finishDashboardInteractionAfterPaint("change-dashboard-tab"); }, [area]);
+  useEffect(() => { finishDashboardInteractionAfterPaint("change-dashboard-mode"); }, [mode]);
 
   const query = mergeDashboardSearchParams({ analysis: scope, reference: referenceScope, referencePreset, mode, area, comparisonEnabled }, new URLSearchParams(fixture ? "fixture=1" : ""));
   const selectedKeeperName = scope.goalkeeperIds.length === 1 ? goalkeeperOverview.goalkeepers.find((keeper) => keeper.playerId === scope.goalkeeperIds[0])?.name.toUpperCase() ?? "PORTERO" : "GLOBAL";
@@ -219,10 +256,24 @@ export function DashboardV2Page({ canViewIndividualAnalytics = true }: { canView
 
   return <div className="min-h-screen overflow-x-clip bg-slate-950 text-white"><div className="sticky top-0 z-40"><AppHeader title="Dashboard V2" clubId={fixture ? undefined : currentClubId} actions={<><Link href={`/dashboard/jugadas?${query}`} className="grid min-h-10 place-items-center rounded-lg bg-red-950 px-3 text-[10px] font-black text-red-300">▶ JUGADAS</Link>{videoCount > 0 && <Link target="_blank" rel="noreferrer" href={videoHref} className="grid min-h-10 place-items-center rounded-lg bg-violet-950 px-3 text-[10px] font-black text-violet-200">🎬 VER VÍDEOS ({videoCount})</Link>}</>} /></div><main className="mx-auto max-w-7xl space-y-6 p-3 pb-16 sm:p-5">
     <DashboardFilterBar clubName={workspace?.club.name ?? "Club"} clubs={clubs} onClub={setCurrentClub} scope={scope} referenceScope={referenceScope} teams={teams} seasons={seasons} matches={matches} rivals={rivals} players={fieldPlayers} goalkeepers={goalkeeperOverview.goalkeepers} referencePreset={referencePreset} mode={mode} onScope={setScope} onReferenceScope={setReferenceScope} onReferencePreset={changeReferencePreset} onMode={setMode} fixedPer40={area === "COMBINATIONS"} comparisonEnabled={area !== "COMBINATIONS" && comparisonEnabled} onComparisonEnabled={setComparisonEnabled} onRefresh={() => setRecords(fixture ? buildDashboardFixture() : readLocalRecords())} fixture={fixture} comparison={<ComparisonHeader left={area === "GOALKEEPERS" ? selectedKeeperName : "CDA"} right={area === "GOALKEEPERS" ? "PORTERÍA CDA" : comparisonRightLabel(referenceScope, referencePreset, matches.find((match) => match.matchId === referenceScope.matchIds[0])?.opponent)} scope={scope}/>} />
-    <nav ref={navigationRef} aria-label="Secciones del Dashboard" className="scroll-mt-28 flex gap-2 overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/95 p-2 shadow-xl">{AREAS.filter(([key]) => key !== "COMBINATIONS" || canViewIndividualAnalytics).map(([key, label]) => <button key={key} type="button" onClick={() => changeArea(key)} className={`min-h-11 shrink-0 rounded-xl px-4 text-xs font-black ${area === key ? "bg-cyan-300 text-slate-950" : "text-slate-400"}`}>{label}</button>)}</nav>
+    <AnalyticsSnapshotStatus inspections={snapshotInspections} lastUpdatedAt={lastSnapshotUpdate} progress={snapshotProgress} error={snapshotError} onUpdate={() => void updateSnapshots(false)} onRebuild={() => void updateSnapshots(true)}/>
+    <nav ref={navigationRef} aria-label="Secciones del Dashboard" className="scroll-mt-28 flex gap-2 overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/95 p-2 shadow-xl">{AREAS.filter(([key]) => key !== "COMBINATIONS" || canViewIndividualAnalytics).map(([key, label]) => <button key={key} type="button" onPointerDown={() => beginDashboardInteraction("change-dashboard-tab")} onClick={() => changeArea(key)} className={`min-h-11 shrink-0 rounded-xl px-4 text-xs font-black ${area === key ? "bg-cyan-300 text-slate-950" : "text-slate-400"}`}>{label}</button>)}</nav>
     <StickyDashboardNav anchor={navigationRef} area={area} canViewIndividualAnalytics={canViewIndividualAnalytics} filterCount={dashboardActiveFilterCount(scope)} scope={scope} matches={matches} videoHref={videoHref} videoCount={videoCount} mode={mode} onMode={setMode} onArea={changeArea} onScope={setScope}/>
     {!ready ? <p className="p-10 text-center text-slate-500">Preparando análisis…</p> : area === "COMBINATIONS" ? <DashboardCombinations rosterPlayers={fixture ? undefined : workspace?.players} records={resolvedRecords} scope={scope} canViewIndividualAnalytics={canViewIndividualAnalytics} /> : analysis.analytics.matches === 0 ? <Empty /> : <>{area === "SUMMARY" && <Summary analysis={analysis} reference={reference} mode={mode} comparisonEnabled={comparisonEnabled} scope={scope} onScope={setScope} referenceScope={referenceScope} allRecords={resolvedRecords} momentumRecords={resolvedRecords} momentumMatches={matches} />}{area === "DATA" && <DashboardDataTables analysis={analysis} referenceScope={referenceScope} allRecords={resolvedRecords} scope={scope} onScope={setScope} mode={mode}/>} {area === "PLAYERS" && <><div className="flex flex-wrap items-center justify-between gap-2"><SectionTitle eyebrow="PORTEROS NATURALES EN SU ANÁLISIS ESPECÍFICO">JUGADORES</SectionTitle><DashboardVideoLink records={resolvedRecords} scope={scope} label="VÍDEOS DEL SCOPE"/></div><PlayerTableV2 analysis={analysis} players={fieldPlayers} scores={scores} mode={mode} detailQuery={query} /></>}{area === "GOALKEEPERS" && <Goalkeepers analysis={analysis} overview={goalkeeperOverview} query={query} onPoint={setSelectedPoint} scope={scope} onScope={setScope} mode={mode} allRecords={resolvedRecords} onNavigate={(href) => router.push(href)}/>} {area === "MAPS" && <Maps analysis={analysis} scope={scope} onScope={setScope} onPoint={setSelectedPoint} allRecords={resolvedRecords} />}</>}
   </main>{selectedPoint && <EventTracePanel records={analysis.records} point={selectedPoint} onClose={() => setSelectedPoint(null)} returnTo={`/dashboard?${query}#maps`}/>}</div>;
+}
+
+function AnalyticsSnapshotStatus({ inspections, lastUpdatedAt, progress, error, onUpdate, onRebuild }: { inspections: DashboardSnapshotInspection[]; lastUpdatedAt: number | null; progress: { completed: number; total: number } | null; error: string | null; onUpdate: () => void; onRebuild: () => void }) {
+  const pending = inspections.filter((inspection) => inspection.state !== "CURRENT").length;
+  const missing = inspections.filter((inspection) => inspection.state === "MISSING").length;
+  const status = progress
+    ? progress.total > 1 ? `ACTUALIZANDO ESTADÍSTICAS · ${progress.completed}/${progress.total} PARTIDOS` : "ACTUALIZANDO 1 PARTIDO"
+    : pending > 0 ? `${pending} ${pending === 1 ? "PARTIDO PENDIENTE" : "PARTIDOS PENDIENTES"} DE ACTUALIZAR`
+      : "ESTADÍSTICAS ACTUALIZADAS";
+  return <section data-analytics-snapshot-status data-pending={pending} className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-3 py-2 ${pending > 0 ? "border-amber-800 bg-amber-950/25" : "border-emerald-900 bg-emerald-950/20"}`}>
+    <div><strong className={`text-[10px] tracking-[.12em] ${pending > 0 ? "text-amber-200" : "text-emerald-200"}`}>{status}</strong><p className="mt-0.5 text-[9px] text-slate-500">{lastUpdatedAt ? `Última actualización: ${new Date(lastUpdatedAt).toLocaleString("es-ES")}` : `${missing}/${inspections.length} partidos sin precálculo`}{pending > 0 && lastUpdatedAt ? " · Se mantiene el último snapshot válido hasta actualizar." : ""}</p>{error && <p role="alert" className="mt-1 text-[9px] font-bold text-rose-300">{error}</p>}</div>
+    <div className="flex items-center gap-2">{pending > 0 && <button type="button" disabled={Boolean(progress)} onClick={onUpdate} className="min-h-9 rounded-xl bg-amber-300 px-3 text-[9px] font-black text-slate-950 disabled:opacity-50">ACTUALIZAR ESTADÍSTICAS</button>}<details className="relative"><summary className="cursor-pointer list-none rounded-xl border border-slate-700 px-3 py-2 text-[9px] font-black text-slate-400">OPCIONES</summary><div className="absolute right-0 z-20 mt-1 w-48 rounded-xl border border-slate-700 bg-slate-950 p-2 shadow-xl"><button type="button" disabled={Boolean(progress)} onClick={onRebuild} className="min-h-9 w-full rounded-lg px-2 text-left text-[9px] font-black text-slate-300 hover:bg-slate-800 disabled:opacity-50">REGENERAR TODO</button><p className="px-2 pt-1 text-[8px] text-slate-600">Recuperación, cambio de esquema o diagnóstico.</p></div></details></div>
+  </section>;
 }
 
 function StickyDashboardNav({ anchor, area, canViewIndividualAnalytics, filterCount, scope, matches, videoHref, videoCount, mode, onMode, onArea, onScope }: { anchor: React.RefObject<HTMLElement | null>; area: DashboardArea; canViewIndividualAnalytics: boolean; filterCount: number; scope: DashboardScopeV2; matches: Array<{ matchId: string; opponent: string }>; videoHref: string; videoCount: number; mode: DashboardValueMode; onMode: (mode: DashboardValueMode) => void; onArea: (area: DashboardArea) => void; onScope: (scope: DashboardScopeV2) => void }) {
@@ -266,7 +317,7 @@ function StickyDashboardNav({ anchor, area, canViewIndividualAnalytics, filterCo
   return <div data-dashboard-compact-sticky className="fixed inset-x-0 top-20 z-30 mx-auto flex min-h-[52px] max-w-7xl items-stretch border-y border-slate-700 bg-slate-950/95 shadow-2xl backdrop-blur sm:top-16">
     <div className="flex min-w-0 shrink items-center gap-1 overflow-x-auto border-r border-slate-800 px-2 text-[9px] font-black text-slate-400"><span className="hidden shrink-0 lg:inline">{competition} · {matchContext}</span>{badges.slice(0, 2).map((badge) => <button type="button" title="Quitar filtro" onClick={badge.clear} key={badge.key} className="shrink-0 rounded-full bg-cyan-950 px-2 py-1 text-cyan-200">{badge.label} ×</button>)}{badges.length > 2 && <button type="button" onClick={openFilters} className="shrink-0 text-amber-200">+{badges.length - 2}</button>}</div>
     <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto px-2 py-1.5">{AREAS.filter(([key]) => key !== "COMBINATIONS" || canViewIndividualAnalytics).map(([key, label]) => <button key={key} type="button" onClick={() => onArea(key)} className={`shrink-0 rounded-lg px-3 text-[10px] font-black ${area === key ? "bg-cyan-300 text-slate-950" : "text-slate-300"}`}>{label}</button>)}</div>
-    <div className="hidden shrink-0 items-center gap-1 border-l border-slate-700 px-1 md:flex">{(["TOTALS", "PER_MATCH", "PER_40"] as const).map((value) => <button type="button" key={value} onClick={() => onMode(value)} className={`rounded-lg px-2 py-2 text-[8px] font-black ${mode === value ? "bg-emerald-300 text-slate-950" : "text-slate-400"}`}>{value === "TOTALS" ? "TOTAL" : value === "PER_MATCH" ? "PJ" : "x40"}</button>)}</div>
+    <div className="hidden shrink-0 items-center gap-1 border-l border-slate-700 px-1 md:flex">{(["TOTALS", "PER_MATCH", "PER_40"] as const).map((value) => <button type="button" key={value} onPointerDown={() => beginDashboardInteraction("change-dashboard-mode")} onClick={() => onMode(value)} className={`rounded-lg px-2 py-2 text-[8px] font-black ${mode === value ? "bg-emerald-300 text-slate-950" : "text-slate-400"}`}>{value === "TOTALS" ? "TOTAL" : value === "PER_MATCH" ? "PJ" : "x40"}</button>)}</div>
     {videoCount > 0 && <Link target="_blank" rel="noreferrer" href={videoHref} className="grid shrink-0 place-items-center border-l border-slate-700 bg-violet-950 px-3 text-[10px] font-black text-violet-200">VÍDEOS · {videoCount}</Link>}
     <button type="button" onClick={openFilters} className={`shrink-0 border-l border-slate-700 px-3 text-[10px] font-black ${filterCount ? "bg-amber-950 text-amber-200" : "bg-slate-900 text-slate-300"}`}>FILTROS{filterCount ? ` · ${filterCount}` : ""}</button>
   </div>;
