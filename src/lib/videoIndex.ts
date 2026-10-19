@@ -430,7 +430,7 @@ export function upsertVideoEventOverride(
   const segment = (session.videoSegments ?? []).find((candidate) => candidate.id === input.segmentId);
   if (!event || !segment) throw new Error("No se encontró el vídeo o el evento elegido.");
   if (!segment.periods.includes(event.period as MatchVideoPeriod)) throw new Error("El evento no pertenece a una parte cubierta por este vídeo.");
-  if (!Number.isSafeInteger(input.videoSecond) || input.videoSecond < 0) throw new Error("El tiempo de vídeo no es válido.");
+  if (!Number.isFinite(input.videoSecond) || input.videoSecond < 0) throw new Error("El tiempo de vídeo no es válido.");
   const now = input.now ?? Date.now();
   const previous = (session.videoEventOverrides ?? []).find((item) => item.eventId === input.eventId);
   const override: MatchVideoEventOverride = {
@@ -438,7 +438,7 @@ export function upsertVideoEventOverride(
     eventId: input.eventId,
     segmentId: input.segmentId,
     syncSegmentId: input.syncSegmentId ?? input.segmentId,
-    videoSecond: input.videoSecond,
+    videoSecond: Math.round(input.videoSecond * 10) / 10,
     status: input.status ?? "VERIFIED",
     timeSource: input.timeSource ?? "manual",
     createdAt: previous?.createdAt ?? now,

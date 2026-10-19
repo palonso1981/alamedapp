@@ -65,12 +65,12 @@ export default function VideoReviewPlayerPage() {
     return () => { close(); channel?.close(); channelRef.current = null; window.removeEventListener("message", onMessage); window.removeEventListener("beforeunload", close); };
   }, [applyCommand, channelName, post]);
 
-  return <main className="flex min-h-screen flex-col bg-black text-white">
+  return <main className="grid h-screen min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-black text-white">
     <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950 px-3 py-2">
       <div><p className="text-[10px] font-black tracking-[.18em] text-violet-300">APP ALAM · VÍDEO SEPARADO</p><h1 className="font-black">{state?.label ?? "Esperando al workspace…"}</h1></div>
       <div className="flex items-center gap-2"><span className="rounded-lg bg-slate-900 px-3 py-2 font-mono text-sm font-black text-cyan-200">{formatPreciseVideoTime(currentSecond)}</span><button type="button" onClick={() => window.close()} className="min-h-11 rounded-xl bg-slate-800 px-4 text-xs font-black">CERRAR</button></div>
     </header>
-    <section className="min-h-0 flex-1">
+    <section className="min-h-0 overflow-hidden">
       {state ? <YouTubeLabPlayer ref={playerRef} videoId={state.videoId} initialSecond={state.second} autoPlay={state.playing} presentation="REEL" onPreciseTimeChange={(second) => { const exact = preciseVideoSecond(second); currentSecondRef.current = exact; setCurrentSecond(exact); post({ type: "TIME", second: exact, playing, playbackRate: state.playbackRate }); }} onPlayingChange={setPlaying} /> : <div className="grid h-full min-h-[60vh] place-items-center text-slate-500">Conecta el workspace principal.</div>}
     </section>
   </main>;

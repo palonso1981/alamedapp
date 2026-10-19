@@ -55,6 +55,56 @@ export interface VideoReviewWorkspaceState {
   mode: "EMPTY" | "LINEUP_ONLY" | "PARTIAL_OR_COMPLETE";
 }
 
+export function newDirectoVideoEventIds(
+  previousEvents: readonly MatchEvent[],
+  currentEvents: readonly MatchEvent[],
+): string[] {
+  const previousIds = new Set(previousEvents.map((event) => event.id));
+  return currentEvents
+    .filter((event) => !previousIds.has(event.id) && event.type !== "lineup_initialized")
+    .map((event) => event.id);
+}
+
+export function attachDirectoVideoAnchor(
+  session: MatchSession,
+  input: {
+    eventIds: readonly string[];
+    segmentId: string;
+    videoSecond: number;
+    now?: number;
+  },
+): MatchSession {
+  const segment = (session.videoSegments ?? []).find((candidate) => candidate.id === input.segmentId);
+  if (!segment) throw new Error("No se encontró la fuente de vídeo activa.");
+  const eventIds = new Set(input.eventIds);
+  const events = session.events.filter((event) => eventIds.has(event.id));
+  if (events.length !== eventIds.size) throw new Error("No se encontró el evento deportivo recién registrado.");
+  if (events.some((event) => !segment.periods.includes(event.period as 1 | 2))) {
+    throw new Error("La fuente de vídeo activa no cubre el periodo del evento.");
+  }
+  const videoSecond = preciseVideoSecond(input.videoSecond);
+  const now = input.now ?? Date.now();
+  const overrides = [...(session.videoEventOverrides ?? [])];
+  for (const event of events) {
+    const previous = overrides.find((override) => override.eventId === event.id);
+    const next: MatchVideoEventOverride = {
+      matchId: session.matchId,
+      eventId: event.id,
+      segmentId: segment.id,
+      syncSegmentId: videoSyncSegmentId(segment.id, event.period as 1 | 2),
+      videoSecond,
+      status: "VERIFIED",
+      timeSource: "manual",
+      createdAt: previous?.createdAt ?? now,
+      updatedAt: now,
+    };
+    const index = overrides.findIndex((override) => override.eventId === event.id);
+    if (index >= 0) overrides[index] = next;
+    else overrides.push(next);
+  }
+  return { ...session, videoEventOverrides: overrides };
+}
+
 export function inspectVideoReviewWorkspace(session: MatchSession): VideoReviewWorkspaceState {
   const active = session.events.filter((event) => event.deletedAt === null);
   const hasInitialLineup = active.some((event) => event.type === "lineup_initialized" && event.period === 1);

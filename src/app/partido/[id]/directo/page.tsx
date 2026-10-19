@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { MouseEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { FutsalCourtMarkings } from "../../../../components/court/FutsalCourtMarkings";
 import { BenchPanel } from "../../../../components/match/BenchPanel";
@@ -27,6 +28,7 @@ import {
 import { PlayerAvatar } from "../../../../components/player/PlayerAvatar";
 import { ClubContextLabel } from "../../../../components/app/ClubContextLabel";
 import { CaptureControlStatus } from "../../../../components/match/CaptureControlStatus";
+import { VideoReviewPlayer, VideoReviewPlayerHandle } from "../../../../components/video/VideoReviewPlayer";
 import { normalizeCourtPoint } from "../../../../lib/courtGeometry";
 import {
   AttackDirection,
@@ -63,6 +65,14 @@ import {
   CDA_CLUB_ID,
   Player,
 } from "../../../../types";
+import {
+  attachDirectoVideoAnchor,
+  formatPreciseVideoTime,
+  newDirectoVideoEventIds,
+  preciseVideoSecond,
+  shiftPreciseVideoSecond,
+} from "../../../../lib/videoReviewWorkspace";
+import { upsertVideoEventOverride } from "../../../../lib/videoIndex";
 
 const CLOCK_SIDE_STORAGE_KEY = "alamedapp:directo-clock-side:v1";
 const CLOCK_VERTICAL_STORAGE_KEY = "alamedapp:directo-clock-vertical:v1";
@@ -111,6 +121,8 @@ function RestartTargets({ onRestart }: { onRestart: (end: "LEFT" | "RIGHT", side
 
 export default function DirectoPage({ params }: { params: { id: string } }) {
   const matchId = params.id;
+  const searchParams = useSearchParams();
+  const videoReviewMode = searchParams.get("videoReview") === "1";
   const session = useMatchStore((state) => state.matches[matchId]);
   const captureControl = useCaptureLease(matchId, session);
   const ensureMatch = useMatchStore((state) => state.ensureMatch);
@@ -145,6 +157,9 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const retryPersistence = useMatchStore((state) => state.retryPersistence);
   const clearError = useMatchStore((state) => state.clearError);
   const resetDemo = useMatchStore((state) => state.resetDemo);
+  const setVideoEventOverrides = useMatchStore((state) => state.setVideoEventOverrides);
+  const initializeVideoReviewLineup = useMatchStore((state) => state.initializeVideoReviewLineup);
+  const startFinishedReview = useMatchStore((state) => state.startFinishedReview);
 
   const [interaction, setInteraction] = useState<LiveInteractionState>(
     IDLE_LIVE_INTERACTION,
@@ -167,7 +182,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const [orientationReady, setOrientationReady] = useState(false);
   const [devQuotaFailureArmed, setDevQuotaFailureArmed] = useState(false);
   const [retrospectiveCapture, setRetrospectiveCapture] = useState(false);
+  const [videoSegmentId, setVideoSegmentId] = useState(searchParams.get("segment") ?? "");
+  const [initialLineupOpen, setInitialLineupOpen] = useState(false);
+  const [lastVideoAnchor, setLastVideoAnchor] = useState<{ eventId: string; segmentId: string; second: number } | null>(null);
+  const videoPlayerRef = useRef<VideoReviewPlayerHandle>(null);
+  const pendingVideoAnchorRef = useRef<number | null>(null);
   const videoTiming = retrospectiveCapture ? "RETROSPECTIVE" as const : undefined;
+
+  const videoSegments = useMemo(() => session?.videoSegments ?? [], [session?.videoSegments]);
+  const videoSegment = videoSegments.find((candidate) => candidate.id === videoSegmentId);
 
   useEffect(() => {
     const savedSide = window.localStorage.getItem(CLOCK_SIDE_STORAGE_KEY);
@@ -190,6 +213,24 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     setSecondPeriodSetupOpen(false);
     setRetrospectiveCapture(false);
   }, [ensureMatch, matchId]);
+
+  useEffect(() => {
+    if (!videoReviewMode || videoSegments.length === 0) return;
+    const period = session?.reviewPeriod ?? session?.period ?? 1;
+    if (videoSegment && videoSegment.periods.includes(period as 1 | 2)) return;
+    setVideoSegmentId(videoSegments.find((candidate) => candidate.periods.includes(period as 1 | 2))?.id ?? videoSegments[0].id);
+  }, [session?.period, session?.reviewPeriod, videoReviewMode, videoSegment, videoSegments]);
+
+  useEffect(() => {
+    if (!videoReviewMode || !session) return;
+    const hasInitialLineup = session.events.some((event) => event.type === "lineup_initialized" && event.period === 1 && event.deletedAt === null);
+    if (!hasInitialLineup && session.players.length >= 5) setInitialLineupOpen(true);
+  }, [session, videoReviewMode]);
+
+  useEffect(() => {
+    if (!videoReviewMode || !session?.matchFinished || session.reviewPeriod !== undefined || session.reviewStatus === "VALIDATED") return;
+    startFinishedReview(matchId);
+  }, [matchId, session?.matchFinished, session?.reviewPeriod, session?.reviewStatus, startFinishedReview, videoReviewMode]);
 
   useEffect(() => {
     if (!session) return;
@@ -221,7 +262,10 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     if (!genericFoulConfirm) return;
-    const timeout = window.setTimeout(() => setGenericFoulConfirm(null), 3_000);
+    const timeout = window.setTimeout(() => {
+      setGenericFoulConfirm(null);
+      pendingVideoAnchorRef.current = null;
+    }, 3_000);
     return () => window.clearTimeout(timeout);
   }, [genericFoulConfirm]);
 
@@ -341,6 +385,60 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     );
   };
 
+  const freezeVideoAnchor = () => {
+    if (!videoReviewMode || !videoSegment || pendingVideoAnchorRef.current !== null) return;
+    pendingVideoAnchorRef.current = preciseVideoSecond(videoPlayerRef.current?.currentTime() ?? 0);
+  };
+
+  const commitCapturedAction = (operation: () => void) => {
+    const before = useMatchStore.getState().matches[matchId];
+    if (!before) return;
+    freezeVideoAnchor();
+    const anchor = pendingVideoAnchorRef.current;
+    const source = videoSegment;
+    operation();
+    const after = useMatchStore.getState().matches[matchId];
+    const eventIds = after ? newDirectoVideoEventIds(before.events, after.events) : [];
+    if (videoReviewMode && after && source && anchor !== null && eventIds.length > 0) {
+      try {
+        const anchored = attachDirectoVideoAnchor(after, {
+          eventIds,
+          segmentId: source.id,
+          videoSecond: anchor,
+        });
+        setVideoEventOverrides(matchId, anchored.videoEventOverrides ?? []);
+        setLastVideoAnchor({ eventId: eventIds.at(-1)!, segmentId: source.id, second: anchor });
+      } catch (error) {
+        setFeedback(error instanceof Error ? `⚠ ${error.message}` : "⚠ No se pudo vincular el vídeo.");
+      }
+    }
+    if (eventIds.length > 0 || after?.lastError) pendingVideoAnchorRef.current = null;
+  };
+
+  const adjustLastVideoAnchor = (delta: -5 | -1 | 1 | 5) => {
+    if (!lastVideoAnchor) return;
+    const current = useMatchStore.getState().matches[matchId];
+    if (!current) return;
+    const source = (current.videoSegments ?? []).find((candidate) => candidate.id === lastVideoAnchor.segmentId);
+    if (!source) return;
+    const second = shiftPreciseVideoSecond(lastVideoAnchor.second, delta);
+    try {
+      const next = upsertVideoEventOverride(current, {
+        eventId: lastVideoAnchor.eventId,
+        segmentId: source.id,
+        syncSegmentId: `${source.id}:P${current.events.find((event) => event.id === lastVideoAnchor.eventId)?.period ?? current.period}`,
+        videoSecond: second,
+        status: "VERIFIED",
+        timeSource: "manual",
+      });
+      setVideoEventOverrides(matchId, next.videoEventOverrides ?? []);
+      setLastVideoAnchor({ ...lastVideoAnchor, second });
+      videoPlayerRef.current?.seekTo(second);
+    } catch (error) {
+      setFeedback(error instanceof Error ? `⚠ ${error.message}` : "⚠ No se pudo ajustar el ancla.");
+    }
+  };
+
   const applyInteraction = (action: LiveInteractionAction) => {
     const repairAction =
       action.type === "CANCEL" ||
@@ -352,21 +450,24 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       blockedAction();
       return;
     }
+    if (action.type === "CANCEL" || action.type === "END_SEQUENCE") pendingVideoAnchorRef.current = null;
+    else freezeVideoAnchor();
     clearError(matchId);
     setSelectedStaffId(null);
     setRedDecisionPlayerId(null);
     const transition = reduceLiveInteraction(interaction, action);
     const effect = transition.effect;
     setInteraction(transition.state);
+    if (!effect && transition.state.kind === "IDLE") pendingVideoAnchorRef.current = null;
 
     if (effect?.type === "RECORD_SUBSTITUTION") {
-      swapPlayer(
-        matchId,
-        effect.playerOutId,
-        effect.playerInId,
-        effect.observedAt,
-        videoTiming,
-      );
+      commitCapturedAction(() => swapPlayer(
+          matchId,
+          effect.playerOutId,
+          effect.playerInId,
+          effect.observedAt,
+          videoTiming,
+        ));
       const playerOut = session.players.find(
         (player) => player.id === effect.playerOutId,
       );
@@ -378,7 +479,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       );
       setBenchMode("CLOSED");
     } else if (effect?.type === "RECORD_THREAT") {
-      recordThreat(matchId, { ...effect, videoTiming });
+      commitCapturedAction(() => recordThreat(matchId, { ...effect, videoTiming }));
       const actor = effect.playerId
         ? session.players.find(
             (player) => player.id === effect.playerId,
@@ -410,12 +511,14 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const quickRestart = (end: "LEFT" | "RIGHT", spatialSide: "TOP" | "BOTTOM", restart: "CORNER" | "DANGEROUS_KICK_IN") => {
     if (captureBlocked) return blockedAction();
     const inferred = visualRestartToCanonical({ end, band: spatialSide, direction: attackDirection });
-    recordRestart(matchId, inferred.side, restart, inferred.spatialSide, Date.now(), videoTiming);
+    commitCapturedAction(() => recordRestart(matchId, inferred.side, restart, inferred.spatialSide, Date.now(), videoTiming));
     setRetrospectiveCapture(false);
     setFeedback(`✓ ${restart === "CORNER" ? "CÓRNER" : "BANDA CERCANA"} ${inferred.side === "FOR" ? "CDA" : "RIV"}`);
   };
 
   const handleStaffTap = (staffId: string) => {
+    if (selectedStaffId === staffId) pendingVideoAnchorRef.current = null;
+    else freezeVideoAnchor();
     setInteraction(IDLE_LIVE_INTERACTION);
     setRedDecisionPlayerId(null);
     setSelectedStaffObservedAt(Date.now());
@@ -423,7 +526,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   };
 
   const handleStaffCard = (staffId: string, color: "YELLOW" | "RED") => {
-    recordStaffCard(matchId, staffId, color, selectedStaffObservedAt ?? Date.now(), videoTiming);
+    commitCapturedAction(() => recordStaffCard(matchId, staffId, color, selectedStaffObservedAt ?? Date.now(), videoTiming));
     setRetrospectiveCapture(false);
     setSelectedStaffId(null);
     setSelectedStaffObservedAt(null);
@@ -438,14 +541,14 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
 
   const recordPlayerFoul = (playerId: string, received: boolean) => {
     const observedAt = interaction.kind === "PLAYER_SELECTED" ? interaction.observedAt : Date.now();
-    recordFoul(matchId, received ? "AGAINST" : "FOR", playerId, undefined, observedAt, videoTiming);
+    commitCapturedAction(() => recordFoul(matchId, received ? "AGAINST" : "FOR", playerId, undefined, observedAt, videoTiming));
     setRetrospectiveCapture(false);
     finishPlayerAction(received ? "✓ Falta recibida" : "✓ Falta cometida");
   };
 
   const recordPlayerPossessionLost = (playerId: string) => {
     const observedAt = interaction.kind === "PLAYER_SELECTED" ? interaction.observedAt : Date.now();
-    recordPossessionLost(matchId, playerId, observedAt, videoTiming);
+    commitCapturedAction(() => recordPossessionLost(matchId, playerId, observedAt, videoTiming));
     setRetrospectiveCapture(false);
     finishPlayerAction("✓ Pérdida");
   };
@@ -453,10 +556,11 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const recordGenericFoul = (side: "FOR" | "AGAINST") => {
     if (captureBlocked) return blockedAction();
     if (genericFoulConfirm?.side !== side) {
+      freezeVideoAnchor();
       setGenericFoulConfirm({ side, observedAt: Date.now() });
       return;
     }
-    recordFoul(matchId, side, null, undefined, genericFoulConfirm.observedAt, videoTiming);
+    commitCapturedAction(() => recordFoul(matchId, side, null, undefined, genericFoulConfirm.observedAt, videoTiming));
     setRetrospectiveCapture(false);
     setGenericFoulConfirm(null);
     setFeedback(side === "FOR" ? "✓ Falta CDA · sin asignar" : "✓ Falta recibida · sin asignar");
@@ -468,7 +572,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     causesInferiority = false,
   ) => {
     const observedAt = interaction.kind === "PLAYER_SELECTED" ? interaction.observedAt : Date.now();
-    recordCard(matchId, "FOR", color, playerId, causesInferiority, observedAt, videoTiming);
+    commitCapturedAction(() => recordCard(matchId, "FOR", color, playerId, causesInferiority, observedAt, videoTiming));
     setRetrospectiveCapture(false);
     finishPlayerAction(
       color === "YELLOW"
@@ -486,6 +590,28 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       }`}
     >
       <CaptureControlStatus control={captureControl} matchId={matchId} />
+      {videoReviewMode && (
+        <section className="mx-auto mb-2 max-w-7xl space-y-2 rounded-2xl border border-violet-500/60 bg-slate-900/95 p-2 shadow-xl" aria-label="Contexto de vídeo para Directo">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="mr-auto min-w-0">
+              <p className="text-[10px] font-black tracking-[.15em] text-violet-300">REGISTRO CON VÍDEO · DIRECTO CANÓNICO</p>
+              <p className="truncate text-xs text-slate-400">El reloj deportivo sigue siendo independiente. El ancla se fija al primer gesto.</p>
+            </div>
+            {videoSegments.length > 1 && <select value={videoSegmentId} onChange={(event) => { pendingVideoAnchorRef.current = null; setVideoSegmentId(event.target.value); }} className="min-h-11 rounded-xl bg-slate-800 px-3 text-xs font-black" aria-label="Fuente de vídeo activa">
+              {videoSegments.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.label} · {candidate.periods.map((period) => `P${period}`).join("+")}</option>)}
+            </select>}
+            <Link href={`/partido/${matchId}/video-review`} className="inline-grid min-h-11 place-items-center rounded-xl bg-slate-800 px-3 text-xs font-black">CRONOLOGÍA / ANCLAS</Link>
+          </div>
+          {videoSegment ? <>
+            <VideoReviewPlayer ref={videoPlayerRef} matchId={matchId} videoId={videoSegment.videoId} label={videoSegment.label} compactWhenExternal />
+            {lastVideoAnchor && <div className="flex flex-wrap items-center justify-center gap-1 rounded-xl bg-slate-950 p-2" aria-label="Ajustar última ancla de vídeo">
+              <span className="mr-2 text-[10px] font-black text-emerald-300">ÚLTIMO · VERIFIED</span>
+              {([-5, -1, 1, 5] as const).map((delta) => <button key={delta} type="button" onClick={() => adjustLastVideoAnchor(delta)} className="min-h-10 min-w-12 rounded-lg bg-slate-800 px-2 text-xs font-black">{delta > 0 ? `+${delta}` : delta}</button>)}
+              <span className="grid min-h-10 place-items-center rounded-lg bg-slate-900 px-3 font-mono text-sm font-black text-cyan-200">{formatPreciseVideoTime(lastVideoAnchor.second)}</span>
+            </div>}
+          </> : <div role="alert" className="rounded-xl border border-amber-700 bg-amber-950/50 p-3 text-sm font-bold text-amber-100">Este partido no tiene una fuente de vídeo compatible con P{capturePeriod}. Configúrala antes de registrar con ancla.</div>}
+        </section>
+      )}
       {!orientationReady && (
         <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/90 p-4" role="dialog" aria-label="Elegir orientación de captura">
           <div className="w-full max-w-2xl rounded-3xl border border-cyan-500 bg-slate-900 p-5 shadow-2xl">
@@ -565,6 +691,21 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           }}
         />
       )}
+      {initialLineupOpen && videoReviewMode && (
+        <SecondPeriodLineupDialog
+          players={session.players}
+          proposedPlayerIds={session.preparation?.starterPlayerIds?.length ? session.preparation.starterPlayerIds : session.players.slice(0, 5).map((player) => player.id)}
+          proposedGoalkeeperId={session.preparation?.startingGoalkeeperId}
+          period={1}
+          confirmLabel="GUARDAR QUINTETO P1"
+          onCancel={() => setInitialLineupOpen(false)}
+          onConfirm={(playerIds, goalkeeperPlayerId) => {
+            initializeVideoReviewLineup(matchId, 1, playerIds, goalkeeperPlayerId);
+            setInitialLineupOpen(false);
+            setFeedback("✓ Quinteto inicial preparado");
+          }}
+        />
+      )}
       <section className="directo-cockpit mx-auto mb-2 max-w-7xl rounded-2xl border border-slate-700 bg-slate-900/95 p-1.5 shadow-xl">
       <header className="flex flex-wrap items-center justify-between gap-1.5">
         <div className="flex min-w-0 items-center gap-2">
@@ -599,14 +740,14 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
             onRivalYellow={() => {
               if (captureBlocked) return blockedAction();
               setInteraction(IDLE_LIVE_INTERACTION);
-              recordCard(matchId, "AGAINST", "YELLOW", undefined, false, Date.now(), videoTiming);
+              commitCapturedAction(() => recordCard(matchId, "AGAINST", "YELLOW", undefined, false, Date.now(), videoTiming));
               setRetrospectiveCapture(false);
               setFeedback("✓ Amarilla RIV");
             }}
             onRivalRed={() => {
               if (captureBlocked) return blockedAction();
               setInteraction(IDLE_LIVE_INTERACTION);
-              recordCard(matchId, "AGAINST", "RED", undefined, false, Date.now(), videoTiming);
+              commitCapturedAction(() => recordCard(matchId, "AGAINST", "RED", undefined, false, Date.now(), videoTiming));
               setRetrospectiveCapture(false);
               setFeedback("✓ Roja RIV");
             }}
@@ -683,21 +824,21 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
           if (captureBlocked) return blockedAction();
           setInteraction(IDLE_LIVE_INTERACTION);
           if (replay.flyingGoalkeeperActive) {
-            toggleGameState(matchId, "FLYING_GOALKEEPER", undefined, "FOR", Date.now(), videoTiming);
+            commitCapturedAction(() => toggleGameState(matchId, "FLYING_GOALKEEPER", undefined, "FOR", Date.now(), videoTiming));
             setRetrospectiveCapture(false);
             setSelectingFlyingGoalkeeper(false);
           } else setSelectingFlyingGoalkeeper((visible) => !visible);
         }}
         onFlyingGoalkeeperAgainst={() => {
           if (captureBlocked) return blockedAction();
-          toggleGameState(matchId, "FLYING_GOALKEEPER", undefined, "AGAINST", Date.now(), videoTiming);
+          commitCapturedAction(() => toggleGameState(matchId, "FLYING_GOALKEEPER", undefined, "AGAINST", Date.now(), videoTiming));
           setRetrospectiveCapture(false);
           setFeedback(activeReplay.flyingGoalkeeperAgainstActive ? "PJ RIVAL OFF" : "PJ RIVAL ON");
         }}
         onSuperiority={() => {
           if (captureBlocked || activeReplay.inferiorityActive) return blockedAction();
           setInteraction(IDLE_LIVE_INTERACTION);
-          toggleGameState(matchId, "SUPERIORITY", undefined, "FOR", Date.now(), videoTiming);
+          commitCapturedAction(() => toggleGameState(matchId, "SUPERIORITY", undefined, "FOR", Date.now(), videoTiming));
           setRetrospectiveCapture(false);
           setFeedback(activeReplay.superiorityActive ? "5v4 OFF" : "5v4 ON");
         }}
@@ -750,7 +891,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
                   key={player.id}
                   type="button"
                   onClick={() => {
-                    toggleGameState(matchId, "FLYING_GOALKEEPER", player.id, "FOR", Date.now(), videoTiming);
+                    commitCapturedAction(() => toggleGameState(matchId, "FLYING_GOALKEEPER", player.id, "FOR", Date.now(), videoTiming));
                     setRetrospectiveCapture(false);
                     setSelectingFlyingGoalkeeper(false);
                     setFeedback(`◇⁺ ${player.name}`);

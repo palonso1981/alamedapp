@@ -225,7 +225,7 @@ export default function VideoLabPage() {
           <div className="flex flex-wrap gap-2">
             {returnToVideo && <Link href={returnToVideo} className="inline-grid min-h-11 place-items-center rounded-xl bg-cyan-950 px-4 text-xs font-black text-cyan-200">← VOLVER A VIDEO</Link>}
             <Link href={`/partidos/${matchId}/video`} className="inline-grid min-h-11 place-items-center rounded-xl bg-slate-800 px-4 text-xs font-black">CONFIGURAR VÍDEO</Link>
-            <Link href={`/partido/${matchId}/video-review`} className="inline-grid min-h-11 place-items-center rounded-xl bg-violet-500 px-4 text-xs font-black text-slate-950">REVISAR / REGISTRAR PARTIDO</Link>
+            <Link href={`/partido/${matchId}/directo?videoReview=1`} className="inline-grid min-h-11 place-items-center rounded-xl bg-violet-500 px-4 text-xs font-black text-slate-950">REGISTRAR / REVISAR CON VÍDEO</Link>
             <Link href={session.matchFinished ? `/partido/${matchId}/revision` : `/partido/${matchId}/directo`} className="inline-grid min-h-11 place-items-center rounded-xl bg-slate-800 px-4 text-xs font-black">VOLVER</Link>
           </div>
         </header>

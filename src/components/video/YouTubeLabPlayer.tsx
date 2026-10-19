@@ -86,6 +86,8 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
       playerRef.current?.destroy?.();
       const desired = desiredVideoRef.current;
       playerRef.current = new window.YT.Player(hostRef.current, {
+        width: "100%",
+        height: "100%",
         videoId: desired.videoId,
         playerVars: { autoplay: desired.autoPlay ? 1 : 0, start: Math.max(0, Math.round(desired.initialSecond)), playsinline: 1, rel: 0 },
         events: {
@@ -149,9 +151,9 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
       setCurrentSecond(next);
       onTimeChange?.(next);
       onPreciseTimeChange?.(precise);
-    }, 500);
+    }, presentation === "REEL" ? 100 : 500);
     return () => window.clearInterval(interval);
-  }, [onPreciseTimeChange, onTimeChange]);
+  }, [onPreciseTimeChange, onTimeChange, presentation]);
 
   const shift = (delta: -5 | -1 | 1 | 5) => {
     const next = shiftVideoSecond(readCurrentSecond(), delta);

@@ -21,10 +21,11 @@ interface Props {
   initialSecond?: number;
   onVisualTimeChange?: (second: number) => void;
   onPopoutChange?: (external: boolean) => void;
+  compactWhenExternal?: boolean;
 }
 
 export const VideoReviewPlayer = forwardRef<VideoReviewPlayerHandle, Props>(function VideoReviewPlayer(
-  { matchId, videoId, label, initialSecond = 0, onVisualTimeChange, onPopoutChange },
+  { matchId, videoId, label, initialSecond = 0, onVisualTimeChange, onPopoutChange, compactWhenExternal = false },
   ref,
 ) {
   const playerRef = useRef<YouTubeLabPlayerHandle>(null);
@@ -151,7 +152,7 @@ export const VideoReviewPlayer = forwardRef<VideoReviewPlayerHandle, Props>(func
       <div><p className="text-[10px] font-black tracking-[.16em] text-cyan-300">VÍDEO ACTIVO</p><p className="text-sm font-black">{label}</p></div>
       <div className="flex items-center gap-2"><span className="rounded-lg bg-slate-950 px-3 py-2 font-mono text-sm font-black text-cyan-200">{formatPreciseVideoTime(visualSecond)}</span><button type="button" onClick={openPopout} disabled={external} className="min-h-11 rounded-xl bg-violet-500 px-3 text-xs font-black text-slate-950 disabled:opacity-40">{external ? "VÍDEO EN VENTANA" : "ABRIR VÍDEO EN OTRA VENTANA"}</button></div>
     </header>
-    {external ? <div className="grid aspect-video place-items-center bg-black p-8 text-center"><div><p className="text-lg font-black text-violet-200">REPRODUCTOR ACTIVO EN LA VENTANA SEPARADA</p><p className="mt-2 text-sm text-slate-400">La cronología solo se edita aquí. Al cerrar la ventana, el vídeo vuelve automáticamente.</p></div></div> : <YouTubeLabPlayer ref={playerRef} videoId={videoId} initialSecond={inlineStartSecond} onPreciseTimeChange={(second) => { exactSecondRef.current = preciseVideoSecond(second); setVisualSecond(exactSecondRef.current); onVisualTimeChange?.(exactSecondRef.current); }} onPlayingChange={(playing) => { playingRef.current = playing; }} />}
+    {external ? !compactWhenExternal && <div className="grid aspect-video place-items-center bg-black p-8 text-center"><div><p className="text-lg font-black text-violet-200">REPRODUCTOR ACTIVO EN LA VENTANA SEPARADA</p><p className="mt-2 text-sm text-slate-400">La cronología solo se edita aquí. Al cerrar la ventana, el vídeo vuelve automáticamente.</p></div></div> : <YouTubeLabPlayer ref={playerRef} videoId={videoId} initialSecond={inlineStartSecond} onPreciseTimeChange={(second) => { exactSecondRef.current = preciseVideoSecond(second); setVisualSecond(exactSecondRef.current); onVisualTimeChange?.(exactSecondRef.current); }} onPlayingChange={(playing) => { playingRef.current = playing; }} />}
     {popupBlocked && <p role="status" className="border-t border-amber-800 bg-amber-950/50 px-3 py-2 text-xs font-bold text-amber-200">El navegador bloqueó la ventana. El reproductor sigue disponible aquí; permite pop-ups para separarlo.</p>}
   </section>;
 });

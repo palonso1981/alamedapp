@@ -6,11 +6,13 @@ import { buildDashboardAnalyticsSnapshot, inspectDashboardAnalyticsSnapshots } f
 import { createLineupInitializedEvent, createLiveThreatEvent, editEvent, replayMatch, softDeleteEvent } from "./matchEngine";
 import { buildVideoLabTimeline } from "./videoLab";
 import {
+  attachDirectoVideoAnchor,
   applyVideoReviewCreation,
   createVideoReviewEvent,
   createVideoReviewLineup,
   formatPreciseVideoTime,
   inspectVideoReviewWorkspace,
+  newDirectoVideoEventIds,
   preciseVideoSecond,
   replayVideoReviewAt,
   shiftPreciseVideoSecond,
@@ -50,6 +52,38 @@ test("anchor conserva décimas, es editable y no incorpora el pre-roll", () => {
   const row = buildVideoLabTimeline(next).find((item) => item.event.id === "loss")!;
   assert.equal(row.estimatedSecond, 1307.3);
   assert.equal(row.openSecond, 1301.3);
+});
+
+test("Directo con vídeo añade metadata VERIFIED exacta sin modificar MatchEvent", () => {
+  const base = session([lineup()]);
+  const event = createLiveThreatEvent({ id: "directo-video", matchId: "review", position: { period: 1, minute: 6, order: 2 }, side: "FOR", playerId: "p2", origin: { x: 0.7, y: 0.4 }, outcome: "FUERA", phase: "POSITIONAL", provenance: "LIVE", now: 30 });
+  const current = { ...base, events: [...base.events, event] };
+  const beforeEvent = structuredClone(event);
+  assert.deepEqual(newDirectoVideoEventIds(base.events, current.events), [event.id]);
+  const anchored = attachDirectoVideoAnchor(current, { eventIds: [event.id], segmentId: "part-1", videoSecond: 221.34, now: 40 });
+  assert.deepEqual(anchored.events.find((candidate) => candidate.id === event.id), beforeEvent);
+  assert.deepEqual(anchored.videoEventOverrides, [{
+    matchId: "review",
+    eventId: event.id,
+    segmentId: "part-1",
+    syncSegmentId: "part-1:P1",
+    videoSecond: 221.3,
+    status: "VERIFIED",
+    timeSource: "manual",
+    createdAt: 40,
+    updatedAt: 40,
+  }]);
+});
+
+test("Directo normal no añade metadata y cada parte exige su fuente compatible", () => {
+  const p1 = createLiveThreatEvent({ id: "p1", matchId: "review", position: { period: 1, minute: 2, order: 2 }, side: "FOR", playerId: "p2", origin: { x: 0.7, y: 0.4 }, outcome: "FUERA", phase: "POSITIONAL", provenance: "LIVE", now: 2 });
+  const p2 = createLiveThreatEvent({ id: "p2", matchId: "review", position: { period: 2, minute: 2, order: 1 }, side: "FOR", playerId: "p3", origin: { x: 0.7, y: 0.4 }, outcome: "PARADA", phase: "POSITIONAL", provenance: "LIVE", now: 3 });
+  const current = session([lineup(), p1, p2]);
+  assert.equal(current.videoEventOverrides, undefined, "sin videoContext, Directo conserva exactamente su evento normal");
+  assert.throws(() => attachDirectoVideoAnchor(current, { eventIds: [p2.id], segmentId: "part-1", videoSecond: 20 }), /no cubre el periodo/);
+  const anchored = attachDirectoVideoAnchor(current, { eventIds: [p2.id], segmentId: "part-2", videoSecond: 20.8, now: 50 });
+  assert.equal(anchored.videoEventOverrides?.[0].syncSegmentId, "part-2:P2");
+  assert.equal(anchored.videoEventOverrides?.[0].videoSecond, 20.8);
 });
 
 test("dos partes de vídeo mantienen source independiente del periodo deportivo", () => {
