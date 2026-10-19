@@ -77,6 +77,7 @@ import { upsertVideoEventOverride } from "../../../../lib/videoIndex";
 const CLOCK_SIDE_STORAGE_KEY = "alamedapp:directo-clock-side:v1";
 const CLOCK_VERTICAL_STORAGE_KEY = "alamedapp:directo-clock-vertical:v1";
 const ORIENTATION_STORAGE_PREFIX = "alamedapp:directo-orientation:v1";
+const COMPACT_CAPTURE_MEDIA = "(max-width: 639px)";
 /** La competición debe inyectar sus umbrales; localmente no se presupone ninguno. */
 const FOUL_THRESHOLDS: readonly number[] = [];
 
@@ -87,6 +88,29 @@ const OUTFIELD_POSITIONS = [
   { x: 0.79, y: 0.82 },
 ];
 const GOALKEEPER_POSITION = { x: 0.085, y: 0.5 };
+
+function captureScrollContainer(element: HTMLElement) {
+  let ancestor = element.parentElement;
+  while (ancestor && ancestor !== document.body) {
+    const overflowY = window.getComputedStyle(ancestor).overflowY;
+    if (/(auto|scroll)/.test(overflowY) && ancestor.scrollHeight > ancestor.clientHeight) {
+      return ancestor;
+    }
+    ancestor = ancestor.parentElement;
+  }
+  return document.scrollingElement as HTMLElement | null;
+}
+
+function scrollCaptureGridIntoView(element: HTMLElement) {
+  const container = captureScrollContainer(element);
+  const targetTop = element.getBoundingClientRect().top;
+  if (!container || container === document.documentElement || container === document.body) {
+    window.scrollTo({ top: window.scrollY + targetTop, behavior: "smooth" });
+    return;
+  }
+  const containerTop = container.getBoundingClientRect().top;
+  container.scrollTo({ top: container.scrollTop + targetTop - containerTop, behavior: "smooth" });
+}
 
 function courtPlayerPosition(
   slotId: string,
@@ -186,8 +210,13 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
   const [initialLineupOpen, setInitialLineupOpen] = useState(false);
   const [lastVideoAnchor, setLastVideoAnchor] = useState<{ eventId: string; segmentId: string; second: number } | null>(null);
   const videoPlayerRef = useRef<VideoReviewPlayerHandle>(null);
+  const captureGridRef = useRef<HTMLDivElement>(null);
   const pendingVideoAnchorRef = useRef<number | null>(null);
   const videoTiming = retrospectiveCapture ? "RETROSPECTIVE" as const : undefined;
+  const selectedCourtPlayerId =
+    interaction.kind === "PLAYER_SELECTED" && interaction.location === "COURT"
+      ? interaction.playerId
+      : null;
 
   const videoSegments = useMemo(() => session?.videoSegments ?? [], [session?.videoSegments]);
   const videoSegment = videoSegments.find((candidate) => candidate.id === videoSegmentId);
@@ -269,6 +298,15 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
     return () => window.clearTimeout(timeout);
   }, [genericFoulConfirm]);
 
+  useEffect(() => {
+    if (!selectedCourtPlayerId || selectedCourtPlayerId === INFERIORITY_SLOT_ID) return;
+    if (!window.matchMedia(COMPACT_CAPTURE_MEDIA).matches) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (captureGridRef.current) scrollCaptureGridIntoView(captureGridRef.current);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedCourtPlayerId]);
+
   const capturePeriod = session?.reviewPeriod ?? session?.period ?? 1;
   const captureMinute = session?.reviewPeriod !== undefined
     ? session.reviewMinute ?? 20
@@ -337,10 +375,6 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
       : interaction.kind === "THREAT_PENDING"
         ? interaction.playerId ?? null
         : null;
-  const selectedCourtPlayerId =
-    interaction.kind === "PLAYER_SELECTED" && interaction.location === "COURT"
-      ? interaction.playerId
-      : null;
   const selectedBenchPlayerId =
     interaction.kind === "PLAYER_SELECTED" && interaction.location === "BENCH"
       ? interaction.playerId
@@ -972,7 +1006,7 @@ export default function DirectoPage({ params }: { params: { id: string } }) {
               </button>
           </div>}
 
-          <div className={`directo-capture-grid grid items-stretch gap-2 ${selectedCourtPlayerId && selectedCourtPlayerId !== INFERIORITY_SLOT_ID ? "directo-capture-grid--player-actions" : ""}`}>
+          <div ref={captureGridRef} className={`directo-capture-grid grid items-stretch gap-2 ${selectedCourtPlayerId && selectedCourtPlayerId !== INFERIORITY_SLOT_ID ? "directo-capture-grid--player-actions" : ""}`}>
           <aside className="directo-player-rail grid gap-2" aria-label="Jugadores de campo en pista">
             {replay.onCourtPlayerIds.filter((id) => id !== functionalGoalkeeperId).map((slotId) => {
               if (slotId === INFERIORITY_SLOT_ID) return <button key={slotId} type="button" onClick={() => { applyInteraction({ type: "COURT_PLAYER_TAPPED", playerId: slotId }); if (benchMode === "CHANGE_OUT") setBenchMode("CHANGE_IN"); }} className="min-h-16 rounded-xl border-2 border-dashed border-rose-400 bg-rose-950 text-xs font-black text-rose-100">4v5</button>;
