@@ -12,6 +12,8 @@ interface SecondPeriodLineupDialogProps {
   dismissedPlayerIds?: string[];
   onCancel: () => void;
   onConfirm: (playerIds: string[], goalkeeperPlayerId: string) => void;
+  period?: number;
+  confirmLabel?: string;
 }
 
 export function SecondPeriodLineupDialog({
@@ -21,6 +23,8 @@ export function SecondPeriodLineupDialog({
   dismissedPlayerIds = [],
   onCancel,
   onConfirm,
+  period = 2,
+  confirmLabel,
 }: SecondPeriodLineupDialogProps) {
   const [selectedIds, setSelectedIds] = useState(() =>
     Array.from(new Set(proposedPlayerIds)).slice(0, 5),
@@ -50,12 +54,12 @@ export function SecondPeriodLineupDialog({
       className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/85 p-2 sm:p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="Configurar quinteto inicial de la segunda parte"
+      aria-label={`Configurar quinteto inicial de P${period}`}
     >
       <section className="flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-cyan-300/50 bg-slate-900 shadow-2xl">
         <header className="flex items-center justify-between border-b border-slate-700 px-4 py-3">
           <div>
-            <p className="text-xs font-black tracking-[0.2em] text-cyan-300">P2 · 20:00</p>
+            <p className="text-xs font-black tracking-[0.2em] text-cyan-300">P{period} · min 0</p>
             <h2 className="text-lg font-black text-white">Quinteto inicial</h2>
           </div>
           <div className={`rounded-xl px-3 py-2 text-lg font-black ${ready ? "bg-emerald-400 text-slate-950" : "bg-slate-800 text-amber-300"}`}>
@@ -87,7 +91,7 @@ export function SecondPeriodLineupDialog({
                   onClick={() => togglePlayer(player.id)}
                   className="grid min-h-20 w-full place-items-center rounded-lg px-1 py-1 disabled:cursor-not-allowed"
                   aria-pressed={selected}
-                  aria-label={`${selected ? "Quitar" : "Añadir"} a ${player.name} del quinteto inicial de P2`}
+                  aria-label={`${selected ? "Quitar" : "Añadir"} a ${player.name} del quinteto inicial de P${period}`}
                 >
                   <PlayerAvatar player={player} selected={selected} compact />
                   <span className="mt-1 max-w-full truncate text-[11px] font-black">{player.name}</span>
@@ -98,7 +102,7 @@ export function SecondPeriodLineupDialog({
                     onClick={() => setGoalkeeperId(player.id)}
                     className={`min-h-9 w-full rounded-lg text-sm font-black ${goalkeeper ? "bg-emerald-400 text-slate-950" : "bg-slate-800 text-slate-300"}`}
                     aria-pressed={goalkeeper}
-                    aria-label={`Elegir a ${player.name} como portero funcional de P2`}
+                    aria-label={`Elegir a ${player.name} como portero funcional de P${period}`}
                   >
                     {goalkeeper ? "◉" : "○"}
                   </button>
@@ -118,7 +122,7 @@ export function SecondPeriodLineupDialog({
             onClick={() => goalkeeperId && onConfirm(selectedIds, goalkeeperId)}
             className="min-h-12 rounded-xl bg-cyan-400 font-black text-slate-950 disabled:bg-slate-800 disabled:text-slate-500"
           >
-            ▶ INICIAR P2
+            {confirmLabel ?? `▶ INICIAR P${period}`}
           </button>
         </footer>
       </section>

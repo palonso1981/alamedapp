@@ -27,15 +27,18 @@ declare global {
 
 export interface YouTubeLabPlayerHandle {
   currentSecond: () => number;
+  currentTime: () => number;
   seekTo: (second: number) => void;
   play: () => void;
   pause: () => void;
+  setPlaybackRate: (rate: number) => void;
 }
 
 interface Props {
   videoId: string;
   initialSecond?: number;
   onTimeChange?: (second: number) => void;
+  onPreciseTimeChange?: (second: number) => void;
   onActionHere?: (second: number) => void;
   actionDisabled?: boolean;
   autoPlay?: boolean;
@@ -47,7 +50,7 @@ interface Props {
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
 
 export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(function YouTubeLabPlayer(
-  { videoId, initialSecond = 0, onTimeChange, onActionHere, actionDisabled = false, autoPlay = false, onPlayingChange, onAutoplayBlocked, presentation = "LAB" },
+  { videoId, initialSecond = 0, onTimeChange, onPreciseTimeChange, onActionHere, actionDisabled = false, autoPlay = false, onPlayingChange, onAutoplayBlocked, presentation = "LAB" },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -69,9 +72,11 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
 
   useImperativeHandle(ref, () => ({
     currentSecond: () => Math.round(readCurrentSecond()),
+    currentTime: () => readCurrentSecond(),
     seekTo: (second) => playerRef.current?.seekTo?.(Math.max(0, second), true),
     play: () => playerRef.current?.playVideo?.(),
     pause: () => playerRef.current?.pauseVideo?.(),
+    setPlaybackRate: (rate) => playerRef.current?.setPlaybackRate?.(rate),
   }), [readCurrentSecond]);
 
   useEffect(() => {
@@ -81,6 +86,8 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
       playerRef.current?.destroy?.();
       const desired = desiredVideoRef.current;
       playerRef.current = new window.YT.Player(hostRef.current, {
+        width: "100%",
+        height: "100%",
         videoId: desired.videoId,
         playerVars: { autoplay: desired.autoPlay ? 1 : 0, start: Math.max(0, Math.round(desired.initialSecond)), playsinline: 1, rel: 0 },
         events: {
@@ -138,13 +145,15 @@ export const YouTubeLabPlayer = forwardRef<YouTubeLabPlayerHandle, Props>(functi
     const interval = window.setInterval(() => {
       const value = playerRef.current?.getCurrentTime?.();
       if (!Number.isFinite(value)) return;
-      const next = Math.max(0, Math.round(Number(value)));
+      const precise = Math.max(0, Number(value));
+      const next = Math.round(precise);
       currentSecondRef.current = next;
       setCurrentSecond(next);
       onTimeChange?.(next);
-    }, 500);
+      onPreciseTimeChange?.(precise);
+    }, presentation === "REEL" ? 100 : 500);
     return () => window.clearInterval(interval);
-  }, [onTimeChange]);
+  }, [onPreciseTimeChange, onTimeChange, presentation]);
 
   const shift = (delta: -5 | -1 | 1 | 5) => {
     const next = shiftVideoSecond(readCurrentSecond(), delta);

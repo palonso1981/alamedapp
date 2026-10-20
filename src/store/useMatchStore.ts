@@ -27,6 +27,11 @@ import {
 } from "../lib/matchEngine";
 import { browserMatchRepository } from "../lib/sync/localMatchRepository";
 import { removeVideoAnalysisClip as withoutVideoAnalysisClip, upsertVideoEventAnalysisDetail as withVideoEventAnalysisDetail } from "../lib/videoLab";
+import {
+  applyVideoReviewCreation,
+  createVideoReviewLineup,
+  VideoReviewCreation,
+} from "../lib/videoReviewWorkspace";
 import { MATCH_UNDO_HISTORY_LIMIT } from "../lib/matchPersistence";
 import {
   CardColor,
@@ -286,6 +291,8 @@ interface MatchState {
   setVideoEventOverrides: (matchId: string, overrides: MatchVideoEventOverride[]) => void;
   setVideoSyncState: (matchId: string, state: Pick<MatchSession, "videoEventOverrides" | "videoCalibrations" | "videoSyncChecks">) => void;
   addVideoLabEvent: (matchId: string, event: MatchEvent, override: MatchVideoEventOverride) => void;
+  addVideoReviewEvent: (matchId: string, creation: VideoReviewCreation) => void;
+  initializeVideoReviewLineup: (matchId: string, period: number, playerIds: string[], goalkeeperPlayerId: string) => void;
   upsertVideoAnalysisClip: (matchId: string, clip: MatchVideoAnalysisClip) => void;
   removeVideoAnalysisClip: (matchId: string, clipId: string) => void;
   upsertVideoEventAnalysisDetail: (matchId: string, eventId: string, detail: { category?: MatchVideoAnalysisTheme; tags: string[]; comment?: string }) => void;
@@ -1369,6 +1376,34 @@ export const useMatchStore = create<MatchState>((set) => ({
           };
         } catch (error) {
           return { ...session, lastError: error instanceof Error ? error.message : "No se pudo crear el evento desde vídeo." };
+        }
+      }),
+    ),
+
+  addVideoReviewEvent: (matchId, creation) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => {
+        try {
+          const next = applyVideoReviewCreation(session, creation);
+          return {
+            ...commitEvents(session, next.events),
+            videoEventOverrides: next.videoEventOverrides,
+            lastError: null,
+          };
+        } catch (error) {
+          return { ...session, lastError: error instanceof Error ? error.message : "No se pudo insertar el evento desde vídeo." };
+        }
+      }),
+    ),
+
+  initializeVideoReviewLineup: (matchId, period, playerIds, goalkeeperPlayerId) =>
+    set((state) =>
+      updateAndPersistSession(state, matchId, (session) => {
+        try {
+          const lineup = createVideoReviewLineup(session, period, playerIds, goalkeeperPlayerId);
+          return { ...commitEvents(session, appendEvent(session.players, session.events, lineup)), lastError: null };
+        } catch (error) {
+          return { ...session, lastError: error instanceof Error ? error.message : "No se pudo configurar el quinteto inicial." };
         }
       }),
     ),
