@@ -29,6 +29,18 @@ test("Biblioteca lista eventos y clips sin mezclar sus modelos", () => {
   assert.equal(records[0].session.events.some((event) => "tags" in event), false);
 });
 
+test("Biblioteca conserva la precisión decimal de un VERIFIED reproducible", () => {
+  const records = libraryRecords();
+  const override = records[0].session.videoEventOverrides![0];
+  records[0].session.videoEventOverrides![0] = { ...override, videoSecond: 341.3 };
+  const items = buildVideoLibraryItems(records, { ...EMPTY_VIDEO_LIBRARY_FILTERS, source: "EVENT" });
+  const item = items.find((candidate) => candidate.source === "EVENT" && candidate.event.id === override.eventId);
+  assert.ok(item);
+  assert.equal(item.source, "EVENT");
+  assert.equal(item.verified, true);
+  assert.equal(item.referenceSecond, 341.3);
+});
+
 test("selector de fuente separa TODO, eventos y todos los clips sin filtros auxiliares", () => {
   const records = libraryRecords();
   const all = buildVideoLibraryItems(records, EMPTY_VIDEO_LIBRARY_FILTERS);
