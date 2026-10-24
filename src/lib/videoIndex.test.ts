@@ -167,7 +167,7 @@ test("anchors legacy conservan la primera referencia y las posteriores solo diag
   }
 });
 
-test("override 00:17 abre a 00:11 sin alterar anchors ni otro evento", () => {
+test("override con décimas abre con margen sin alterar anchors ni otro evento", () => {
   const events = [event("a", 100_000), event("late", 150_000)];
   let current = session(events);
   current = upsertVideoSegment(current, createVideoSegment({ id: "s1", urlOrVideoId: "abcdefghijk", periods: [1], leadSeconds: 6, now: 1 }));
@@ -175,19 +175,42 @@ test("override 00:17 abre a 00:11 sin alterar anchors ni otro evento", () => {
   const automaticA = resolveEventVideoPosition(current, "a");
   const automaticLate = resolveEventVideoPosition(current, "late");
   const anchors = structuredClone(current.videoSegments?.[0].anchors);
-  current = upsertVideoEventOverride(current, { eventId: "late", segmentId: "s1", videoSecond: 17, now: 2 });
+  current = upsertVideoEventOverride(current, { eventId: "late", segmentId: "s1", videoSecond: 17.4, now: 2 });
   const manual = resolveEventVideoPosition(current, "late");
   assert.equal(manual.status, "RESOLVED");
   if (manual.status === "RESOLVED") {
     assert.equal(manual.quality, "MANUAL");
-    assert.equal(manual.estimatedSecond, 17);
-    assert.equal(manual.openSecond, 11);
+    assert.equal(manual.estimatedSecond, 17.4);
+    assert.ok(Math.abs(manual.openSecond - 11.4) < 1e-9);
     assert.equal(manual.url, "https://www.youtube.com/watch?v=abcdefghijk&t=11s");
   }
   assert.deepEqual(resolveEventVideoPosition(current, "a"), automaticA);
   assert.deepEqual(current.videoSegments?.[0].anchors, anchors);
   current = removeVideoEventOverride(current, "late");
   assert.deepEqual(resolveEventVideoPosition(current, "late"), automaticLate);
+});
+
+test("override VERIFIED acepta enteros y decimales finitos no negativos y rechaza valores inválidos", () => {
+  const ids = ["integer", "decimal", "negative", "nan", "infinity"];
+  let current = session(ids.map((id, index) => event(id, 100_000 + index * 1_000)));
+  current = upsertVideoSegment(current, createVideoSegment({ id: "s1", urlOrVideoId: "abcdefghijk", periods: [1], leadSeconds: 0, now: 1 }));
+  current.videoEventOverrides = [
+    { matchId: "m1", eventId: "integer", segmentId: "s1", syncSegmentId: "s1:P1", videoSecond: 341, status: "VERIFIED", timeSource: "manual", createdAt: 2, updatedAt: 2 },
+    { matchId: "m1", eventId: "decimal", segmentId: "s1", syncSegmentId: "s1:P1", videoSecond: 341.3, status: "VERIFIED", timeSource: "manual", createdAt: 2, updatedAt: 2 },
+    { matchId: "m1", eventId: "negative", segmentId: "s1", syncSegmentId: "s1:P1", videoSecond: -0.1, status: "VERIFIED", timeSource: "manual", createdAt: 2, updatedAt: 2 },
+    { matchId: "m1", eventId: "nan", segmentId: "s1", syncSegmentId: "s1:P1", videoSecond: Number.NaN, status: "VERIFIED", timeSource: "manual", createdAt: 2, updatedAt: 2 },
+    { matchId: "m1", eventId: "infinity", segmentId: "s1", syncSegmentId: "s1:P1", videoSecond: Number.POSITIVE_INFINITY, status: "VERIFIED", timeSource: "manual", createdAt: 2, updatedAt: 2 },
+  ];
+
+  const integer = resolveEventVideoPosition(current, "integer");
+  const decimal = resolveEventVideoPosition(current, "decimal");
+  assert.equal(integer.status, "RESOLVED");
+  assert.equal(decimal.status, "RESOLVED");
+  if (integer.status === "RESOLVED") assert.equal(integer.estimatedSecond, 341);
+  if (decimal.status === "RESOLVED") assert.equal(decimal.estimatedSecond, 341.3);
+  for (const id of ["negative", "nan", "infinity"]) {
+    assert.equal(resolveEventVideoPosition(current, id).status, "PENDING_SYNC", id);
+  }
 });
 
 test("evento sin timestamp fiable se resuelve manualmente solo en su segmento", () => {

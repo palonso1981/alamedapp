@@ -243,7 +243,7 @@ export function resolveEventVideoPosition(
   const compatible = compatibleVideoSegments(session, event);
   const override = (session.videoEventOverrides ?? []).find((candidate) =>
     candidate.eventId === event.id &&
-    Number.isSafeInteger(candidate.videoSecond) && candidate.videoSecond >= 0 &&
+    Number.isFinite(candidate.videoSecond) && candidate.videoSecond >= 0 &&
     compatible.some((segment) => segment.id === candidate.segmentId),
   );
   if (override) {
