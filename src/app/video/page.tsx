@@ -23,6 +23,7 @@ import { MatchVideoAnalysisClip, MatchVideoAnalysisTheme, MatchVideoEventAnalysi
 import { useVideoCollections } from "../../hooks/useVideoCollections";
 import { appendCollectionItems, collectionShareHref, createVideoCollection, listedVideoCollections, playableCollectionItems, removeCollectionItem, reorderCollectionItem, selectedVideoCollectionItems, toggleVideoCollectionSelection, VideoCollection, VideoCollectionVisibility } from "../../lib/videoCollections";
 import { suggestedDashboardCollectionName } from "../../lib/dashboardVideoContext";
+import { browserMatchRepository } from "../../lib/sync/localMatchRepository";
 
 const EVENT_FILTERS: Array<[VideoLibraryEventKind, string]> = [
   ["SHOTS", "REMATES"],
@@ -111,7 +112,19 @@ function VideoLibraryContent() {
   const collectionStore = useVideoCollections(currentClubId, !fixture);
 
   useEffect(() => { ensureRegistry(); ensureTeam(currentClubId); }, [currentClubId, ensureRegistry, ensureTeam]);
-  useEffect(() => { setRecords(fixture ? buildDashboardFixture() : readLocalRecords()); setReady(true); }, [fixture]);
+  useEffect(() => {
+    if (fixture) {
+      setRecords(buildDashboardFixture());
+      setReady(true);
+      return;
+    }
+    const refresh = () => setRecords(readLocalRecords());
+    refresh();
+    setReady(true);
+    const unsubscribers = listMatchCatalog().map((catalog) =>
+      browserMatchRepository.subscribe(catalog.matchId, refresh));
+    return () => { unsubscribers.forEach((unsubscribe) => unsubscribe()); };
+  }, [fixture]);
   const fallbackRecord = records.find((record) => record.catalog.clubId === currentClubId) ?? records[0];
   const dashboardScope = useMemo(() => {
     if (!fromDashboard || !fallbackRecord || !hasDashboardScopeSearchParams(new URLSearchParams(searchParams.toString()), "a")) return undefined;

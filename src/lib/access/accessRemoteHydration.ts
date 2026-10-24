@@ -73,8 +73,12 @@ export function remoteWorkspace(input: {
   return { ...base, ...input, team: input.teams[0] ?? base.team };
 }
 
+export interface RemoteHydrationReport {
+  failedMatchIds: string[];
+}
+
 /** Descarga únicamente documentos autorizados; las queries incluyen club/team. */
-export async function hydrateAuthorizedRemoteData(grant: ActiveAccessGrant): Promise<void> {
+export async function hydrateAuthorizedRemoteData(grant: ActiveAccessGrant): Promise<RemoteHydrationReport> {
   const { db } = await getFirebaseDevServices();
   const clubId = grant.profile.clubId;
   const clubSnapshot = await getDoc(doc(db, "clubs", clubId));
@@ -147,6 +151,7 @@ export async function hydrateAuthorizedRemoteData(grant: ActiveAccessGrant): Pro
     const snapshots = await getDocs(query(collection(db, "matches"), ...constraints));
     matchDocs.push(...snapshots.docs);
   }
+  const failedMatchIds: string[] = [];
   for (const matchDoc of Array.from(new Map(matchDocs.map((item) => [item.id, item])).values())) {
     const metadata = payload<MatchRemoteMetadata>(matchDoc);
     if (!metadata) continue;
@@ -154,6 +159,9 @@ export async function hydrateAuthorizedRemoteData(grant: ActiveAccessGrant): Pro
     const events = eventDocs.map((item) => payload<MatchEvent>(item)).filter((item): item is MatchEvent => Boolean(item));
     const known = { [syncEntityKey("MATCH", matchDoc.id)]: revision(matchDoc) };
     eventDocs.forEach((item) => { known[syncEntityKey("EVENT", item.id)] = revision(item); });
-    browserMatchRepository.hydrateRemote(remoteMatchSession(metadata, events), known);
+    if (!browserMatchRepository.hydrateRemote(remoteMatchSession(metadata, events), known)) {
+      failedMatchIds.push(matchDoc.id);
+    }
   }
+  return { failedMatchIds };
 }
