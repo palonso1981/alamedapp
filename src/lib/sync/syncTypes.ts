@@ -6,7 +6,6 @@ export const MATCH_REMOTE_SCHEMA_VERSION = 1 as const;
 export type SyncEntityType = "MATCH" | "EVENT";
 export type SyncOperationKind = "UPSERT" | "TOMBSTONE";
 export type SyncOperationStatus = "PENDING" | "SYNCING" | "ERROR" | "CONFLICT";
-export type MatchMutationScope = "SPORTS" | "VIDEO";
 export type SyncErrorKind =
   | "OFFLINE"
   | "TRANSIENT"
@@ -71,9 +70,6 @@ export interface MatchSyncOperation {
   captureSessionId?: string;
   captureAccessId?: string;
   captureDeviceInstallId?: string;
-  /** Dominios locales realmente modificados al construir el payload MATCH.
-   * Las operaciones antiguas sin esta marca se tratan de forma conservadora. */
-  matchMutationScopes?: MatchMutationScope[];
 }
 
 export interface MatchSyncConflict {
@@ -226,11 +222,6 @@ function validOperation(value: unknown, matchId: string): value is MatchSyncOper
     && (value.captureSessionId === undefined || typeof value.captureSessionId === "string")
     && (value.captureAccessId === undefined || typeof value.captureAccessId === "string")
     && (value.captureDeviceInstallId === undefined || typeof value.captureDeviceInstallId === "string")
-    && (value.matchMutationScopes === undefined || (
-      Array.isArray(value.matchMutationScopes) &&
-      value.matchMutationScopes.length > 0 &&
-      value.matchMutationScopes.every((scope) => scope === "SPORTS" || scope === "VIDEO")
-    ))
   );
 }
 

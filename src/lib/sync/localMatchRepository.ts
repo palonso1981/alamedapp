@@ -18,7 +18,6 @@ import {
   matchTombstoneAlreadyApplied,
   MATCH_REMOTE_SCHEMA_VERSION,
   MatchRemoteMetadata,
-  MatchMutationScope,
   MatchSyncConflict,
   MatchSyncOperation,
   MatchSyncSummary,
@@ -34,60 +33,6 @@ import {
 } from "./syncTypes";
 
 const LOCAL_ONLY_MATCH_IDS = new Set(["prueba", "prueba-8", "prueba-porteria"]);
-const MATCH_VIDEO_KEYS = [
-  "videoSegments",
-  "videoEventOverrides",
-  "videoCalibrations",
-  "videoSyncChecks",
-  "videoAnalysisClips",
-  "videoEventAnalysisDetails",
-] as const;
-
-type MatchVideoMetadata = Pick<MatchRemoteMetadata, typeof MATCH_VIDEO_KEYS[number]>;
-
-function matchVideoMetadata(value: MatchRemoteMetadata): MatchVideoMetadata {
-  return {
-    videoSegments: value.videoSegments ?? [],
-    videoEventOverrides: value.videoEventOverrides ?? [],
-    videoCalibrations: value.videoCalibrations ?? [],
-    videoSyncChecks: value.videoSyncChecks ?? [],
-    videoAnalysisClips: value.videoAnalysisClips ?? [],
-    videoEventAnalysisDetails: value.videoEventAnalysisDetails ?? [],
-  };
-}
-
-function matchSportsMetadata(value: MatchRemoteMetadata): Omit<MatchRemoteMetadata, typeof MATCH_VIDEO_KEYS[number]> {
-  const copy = { ...value };
-  MATCH_VIDEO_KEYS.forEach((key) => { delete copy[key]; });
-  return copy;
-}
-
-function changedMatchScopes(previous: MatchRemoteMetadata | null, current: MatchRemoteMetadata): MatchMutationScope[] {
-  if (!previous) return ["SPORTS", "VIDEO"];
-  const scopes: MatchMutationScope[] = [];
-  if (!syncPayloadsEqual(matchSportsMetadata(previous), matchSportsMetadata(current))) scopes.push("SPORTS");
-  if (!syncPayloadsEqual(matchVideoMetadata(previous), matchVideoMetadata(current))) scopes.push("VIDEO");
-  return scopes;
-}
-
-function withVideoMetadata<T extends MatchRemoteMetadata | MatchSession>(target: T, source: MatchRemoteMetadata | MatchSession): T {
-  return {
-    ...target,
-    videoSegments: source.videoSegments ?? [],
-    videoEventOverrides: source.videoEventOverrides ?? [],
-    videoCalibrations: source.videoCalibrations ?? [],
-    videoSyncChecks: source.videoSyncChecks ?? [],
-    videoAnalysisClips: source.videoAnalysisClips ?? [],
-    videoEventAnalysisDetails: source.videoEventAnalysisDetails ?? [],
-  };
-}
-
-function operationProtectsLocalVideo(operation: MatchSyncOperation): boolean {
-  if (operation.entityType !== "MATCH") return false;
-  // Una operación legacy no expresa intención por campo: nunca se arriesga una
-  // edición audiovisual offline intentando inferirla a posteriori.
-  return operation.matchMutationScopes?.includes("VIDEO") ?? true;
-}
 
 export interface LocalMatchRepositoryOptions {
   storage?: LocalStorageAdapter | null;
@@ -149,7 +94,6 @@ function enqueueLatest(
     entityId: string;
     kind: SyncOperationKind;
     payload: SyncOperationPayload;
-    matchMutationScopes?: MatchMutationScope[];
   },
   now: number,
   idFactory: () => string,
@@ -191,14 +135,6 @@ function enqueueLatest(
     captureSessionId: capture?.captureSessionId,
     captureAccessId: capture?.accessId,
     captureDeviceInstallId: capture?.deviceInstallId,
-    matchMutationScopes: input.entityType === "MATCH"
-      ? compactedOperation && compactedOperation.matchMutationScopes === undefined
-        ? undefined
-        : Array.from(new Set([
-            ...(compactedOperation?.matchMutationScopes ?? []),
-            ...(input.matchMutationScopes ?? []),
-          ]))
-      : undefined,
   };
   const outbox = [...state.outbox];
   if (compactableIndex >= 0) outbox[compactableIndex] = operation;
@@ -243,7 +179,6 @@ function buildNextSyncState(
         // ignorar la raíz eliminada.
         kind: current.preparation?.deletedAt ? "TOMBSTONE" : "UPSERT",
         payload: currentMetadata,
-        matchMutationScopes: changedMatchScopes(previousMetadata, currentMetadata),
       },
       now,
       idFactory,
@@ -352,39 +287,14 @@ export class LocalMatchRepository {
     const storage = this.storage();
     const existing = loadMatchRecord(session.matchId, storage);
     if (existing && (existing.sync.outbox.length > 0 || existing.sync.conflicts.length > 0)) {
-      if (existing.sync.outbox.some(operationProtectsLocalVideo)) return true;
-      const remoteMetadata = matchRemoteMetadata(session);
-      const mergedSession = withVideoMetadata(existing.session, remoteMetadata);
-      const outbox = existing.sync.outbox.map((operation) => operation.entityType === "MATCH"
-        ? { ...operation, payload: withVideoMetadata(operation.payload as MatchRemoteMetadata, remoteMetadata) }
-        : operation);
-      const localPayloadByOperation = new Map(outbox.map((operation) => [operation.id, operation.payload]));
-      const conflicts = existing.sync.conflicts.map((conflict) => ({
-        ...conflict,
-        localPayload: localPayloadByOperation.get(conflict.operationId) ?? conflict.localPayload,
-      }));
-      const result = saveMatchRecord(mergedSession, {
-        ...existing.sync,
-        outbox,
-        conflicts,
-        knownRemoteRevisions: { ...existing.sync.knownRemoteRevisions, ...knownRemoteRevisions },
-        lastSyncedAt: this.now(),
-      }, storage, this.now());
-      if (result.ok) {
-        updateMatchCatalog(mergedSession, storage);
-        this.notify(session.matchId);
-      }
-      return result.ok;
+      return true;
     }
     const result = saveMatchRecord(session, {
       ...emptyMatchSyncState(),
       knownRemoteRevisions,
       lastSyncedAt: this.now(),
     }, storage, this.now());
-    if (result.ok) {
-      updateMatchCatalog(session, storage);
-      this.notify(session.matchId);
-    }
+    if (result.ok) updateMatchCatalog(session, storage);
     return result.ok;
   }
 

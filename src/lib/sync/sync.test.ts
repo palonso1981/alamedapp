@@ -38,7 +38,7 @@ import {
   RemoteMatchRepository,
 } from "./remoteMatchRepository";
 import { MatchSyncCoordinator } from "./syncCoordinator";
-import { emptyMatchSyncState, hasUnreconciledMatchSyncState, matchTombstoneAlreadyApplied, migrateMatchSyncState, syncEntityKey, syncPayloadsEqual } from "./syncTypes";
+import { emptyMatchSyncState, hasUnreconciledMatchSyncState, matchTombstoneAlreadyApplied, migrateMatchSyncState, syncEntityKey } from "./syncTypes";
 import {
   buildLocalVideoResolutionPayload,
   hasVideoOnlyMatchConflict,
@@ -51,10 +51,9 @@ import { updateExistingMatchMetadata } from "../matchMetadata";
 import { confirmVideoSyncCheck, createVideoSegment, upsertVideoCalibration, upsertVideoEventOverride, upsertVideoSegment } from "../videoIndex";
 import { resetRuntimeCaptureContextsForTests, setRuntimeCaptureContext } from "../captureLease";
 import { buildDashboardV2, emptyDashboardScope } from "../dashboardV2";
-import { listMatchCatalog, updateMatchCatalog, visibleMatchCatalog } from "../matchCatalog";
+import { listMatchCatalog, visibleMatchCatalog } from "../matchCatalog";
 import { remoteEnvelopePayload, remoteMatchSession } from "../access/accessRemoteHydration";
 import { MatchEvent } from "../../types";
-import { buildVideoLibraryItems, EMPTY_VIDEO_LIBRARY_FILTERS } from "../videoLibrary";
 
 class MemoryStorage implements LocalStorageAdapter {
   protected readonly values = new Map<string, string>();
@@ -88,86 +87,6 @@ class QuotaStorage extends MemoryStorage {
 function idFactory() {
   let next = 1;
   return () => `sync-op-${next++}`;
-}
-
-function tavernesHydrationFixture() {
-  const matchId = "partido-2026-10-17-tavernes-b-09026a93";
-  const initial = createSession(matchId);
-  const preparation = {
-    clubId: "cd-alameda",
-    teamId: "team-cadete",
-    seasonId: "season-2026-27",
-    opponent: "Tavernes B",
-    venue: "HOME" as const,
-    date: "2026-10-17",
-    competitionType: "LEAGUE" as const,
-    status: "FINISHED" as const,
-    calledPlayerIds: initial.players.map((player) => player.id),
-    starterPlayerIds: initial.players.slice(0, 5).map((player) => player.id),
-    selectedStaffIds: [],
-    targetMinutes: {},
-    createdAt: 1,
-    updatedAt: 2,
-  };
-  const reviewable = Array.from({ length: 170 }, (_, index) => {
-    const event = createLiveThreatEvent({
-      id: `tavernes-threat-${index + 1}`,
-      matchId,
-      position: { period: index < 85 ? 1 : 2, minute: index % 20, order: index + 1 },
-      side: index % 2 === 0 ? "FOR" : "AGAINST",
-      playerId: initial.players[index % initial.players.length].id,
-      origin: { x: 0.4, y: 0.6 },
-      outcome: index % 11 === 0 ? "GOL" : "FUERA",
-      phase: "POSITIONAL",
-      now: 100 + index,
-    });
-    return index >= 153 ? { ...event, deletedAt: 10_000 + index } : event;
-  });
-  const operational = Array.from({ length: 29 }, (_, index) => createGameStateEvent({
-    id: `tavernes-state-${index + 1}`,
-    matchId,
-    position: { period: index < 15 ? 1 : 2, minute: index % 20, order: 500 + index },
-    state: "FLYING_GOALKEEPER",
-    active: index % 2 === 0,
-    side: index % 2 === 0 ? "FOR" : "AGAINST",
-    now: 1_000 + index,
-  }));
-  const events = [...initial.events, ...reviewable, ...operational];
-  const segment = createVideoSegment({ id: "tavernes-video", urlOrVideoId: "abcdefghijk", periods: [1, 2], now: 2_000 });
-  const overrides = [...reviewable, ...operational].map((event, index) => ({
-    matchId,
-    eventId: event.id,
-    segmentId: segment.id,
-    syncSegmentId: `${segment.id}:P${event.period}`,
-    videoSecond: 20 + index,
-    status: "VERIFIED" as const,
-    timeSource: "manual" as const,
-    createdAt: 2_100 + index,
-    updatedAt: 2_100 + index,
-  }));
-  const base = {
-    ...initial,
-    preparation,
-    matchFinished: true,
-    period: 2,
-    minute: 20,
-    periodMinutes: { 1: 20, 2: 20 },
-    events,
-    videoSegments: [segment],
-  };
-  return {
-    matchId,
-    local: { ...base, videoEventOverrides: overrides.slice(0, 12) },
-    remote: { ...base, videoEventOverrides: overrides },
-  };
-}
-
-function tavernesLibraryCount(storage: LocalStorageAdapter, matchId: string): number {
-  const session = loadMatchRecord(matchId, storage)?.session;
-  const catalog = listMatchCatalog(storage).find((item) => item.matchId === matchId);
-  assert.ok(session);
-  assert.ok(catalog);
-  return buildVideoLibraryItems([{ catalog, session }], EMPTY_VIDEO_LIBRARY_FILTERS).length;
 }
 
 function protectMatchConflict(
@@ -1605,85 +1524,6 @@ test("hidratación PROD-style refresca una caché incompleta con eventos y víde
   );
   assert.equal(dashboard.analytics.matches, 1);
   assert.equal(dashboard.analytics.goalsFor, 1);
-});
-
-test("Biblioteca Tavernes adopta 199 VERIFIED remotos y publica 153 eventos elegibles", () => {
-  const storage = new MemoryStorage();
-  const fixture = tavernesHydrationFixture();
-  assert.equal(saveMatchRecord(fixture.local, emptyMatchSyncState(), storage, 1).ok, true);
-  updateMatchCatalog(fixture.local, storage);
-  assert.equal(tavernesLibraryCount(storage, fixture.matchId), 12);
-
-  const repository = new LocalMatchRepository({ storage, now: () => 3_000 });
-  let notifications = 0;
-  const unsubscribe = repository.subscribe(fixture.matchId, () => { notifications += 1; });
-  const originalEvents = structuredClone(fixture.local.events);
-  assert.equal(repository.hydrateRemote(fixture.remote, { match: 7 }), true);
-  unsubscribe();
-
-  assert.equal(tavernesLibraryCount(storage, fixture.matchId), 153);
-  assert.equal(repository.load(fixture.matchId)?.videoEventOverrides?.length, 199);
-  assert.equal(syncPayloadsEqual(repository.load(fixture.matchId)?.events, originalEvents), true);
-  assert.equal(repository.getSyncState(fixture.matchId).outbox.length, 0);
-  assert.equal(notifications, 1, "la Biblioteca observable recibe la hidratación terminada");
-});
-
-test("outbox deportivo conserva su trabajo y permite refrescar solo metadata audiovisual", () => {
-  const storage = new MemoryStorage();
-  const fixture = tavernesHydrationFixture();
-  const repository = new LocalMatchRepository({ storage, now: () => 3_100, idFactory: idFactory() });
-  assert.equal(repository.hydrateRemote(fixture.local, { match: 4 }), true);
-  const hydrated = repository.load(fixture.matchId)!;
-  const localSports = {
-    ...hydrated,
-    preparation: { ...hydrated.preparation!, updatedAt: hydrated.preparation!.updatedAt + 1 },
-  };
-  const savedSports = repository.save(localSports);
-  assert.equal(savedSports.ok, true, savedSports.ok ? undefined : savedSports.message);
-  const before = repository.getSyncState(fixture.matchId);
-  assert.equal(before.outbox.length, 1);
-  assert.deepEqual(before.outbox[0].matchMutationScopes, ["SPORTS"]);
-  const operationId = before.outbox[0].id;
-  const originalEvents = structuredClone(localSports.events);
-
-  assert.equal(repository.hydrateRemote(fixture.remote, { match: 8 }), true);
-
-  const after = repository.getSyncState(fixture.matchId);
-  assert.equal(after.outbox.length, 1);
-  assert.equal(after.outbox[0].id, operationId);
-  assert.deepEqual(after.outbox[0].matchMutationScopes, ["SPORTS"]);
-  assert.equal((after.outbox[0].payload as ReturnType<typeof matchRemoteMetadata>).videoEventOverrides?.length, 199);
-  assert.equal(repository.load(fixture.matchId)?.preparation?.updatedAt, localSports.preparation.updatedAt, "la edición deportiva local permanece");
-  assert.equal(syncPayloadsEqual(repository.load(fixture.matchId)?.events, originalEvents), true);
-  assert.equal(repository.load(fixture.matchId)?.videoEventOverrides?.length, 199);
-  assert.equal(tavernesLibraryCount(storage, fixture.matchId), 153);
-});
-
-test("outbox audiovisual protege metadata local ante una hidratación remota más nueva", () => {
-  const storage = new MemoryStorage();
-  const fixture = tavernesHydrationFixture();
-  const repository = new LocalMatchRepository({ storage, now: () => 3_200, idFactory: idFactory() });
-  assert.equal(repository.hydrateRemote(fixture.local, { match: 4 }), true);
-  const current = repository.load(fixture.matchId)!;
-  const localOverride = { ...current.videoEventOverrides![0], videoSecond: 777, updatedAt: 3_201 };
-  const localVideo = {
-    ...current,
-    videoEventOverrides: [localOverride, ...current.videoEventOverrides!.slice(1)],
-  };
-  assert.equal(repository.save(localVideo).ok, true);
-  const before = repository.getSyncState(fixture.matchId);
-  assert.equal(before.outbox.length, 1);
-  assert.deepEqual(before.outbox[0].matchMutationScopes, ["VIDEO"]);
-
-  assert.equal(repository.hydrateRemote(fixture.remote, { match: 8 }), true);
-
-  const after = repository.getSyncState(fixture.matchId);
-  assert.equal(after.outbox.length, 1);
-  assert.equal(after.outbox[0].id, before.outbox[0].id);
-  assert.deepEqual(after.outbox[0].matchMutationScopes, ["VIDEO"]);
-  assert.equal(repository.load(fixture.matchId)?.videoEventOverrides?.length, 12);
-  assert.equal(repository.load(fixture.matchId)?.videoEventOverrides?.[0].videoSecond, 777);
-  assert.equal(tavernesLibraryCount(storage, fixture.matchId), 12);
 });
 
 test("hidratar 94 eventos y editar solo vídeo encola únicamente MATCH incluso tras reload", async () => {
