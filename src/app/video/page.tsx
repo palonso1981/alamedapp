@@ -13,7 +13,6 @@ import { buildDashboardFixture } from "../../lib/dashboardFixture";
 import { emptyDashboardScope, hasDashboardScopeSearchParams, matchCompetition, scopeFromSearchParams } from "../../lib/dashboardV2";
 import { eventDescription, phaseLabel } from "../../lib/eventPresentation";
 import { listMatchCatalog } from "../../lib/matchCatalog";
-import { loadMatchSession } from "../../lib/matchPersistence";
 import { removeVideoEventAnalysisTag, renameVideoEventAnalysisTag, upsertVideoEventAnalysisDetail, VIDEO_CLIP_SUGGESTED_CATEGORIES, VIDEO_EVENT_ANALYSIS_COMMENT_MAX, VIDEO_EVENT_ANALYSIS_TAG_MAX, videoAnalysisTagSuggestions } from "../../lib/videoLab";
 import { formatVideoTimestamp } from "../../lib/videoIndex";
 import { activeVideoLibraryRecords, buildVideoLibraryItems, canonicalVideoRival, dashboardReturnHref, EMPTY_VIDEO_LIBRARY_FILTERS, nextReelIndex, reelCutCompletion, removeVideoTag, renameVideoTag, videoAnalysisTagUsage, videoLabNavigationHref, videoLibraryFiltersFromSearchParams, videoLibraryFiltersToSearchParams, videoLibraryKeyboardAction, videoLibraryWriteActionState, VideoLibraryEventKind, VideoLibraryFilters, VideoLibraryItem, VideoLibrarySourceFilter } from "../../lib/videoLibrary";
@@ -48,7 +47,11 @@ const SOURCE_FILTERS: Array<[VideoLibrarySourceFilter, string]> = [
 
 function readLocalRecords(): DashboardMatchRecord[] {
   return listMatchCatalog().flatMap((catalog) => {
-    const session = loadMatchSession(catalog.matchId);
+    // El repositorio también conserva el último estado completo protegido en
+    // memoria cuando todavía no ha podido hacerse durable. Biblioteca y
+    // VideoLab deben leer la misma verdad local para no volver a una copia
+    // obsoleta de localStorage durante la recuperación.
+    const session = browserMatchRepository.load(catalog.matchId);
     return session ? [{ catalog, session }] : [];
   });
 }
