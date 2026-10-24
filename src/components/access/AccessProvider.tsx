@@ -77,8 +77,13 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     void validateRememberedGrant(remembered).then(async (validated) => {
       if (!active) return;
       setRuntimeAccessGrant(validated);
-      await hydrateAuthorizedRemoteData(validated);
-      if (!active) return; saveRememberedAccess(validated); setGrant(validated); setReady(true); void recordDailyUsage(validated).catch(() => undefined);
+      const hydration = await hydrateAuthorizedRemoteData(validated);
+      if (!active) return;
+      saveRememberedAccess(validated); setGrant(validated);
+      setMessage(hydration.failedMatchIds.length > 0
+        ? `No se pudieron actualizar ${hydration.failedMatchIds.length} partido(s) en este dispositivo. La Biblioteca puede mostrar datos anteriores.`
+        : null);
+      setReady(true); void recordDailyUsage(validated).catch(() => undefined);
     }).catch((error) => {
       if (!active) return;
       if (error instanceof AccessError && error.kind === "OFFLINE") {
@@ -94,12 +99,15 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   async function authorized(next: ActiveAccessGrant) {
     setRuntimeAccessGrant(next);
     try {
-      await hydrateAuthorizedRemoteData(next);
+      const hydration = await hydrateAuthorizedRemoteData(next);
+      setMessage(hydration.failedMatchIds.length > 0
+        ? `No se pudieron actualizar ${hydration.failedMatchIds.length} partido(s) en este dispositivo. La Biblioteca puede mostrar datos anteriores.`
+        : null);
     } catch (error) {
       setRuntimeAccessGrant(null);
       throw error;
     }
-    saveRememberedAccess(next); setGrant(next); setMessage(null); setReady(true); void recordDailyUsage(next).catch(() => undefined);
+    saveRememberedAccess(next); setGrant(next); setReady(true); void recordDailyUsage(next).catch(() => undefined);
   }
   async function refresh() {
     if (!grant) return;
