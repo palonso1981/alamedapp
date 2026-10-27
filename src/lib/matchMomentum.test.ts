@@ -4,10 +4,13 @@ import test from "node:test";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
 import {
   buildMatchMomentum,
+  buildMomentumTrendSeries,
   classifyMomentumDanger,
   deriveSharedPlayerIntervals,
   EMPTY_MOMENTUM_FILTERS,
   MOMENTUM_COLOR_INTENSITY,
+  MOMENTUM_OUTCOME_COLORS,
+  movingAverageMomentum,
   momentumDangerMatches,
   momentumBinOpacity,
   momentumBinTotal,
@@ -87,6 +90,35 @@ test("Momentum clasifica peligrosidad con prioridad exclusiva sin doble conteo",
   const bin = momentum.bins.find((item) => item.key === "1:2")!;
   assert.equal(momentumBinTotal(bin, "FOR"), 4);
   assert.deepEqual(bin.FOR, { NORMAL: 1, NEAR: 1, HIGH: 1, GOAL: 1 });
+  assert.deepEqual(bin.actions.map((action) => action.outcome), ["FUERA", "FUERA", "PARADA", "GOL"]);
+});
+
+test("cada acción conserva un bloque y el color canónico de su resultado", () => {
+  assert.equal(MOMENTUM_OUTCOME_COLORS.FUERA, "#f59e0b");
+  assert.equal(MOMENTUM_OUTCOME_COLORS.PARADA, "#22c55e");
+  assert.equal(MOMENTUM_OUTCOME_COLORS.GOL, "#ef4444");
+  const bin = buildMatchMomentum(record()).bins.find((item) => item.key === "1:2")!;
+  assert.equal(bin.actions.length, 4);
+  assert.equal(bin.actions.filter((action) => action.outcome === "GOL").length, 1);
+});
+
+test("media móvil usa ventana de tres minutos centrada o trailing sin inventar score", () => {
+  const points = [0, 3, 0, 6].map((value, minute) => ({ minute, FOR: value, AGAINST: value / 3 }));
+  assert.deepEqual(movingAverageMomentum(points, "CENTERED").map((point) => point.FOR), [1.5, 1, 3, 3]);
+  assert.deepEqual(movingAverageMomentum(points, "TRAILING").map((point) => point.FOR), [0, 1.5, 1, 3]);
+});
+
+test("P1 vs P2 comparte eje relativo y la comparativa promedia partidos antes de suavizar", () => {
+  const data = record();
+  const p2 = buildMomentumTrendSeries([data], EMPTY_MOMENTUM_FILTERS, 2);
+  assert.equal(p2.points[0].minute, 0);
+  assert.equal(p2.points.at(-1)?.minute, 20);
+  assert.equal(p2.window, 3);
+  assert.equal(p2.smoothing, "CENTERED");
+  const duplicate = { ...data, catalog: { ...data.catalog, matchId: "momentum-2" }, session: { ...data.session, matchId: "momentum-2" } };
+  const one = buildMomentumTrendSeries([data], EMPTY_MOMENTUM_FILTERS);
+  const two = buildMomentumTrendSeries([data, duplicate], EMPTY_MOMENTUM_FILTERS);
+  assert.deepEqual(two.points, one.points);
 });
 
 test("Momentum dibuja CDA arriba y rival abajo mediante series separadas", () => {
@@ -208,7 +240,7 @@ test("gráfica y exportación comparten el resaltado derivado por evento", () =>
   assert.equal(momentumBinOpacity(p1Final), .2);
   assert.equal(momentumBinOpacity(p2Final), 1);
   const source = readFileSync("src/components/dashboard/MatchMomentumPanel.tsx", "utf8");
-  assert.ok((source.match(/momentumBinOpacity\(bin\)/g) ?? []).length >= 2);
+  assert.ok((source.match(/momentumActionOpacity\(action\)/g) ?? []).length >= 2);
 });
 
 test("la exportación incorpora partido y filtros activos", () => {
@@ -228,5 +260,13 @@ test("el componente conserva selector interno y SVG responsive sin overflow glob
   assert.match(source, /CERC A PUERTA/);
   assert.match(source, /momentum\.scaleMax/);
   assert.match(source, /momentum\.displayStart/);
-  assert.match(source, /La altura representa cantidades/);
+  assert.match(source, /data-momentum-action/);
+  assert.match(source, /action\.outcome === "GOL"/);
+  assert.match(source, />G<\/text>/);
+  assert.match(source, /data-momentum-trend/);
+  assert.match(source, /data-momentum-presence/);
+  assert.match(source, /PARTIDO/);
+  assert.match(source, /P1 vs P2/);
+  assert.match(source, /COMPARATIVA/);
+  assert.match(source, /Cada bloque = una acción/);
 });

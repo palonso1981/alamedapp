@@ -105,6 +105,7 @@ import {
   setPiecePerformance,
   setPieceFunnelOpportunityLabel,
   setPieceFunnelPercentage,
+  setPieceFunnelSignal,
   setPieceFunnelWidth,
   teamMetricValue,
   teamPairedMetricValue,
@@ -1049,6 +1050,33 @@ test("embudo ABP conserva selector táctil, escala común y apilado responsive",
   assert.match(source, /Sin ABP registradas/);
   assert.doesNotMatch(source, /grid-cols-2 lg:grid-cols-1/);
   assert.doesNotMatch(dashboard, /SetPieceCard|FALTA ABP · SIN DENOMINADOR/);
+});
+
+test("indicadores ABP aplican umbrales absolutos e invierten la lectura defensiva", () => {
+  assert.equal(setPieceFunnelSignal("FOR", 10, 3), "ATTENTION");
+  assert.equal(setPieceFunnelSignal("FOR", 10, 4), null);
+  assert.equal(setPieceFunnelSignal("FOR", 10, 6), "STRENGTH");
+  assert.equal(setPieceFunnelSignal("FOR", 4, 1), "ATTENTION");
+  assert.equal(setPieceFunnelSignal("FOR", 3, 0), null);
+  assert.equal(setPieceFunnelSignal("AGAINST", 10, 6), "ATTENTION");
+  assert.equal(setPieceFunnelSignal("AGAINST", 10, 4), null);
+  assert.equal(setPieceFunnelSignal("AGAINST", 10, 3), "STRENGTH");
+});
+
+test("embudo ABP reutiliza TOTAL, PJ y x40 sin alterar las tasas entre etapas", () => {
+  const raw = [40, 18, 10, 4];
+  const total = raw.map((value) => normalizeDashboardCount(value, "TOTALS", 10, 400));
+  const perMatch = raw.map((value) => normalizeDashboardCount(value, "PER_MATCH", 10, 400));
+  const per40 = raw.map((value) => normalizeDashboardCount(value, "PER_40", 10, 400));
+  assert.deepEqual(total, [40, 18, 10, 4]);
+  assert.deepEqual(perMatch.map((value) => value === null ? null : Number(value.toFixed(4))), [4, 1.8, 1, .4]);
+  assert.deepEqual(per40.map((value) => value === null ? null : Number(value.toFixed(4))), [4, 1.8, 1, .4]);
+  for (const values of [total, perMatch, per40]) {
+    assert.ok(Math.abs((values[1] ?? 0) / (values[0] ?? 1) - 18 / 40) < 1e-10);
+    assert.ok(Math.abs((values[2] ?? 0) / (values[1] ?? 1) - 10 / 18) < 1e-10);
+    assert.ok(Math.abs((values[3] ?? 0) / (values[2] ?? 1) - 4 / 10) < 1e-10);
+  }
+  assert.ok(Math.abs((normalizeDashboardCount(18, "PER_40", 10, 200) ?? 0) - 3.6) < 1e-10);
 });
 
 test("scope serializa lado y trazabilidad, conserva URLs antiguas y filtra VIDEO por el mismo conjunto", () => {

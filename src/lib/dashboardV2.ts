@@ -553,6 +553,26 @@ export function setPieceFunnelWidth(value: number, scaleMaximum: number): number
   return scaleMaximum > 0 ? Math.max(0, Math.min(100, value / scaleMaximum * 100)) : 0;
 }
 
+export type SetPieceFunnelSignal = "ATTENTION" | "STRENGTH";
+
+/**
+ * Señal absoluta de conversión entre dos etapas consecutivas del embudo.
+ * Se evalúa sobre los conteos reales, nunca sobre valores normalizados o
+ * redondeados. En defensa la interpretación se invierte porque una progresión
+ * alta pertenece al rival.
+ */
+export function setPieceFunnelSignal(
+  side: ThreatSide,
+  previous: number,
+  next: number,
+): SetPieceFunnelSignal | null {
+  if (previous < 4) return null;
+  const progression = next / previous * 100;
+  if (progression < 35) return side === "FOR" ? "ATTENTION" : "STRENGTH";
+  if (progression > 55) return side === "FOR" ? "STRENGTH" : "ATTENTION";
+  return null;
+}
+
 function eventMatches(
   event: MatchEvent,
   record: DashboardMatchRecord,
