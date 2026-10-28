@@ -74,6 +74,7 @@ export interface MomentumTrendSeries {
   points: MomentumTrendPoint[];
   window: 3;
   smoothing: "CENTERED" | "TRAILING";
+  aggregation: "ROLLING_SUM";
 }
 
 export const EMPTY_MOMENTUM_FILTERS: MomentumFilters = {
@@ -312,7 +313,7 @@ function rawMomentumSeries(
   };
 }
 
-export function movingAverageMomentum(
+export function rollingMomentumRhythm(
   points: readonly MomentumTrendPoint[],
   smoothing: "CENTERED" | "TRAILING",
 ): MomentumTrendPoint[] {
@@ -322,17 +323,18 @@ export function movingAverageMomentum(
     const window = points.slice(from, to + 1);
     return {
       minute: point.minute,
-      FOR: window.reduce((sum, item) => sum + item.FOR, 0) / window.length,
-      AGAINST: window.reduce((sum, item) => sum + item.AGAINST, 0) / window.length,
+      FOR: window.reduce((sum, item) => sum + item.FOR, 0),
+      AGAINST: window.reduce((sum, item) => sum + item.AGAINST, 0),
     };
   });
 }
 
 /**
  * Serie comparable por minuto relativo. Cada partido aporta primero su propia
- * serie; después se promedia por posición temporal y, por último, se aplica una
- * ventana de tres minutos. En partidos cerrados la ventana es centrada. Si hay
- * un partido en curso se usa una ventana trailing para no introducir futuro.
+ * serie y su ritmo acumulado en una ventana de tres minutos; después se
+ * promedian esos ritmos por posición temporal. En partidos cerrados la ventana
+ * es centrada. Si hay un partido en curso se usa una ventana trailing para no
+ * introducir futuro. Nunca se suman varios partidos como si fueran uno.
  */
 export function buildMomentumTrendSeries(
   records: readonly DashboardMatchRecord[],
@@ -340,19 +342,23 @@ export function buildMomentumTrendSeries(
   axis: "MATCH" | 1 | 2 = "MATCH",
 ): MomentumTrendSeries {
   const series = records.map((record) => rawMomentumSeries(record, filters, axis));
+  const smoothing = records.some((record) => !record.session.matchFinished && record.catalog.status !== "FINISHED")
+    ? "TRAILING"
+    : "CENTERED";
+  const rhythms = series.map((item) => ({
+    duration: item.duration,
+    points: rollingMomentumRhythm(item.points, smoothing),
+  }));
   const duration = Math.max(0, ...series.map((item) => item.duration));
   const averaged = Array.from({ length: Math.floor(duration) + 1 }, (_, minute): MomentumTrendPoint => {
-    const available = series.filter((item) => minute <= item.duration);
+    const available = rhythms.filter((item) => minute <= item.duration);
     return {
       minute,
       FOR: available.length ? available.reduce((sum, item) => sum + (item.points[minute]?.FOR ?? 0), 0) / available.length : 0,
       AGAINST: available.length ? available.reduce((sum, item) => sum + (item.points[minute]?.AGAINST ?? 0), 0) / available.length : 0,
     };
   });
-  const smoothing = records.some((record) => !record.session.matchFinished && record.catalog.status !== "FINISHED")
-    ? "TRAILING"
-    : "CENTERED";
-  return { points: movingAverageMomentum(averaged, smoothing), window: 3, smoothing };
+  return { points: averaged, window: 3, smoothing, aggregation: "ROLLING_SUM" };
 }
 
 export function momentumBinTotal(bin: MomentumBin, side: "FOR" | "AGAINST"): number {

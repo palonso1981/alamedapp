@@ -58,12 +58,18 @@ export function MatchMomentumPanel({ records, referenceRecords, comparisonEnable
   const primaryPeriod = filters.period === 2 ? 2 : 1;
   const effectiveFilters = useMemo(() => viewMode === "PERIOD_COMPARE" ? { ...filters, period: primaryPeriod as 1 | 2 } : filters, [filters, primaryPeriod, viewMode]);
   const momentum = useMemo(() => record ? buildMatchMomentum(record, effectiveFilters) : null, [effectiveFilters, record]);
-  const trend = useMemo(() => {
+  const currentTrend = useMemo(() => {
+    if (!record) return null;
+    return buildMomentumTrendSeries([record], filters, viewMode === "PERIOD_COMPARE" ? primaryPeriod : filters.period === "ALL" ? "MATCH" : filters.period);
+  }, [filters, primaryPeriod, record, viewMode]);
+  const referenceTrend = useMemo(() => {
     if (!record) return null;
     if (viewMode === "PERIOD_COMPARE") return buildMomentumTrendSeries([record], filters, primaryPeriod === 1 ? 2 : 1);
     if (viewMode === "COMPARISON" && comparisonEnabled) return buildMomentumTrendSeries(referenceRecords, filters, filters.period === "ALL" ? "MATCH" : filters.period);
     return null;
   }, [comparisonEnabled, filters, primaryPeriod, record, referenceRecords, viewMode]);
+  const currentTrendLabel = viewMode === "PERIOD_COMPARE" ? `P${primaryPeriod}` : "ACTUAL";
+  const referenceTrendLabel = viewMode === "PERIOD_COMPARE" ? `P${primaryPeriod === 1 ? 2 : 1}` : "REFERENCIA";
   const detail = momentum?.bins.find((bin) => bin.key === selectedBin) ?? null;
   if (!record || !momentum) return <section className="rounded-3xl border border-dashed border-slate-700 p-6 text-center text-slate-500"><b>MOMENTUM</b><p className="mt-1 text-xs">Selecciona un partido disponible para analizar su cronología sin mezclar partidos.</p></section>;
   const players = record.session.players.filter((player) => record.session.events.some((event) => event.type === "lineup_initialized" && event.squadPlayerIds.includes(player.id)));
@@ -81,9 +87,10 @@ export function MatchMomentumPanel({ records, referenceRecords, comparisonEnable
       <CompactMultiSelect label="JUGADORES" allLabel="TODOS LOS JUGADORES" values={filters.playerIds} options={players.map((player) => ({ value: player.id, label: `#${player.number} · ${player.name}` }))} onChange={(playerIds) => setFilters((current) => ({ ...current, playerIds }))}/>
     </div>
     <div className="mt-3 flex flex-wrap gap-1">{PHASES.map(([phase, label]) => <button type="button" key={phase} onClick={() => setFilters((current) => ({ ...current, phases: current.phases.includes(phase) ? current.phases.filter((item) => item !== phase) : [...current.phases, phase] }))} className={`min-h-9 rounded-lg border px-2 text-[9px] font-black ${filters.phases.includes(phase) ? "border-emerald-300 bg-emerald-300 text-slate-950" : "border-slate-700 text-slate-400"}`}>{label.toUpperCase()}</button>)}</div>
-    {viewMode === "PERIOD_COMPARE" && <p className="mt-2 text-center text-[9px] text-slate-400">P{primaryPeriod} en bloques · P{primaryPeriod === 1 ? 2 : 1} como tendencia suavizada de 3 minutos.</p>}
-    {viewMode === "COMPARISON" && <p className="mt-2 text-center text-[9px] text-slate-400">Contexto principal en bloques · comparativa global activa como tendencia media por partido.</p>}
-    <MomentumChart momentum={momentum} trend={trend} viewMode={viewMode} primaryPeriod={primaryPeriod} selected={selectedBin} onSelect={setSelectedBin}/>
+    {viewMode === "MATCH" && <p className="mt-2 text-center text-[9px] text-slate-400">Barras: acciones reales · línea: ritmo acumulado en una ventana móvil de 3 minutos.</p>}
+    {viewMode === "PERIOD_COMPARE" && <p className="mt-2 text-center text-[9px] text-slate-400">Barras: P{primaryPeriod} · tendencias comparables P1 vs P2 con la misma fórmula de ritmo 3&apos;.</p>}
+    {viewMode === "COMPARISON" && <p className="mt-2 text-center text-[9px] text-slate-400">Barras: contexto actual · tendencias actual y referencia global con la misma fórmula de ritmo 3&apos;.</p>}
+    <MomentumChart momentum={momentum} currentTrend={currentTrend} referenceTrend={referenceTrend} currentTrendLabel={currentTrendLabel} referenceTrendLabel={referenceTrendLabel} viewMode={viewMode} primaryPeriod={primaryPeriod} selected={selectedBin} onSelect={setSelectedBin}/>
     <MomentumPresence momentum={momentum} viewMode={viewMode} primaryPeriod={primaryPeriod}/>
     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[9px] text-slate-400"><b className="text-white">RESULTADO</b>{(Object.keys(OUTCOME_LABEL) as Array<keyof typeof OUTCOME_LABEL>).map((outcome) => <span key={outcome} className="inline-flex items-center gap-1"><i className="h-3 w-3 rounded-sm" style={{ backgroundColor: MOMENTUM_OUTCOME_COLORS[outcome] }}/>{OUTCOME_LABEL[outcome]}{outcome === "GOL" ? " · G" : ""}</span>)}<span className="basis-full">CDA se representa arriba y rival abajo. La peligrosidad se mantiene mediante los filtros TOTAL, CERCANAS, A PUERTA y GOL.</span></div>
     {detail && <MomentumDetail bin={detail}/>}
@@ -94,12 +101,21 @@ function CompactButtons<T extends string | number>({ label, values, selected, on
   return <fieldset><legend className="mb-1 text-[9px] font-black text-slate-400">{label}</legend><div className="flex min-h-11 flex-wrap items-center gap-1 rounded-xl bg-slate-800 p-1">{values.map(([value, text]) => <button type="button" key={String(value)} disabled={disabledValue === value} title={disabledValue === value ? "Activa COMPARAR en el Dashboard" : undefined} onClick={() => onSelect(value)} className={`min-h-8 flex-1 rounded-lg px-2 text-[9px] font-black disabled:cursor-not-allowed disabled:opacity-35 ${selected === value ? "bg-emerald-300 text-slate-950" : "text-slate-400"}`}>{text}</button>)}</div></fieldset>;
 }
 
-function MomentumChart({ momentum, trend, viewMode, primaryPeriod, selected, onSelect }: { momentum: MatchMomentum; trend: MomentumTrendSeries | null; viewMode: MomentumViewMode; primaryPeriod: 1 | 2; selected: string | null; onSelect: (key: string) => void }) {
+interface MomentumTrendTooltip {
+  minute: number;
+  x: number;
+  current: MomentumTrendSeries["points"][number];
+  reference: MomentumTrendSeries["points"][number] | null;
+}
+
+function MomentumChart({ momentum, currentTrend, referenceTrend, currentTrendLabel, referenceTrendLabel, viewMode, primaryPeriod, selected, onSelect }: { momentum: MatchMomentum; currentTrend: MomentumTrendSeries | null; referenceTrend: MomentumTrendSeries | null; currentTrendLabel: string; referenceTrendLabel: string; viewMode: MomentumViewMode; primaryPeriod: 1 | 2; selected: string | null; onSelect: (key: string) => void }) {
+  const [trendTooltip, setTrendTooltip] = useState<MomentumTrendTooltip | null>(null);
   const width = 1000; const height = 340; const left = 54; const right = 16; const axis = 170; const plotWidth = width - left - right;
   const displayDuration = viewMode === "PERIOD_COMPARE" ? periodDurationsForMomentum(momentum, primaryPeriod) : momentum.displayDuration;
-  const trendMaximum = trend ? Math.max(0, ...trend.points.flatMap((point) => [point.FOR, point.AGAINST])) : 0;
-  const scaleMax = Math.max(momentum.scaleMax, Math.ceil(trendMaximum), 1);
+  const trendMaximum = Math.max(1, ...[currentTrend, referenceTrend].filter((trend): trend is MomentumTrendSeries => trend !== null).flatMap((trend) => trend.points.flatMap((point) => [point.FOR, point.AGAINST])));
+  const scaleMax = Math.max(momentum.scaleMax, 1);
   const unit = 125 / scaleMax;
+  const trendUnit = 125 / trendMaximum;
   const position = (minute: number) => left + (minute / Math.max(1, displayDuration)) * plotWidth;
   const binMinute = (bin: MomentumBin) => viewMode === "PERIOD_COMPARE" ? bin.minute : bin.globalMinute - momentum.displayStart;
   const barWidth = Math.max(4, Math.min(18, plotWidth / Math.max(1, displayDuration + 1) - 2));
@@ -115,9 +131,12 @@ function MomentumChart({ momentum, trend, viewMode, primaryPeriod, selected, onS
     {showPeriodBoundary && momentum.periodEnds.slice(0, -1).map((end) => <g key={end}><line x1={position(end)} x2={position(end)} y1="20" y2={height - 30} stroke="#94a3b8" strokeDasharray="6 6"/><text x={position(end)} y="16" textAnchor="middle" fill="#cbd5e1" fontSize="12" fontWeight="700">P1 / P2</text></g>)}
     {minuteTicks.map((minute) => <g key={minute}><line x1={position(minute)} x2={position(minute)} y1={axis - 4} y2={axis + 4} stroke="#94a3b8"/><text x={position(minute)} y={height - 10} textAnchor="middle" fill="#64748b" fontSize="11">{minute}&apos;</text></g>)}
     <text x="8" y="26" fill="#86efac" fontSize="12" fontWeight="800">REMATES CDA ↑</text><text x="8" y={height - 36} fill="#fda4af" fontSize="12" fontWeight="800">AMENAZAS RIVAL ↓</text>
-    {trend && <MomentumTrendLine trend={trend} position={position} axis={axis} unit={unit}/>}
+    {currentTrend && <MomentumTrendLine trend={currentTrend} role="current" position={position} axis={axis} unit={trendUnit}/>}
+    {referenceTrend && <MomentumTrendLine trend={referenceTrend} role="reference" position={position} axis={axis} unit={trendUnit}/>}
+    {currentTrend && <MomentumTrendHitAreas current={currentTrend} reference={referenceTrend} position={position} axis={axis} unit={trendUnit} onSelect={setTrendTooltip}/>}
     {momentum.bins.map((bin) => <MomentumBar key={bin.key} bin={bin} x={position(binMinute(bin))} axis={axis} width={barWidth} unit={unit} selected={selected === bin.key} onSelect={() => onSelect(bin.key)}/>) }
-  </svg>{momentum.actions.length === 0 && <p className="py-4 text-center text-xs text-slate-500">No hay acciones para estos filtros.</p>}</div>;
+    {trendTooltip && <MomentumTrendTooltipCard tooltip={trendTooltip} currentLabel={currentTrendLabel} referenceLabel={referenceTrendLabel} width={width}/>}
+  </svg>{momentum.actions.length === 0 && <p className="py-4 text-center text-xs text-slate-500">No hay acciones para estos filtros.</p>}<MomentumTrendLegend currentLabel={currentTrendLabel} referenceLabel={referenceTrend ? referenceTrendLabel : null}/></div>;
 }
 
 function periodDurationsForMomentum(momentum: MatchMomentum, period: 1 | 2): number {
@@ -125,12 +144,37 @@ function periodDurationsForMomentum(momentum: MatchMomentum, period: 1 | 2): num
   return Math.max(0, (momentum.periodEnds[period - 1] ?? momentum.duration) - start);
 }
 
-function MomentumTrendLine({ trend, position, axis, unit }: { trend: MomentumTrendSeries; position: (minute: number) => number; axis: number; unit: number }) {
+function MomentumTrendLine({ trend, role, position, axis, unit }: { trend: MomentumTrendSeries; role: "current" | "reference"; position: (minute: number) => number; axis: number; unit: number }) {
   const points = (side: "FOR" | "AGAINST") => trend.points.map((point) => `${position(point.minute)},${axis + (side === "FOR" ? -1 : 1) * point[side] * unit}`).join(" ");
-  return <g data-momentum-trend data-window={trend.window} data-smoothing={trend.smoothing} pointerEvents="none">
-    <polyline points={points("FOR")} fill="none" stroke="#e2e8f0" strokeWidth="3" strokeDasharray="7 5" opacity=".8"/>
-    <polyline points={points("AGAINST")} fill="none" stroke="#94a3b8" strokeWidth="3" strokeDasharray="7 5" opacity=".8"/>
+  const reference = role === "reference";
+  return <g data-momentum-trend data-trend-role={role} data-window={trend.window} data-smoothing={trend.smoothing} data-aggregation={trend.aggregation} pointerEvents="none">
+    <polyline points={points("FOR")} fill="none" stroke={reference ? "#94a3b8" : "#e2e8f0"} strokeWidth={reference ? 2.5 : 3} strokeDasharray={reference ? "7 5" : undefined} opacity={reference ? .8 : .72}/>
+    <polyline points={points("AGAINST")} fill="none" stroke={reference ? "#94a3b8" : "#e2e8f0"} strokeWidth={reference ? 2.5 : 3} strokeDasharray={reference ? "7 5" : undefined} opacity={reference ? .8 : .72}/>
   </g>;
+}
+
+function MomentumTrendHitAreas({ current, reference, position, axis, unit, onSelect }: { current: MomentumTrendSeries; reference: MomentumTrendSeries | null; position: (minute: number) => number; axis: number; unit: number; onSelect: (tooltip: MomentumTrendTooltip | null) => void }) {
+  return <g data-momentum-trend-hit-areas>{current.points.map((point) => {
+    const referencePoint = reference?.points.find((candidate) => candidate.minute === point.minute) ?? null;
+    const positions = [axis - point.FOR * unit, axis + point.AGAINST * unit];
+    if (referencePoint) positions.push(axis - referencePoint.FOR * unit, axis + referencePoint.AGAINST * unit);
+    const yPositions = Array.from(new Set(positions.map((value) => value.toFixed(2)))).map(Number);
+    const tooltip = { minute: point.minute, x: position(point.minute), current: point, reference: referencePoint };
+    return <g key={point.minute}>{yPositions.map((y) => <circle key={y} cx={tooltip.x} cy={y} r="9" fill="transparent" tabIndex={0} aria-label={`Minuto ${point.minute}. Ritmo 3 minutos.`} onMouseEnter={() => onSelect(tooltip)} onMouseLeave={() => onSelect(null)} onFocus={() => onSelect(tooltip)} onBlur={() => onSelect(null)} onClick={() => onSelect(tooltip)}/>)}</g>;
+  })}</g>;
+}
+
+function MomentumTrendTooltipCard({ tooltip, currentLabel, referenceLabel, width }: { tooltip: MomentumTrendTooltip; currentLabel: string; referenceLabel: string; width: number }) {
+  const cardWidth = 258; const x = Math.max(8, Math.min(width - cardWidth - 8, tooltip.x - cardWidth / 2)); const height = tooltip.reference ? 68 : 50;
+  return <g data-momentum-trend-tooltip pointerEvents="none"><rect x={x} y="28" width={cardWidth} height={height} rx="10" fill="#020617" stroke="#64748b" opacity=".96"/><text x={x + 12} y="45" fill="#cbd5e1" fontSize="10" fontWeight="800">MIN {tooltip.minute}&apos; · RITMO 3&apos;</text><text x={x + 12} y="61" fill="#f8fafc" fontSize="10">{currentLabel} · CDA {formatTrendValue(tooltip.current.FOR)} · RIVAL {formatTrendValue(tooltip.current.AGAINST)}</text>{tooltip.reference && <text x={x + 12} y="77" fill="#94a3b8" fontSize="10">{referenceLabel} · CDA {formatTrendValue(tooltip.reference.FOR)} · RIVAL {formatTrendValue(tooltip.reference.AGAINST)}</text>}</g>;
+}
+
+function MomentumTrendLegend({ currentLabel, referenceLabel }: { currentLabel: string; referenceLabel: string | null }) {
+  return <div data-momentum-trend-legend className="mt-2 flex flex-wrap justify-center gap-x-5 gap-y-1 text-[9px] font-black text-slate-400"><span className="inline-flex items-center gap-2"><i className="w-7 border-t-[3px] border-slate-200"/>{currentLabel} · RITMO 3&apos;</span>{referenceLabel && <span className="inline-flex items-center gap-2"><i className="w-7 border-t-[3px] border-dashed border-slate-400"/>{referenceLabel} · RITMO 3&apos;</span>}</div>;
+}
+
+function formatTrendValue(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(".", ",");
 }
 
 function MomentumBar({ bin, x, axis, width, unit, selected, onSelect }: { bin: MomentumBin; x: number; axis: number; width: number; unit: number; selected: boolean; onSelect: () => void }) {
