@@ -1,4 +1,4 @@
-import { MatchEvent, MatchSession, ThreatPhase, ThreatRecordedEvent } from "../types";
+import { MatchEvent, MatchSession, ThreatOutcome, ThreatPhase, ThreatRecordedEvent } from "../types";
 import { DashboardMatchRecord } from "./dashboardAnalytics";
 import { deriveThreatOriginZone } from "./dashboardAnalysis";
 import { effectiveThreatPhase, isActiveMatchEvent, REGULATION_MATCH_CLOCK, replayMatch, sortEvents } from "./matchEngine";
@@ -6,6 +6,7 @@ import { effectiveThreatPhase, isActiveMatchEvent, REGULATION_MATCH_CLOCK, repla
 export type MomentumDanger = "NORMAL" | "NEAR" | "HIGH" | "GOAL";
 export type MomentumDangerFilter = "ALL" | "NEAR" | "HIGH" | "GOAL";
 export type MomentumPeriodFilter = "ALL" | 1 | 2;
+export type MomentumViewMode = "MATCH" | "PERIOD_COMPARE" | "COMPARISON";
 
 export interface MomentumFilters {
   period: MomentumPeriodFilter;
@@ -21,6 +22,7 @@ export interface MomentumAction {
   globalMinute: number;
   side: "FOR" | "AGAINST";
   danger: MomentumDanger;
+  outcome: ThreatOutcome;
   phase: ThreatPhase;
   playerId?: string;
   lineupPlayerIds: string[];
@@ -37,6 +39,7 @@ export interface MomentumBin {
   eventIds: string[];
   phases: ThreatPhase[];
   highlighted: boolean;
+  actions: MomentumAction[];
 }
 
 export interface MomentumInterval {
@@ -61,6 +64,19 @@ export interface MatchMomentum {
   selectedPlayerNames: string[];
 }
 
+export interface MomentumTrendPoint {
+  minute: number;
+  FOR: number;
+  AGAINST: number;
+}
+
+export interface MomentumTrendSeries {
+  points: MomentumTrendPoint[];
+  window: 3;
+  smoothing: "CENTERED" | "TRAILING";
+  aggregation: "ROLLING_SUM";
+}
+
 export const EMPTY_MOMENTUM_FILTERS: MomentumFilters = {
   period: "ALL",
   phases: [],
@@ -70,9 +86,11 @@ export const EMPTY_MOMENTUM_FILTERS: MomentumFilters = {
 
 const DANGERS: MomentumDanger[] = ["NORMAL", "NEAR", "HIGH", "GOAL"];
 
-export const MOMENTUM_COLORS: Record<"FOR" | "AGAINST", Record<MomentumDanger, string>> = {
-  FOR: { NORMAL: "#365844", NEAR: "#15803d", HIGH: "#22c55e", GOAL: "#a3e635" },
-  AGAINST: { NORMAL: "#5f3940", NEAR: "#be123c", HIGH: "#f43f5e", GOAL: "#ff1744" },
+export const MOMENTUM_OUTCOME_COLORS: Record<ThreatOutcome, string> = {
+  FUERA: "#f59e0b",
+  PARADA: "#22c55e",
+  GOL: "#ef4444",
+  BLOQUEADO: "#94a3b8",
 };
 
 export const MOMENTUM_COLOR_INTENSITY: Record<MomentumDanger, number> = {
@@ -202,6 +220,7 @@ export function buildMatchMomentum(
       globalMinute: eventGlobalMinute(event, offsets),
       side: event.side,
       danger,
+      outcome: event.outcome,
       phase,
       playerId: event.playerId,
       lineupPlayerIds: [...lineupPlayerIds],
@@ -235,9 +254,11 @@ export function buildMatchMomentum(
       eventIds: [],
       phases: [],
       highlighted: filters.playerIds.length === 0,
+      actions: [],
     };
     bin[action.side][action.danger] += 1;
     bin.eventIds.push(action.eventId);
+    bin.actions.push(action);
     if (!bin.phases.includes(action.phase)) bin.phases.push(action.phase);
     if (action.highlighted) bin.highlighted = true;
     binsByKey.set(key, bin);
@@ -263,8 +284,89 @@ export function buildMatchMomentum(
   };
 }
 
+function rawMomentumSeries(
+  record: DashboardMatchRecord,
+  filters: MomentumFilters,
+  axis: "MATCH" | 1 | 2,
+): { duration: number; points: MomentumTrendPoint[] } {
+  const effectiveFilters = { ...filters, period: axis === "MATCH" ? filters.period : axis };
+  const momentum = buildMatchMomentum(record, effectiveFilters);
+  const duration = axis === "MATCH"
+    ? momentum.displayDuration
+    : periodDurations(record.session)[axis - 1] ?? 0;
+  const totals = new Map<number, { FOR: number; AGAINST: number }>();
+  for (const bin of momentum.bins) {
+    const minute = axis === "MATCH" ? bin.globalMinute - momentum.displayStart : bin.minute;
+    if (minute < 0 || minute > duration) continue;
+    totals.set(minute, {
+      FOR: momentumBinTotal(bin, "FOR"),
+      AGAINST: momentumBinTotal(bin, "AGAINST"),
+    });
+  }
+  return {
+    duration,
+    points: Array.from({ length: Math.max(0, Math.floor(duration)) + 1 }, (_, minute) => ({
+      minute,
+      FOR: totals.get(minute)?.FOR ?? 0,
+      AGAINST: totals.get(minute)?.AGAINST ?? 0,
+    })),
+  };
+}
+
+export function rollingMomentumRhythm(
+  points: readonly MomentumTrendPoint[],
+  smoothing: "CENTERED" | "TRAILING",
+): MomentumTrendPoint[] {
+  return points.map((point, index) => {
+    const from = smoothing === "TRAILING" ? Math.max(0, index - 2) : Math.max(0, index - 1);
+    const to = smoothing === "TRAILING" ? index : Math.min(points.length - 1, index + 1);
+    const window = points.slice(from, to + 1);
+    return {
+      minute: point.minute,
+      FOR: window.reduce((sum, item) => sum + item.FOR, 0),
+      AGAINST: window.reduce((sum, item) => sum + item.AGAINST, 0),
+    };
+  });
+}
+
+/**
+ * Serie comparable por minuto relativo. Cada partido aporta primero su propia
+ * serie y su ritmo acumulado en una ventana de tres minutos; después se
+ * promedian esos ritmos por posición temporal. En partidos cerrados la ventana
+ * es centrada. Si hay un partido en curso se usa una ventana trailing para no
+ * introducir futuro. Nunca se suman varios partidos como si fueran uno.
+ */
+export function buildMomentumTrendSeries(
+  records: readonly DashboardMatchRecord[],
+  filters: MomentumFilters,
+  axis: "MATCH" | 1 | 2 = "MATCH",
+): MomentumTrendSeries {
+  const series = records.map((record) => rawMomentumSeries(record, filters, axis));
+  const smoothing = records.some((record) => !record.session.matchFinished && record.catalog.status !== "FINISHED")
+    ? "TRAILING"
+    : "CENTERED";
+  const rhythms = series.map((item) => ({
+    duration: item.duration,
+    points: rollingMomentumRhythm(item.points, smoothing),
+  }));
+  const duration = Math.max(0, ...series.map((item) => item.duration));
+  const averaged = Array.from({ length: Math.floor(duration) + 1 }, (_, minute): MomentumTrendPoint => {
+    const available = rhythms.filter((item) => minute <= item.duration);
+    return {
+      minute,
+      FOR: available.length ? available.reduce((sum, item) => sum + (item.points[minute]?.FOR ?? 0), 0) / available.length : 0,
+      AGAINST: available.length ? available.reduce((sum, item) => sum + (item.points[minute]?.AGAINST ?? 0), 0) / available.length : 0,
+    };
+  });
+  return { points: averaged, window: 3, smoothing, aggregation: "ROLLING_SUM" };
+}
+
 export function momentumBinTotal(bin: MomentumBin, side: "FOR" | "AGAINST"): number {
   return DANGERS.reduce((sum, danger) => sum + bin[side][danger], 0);
+}
+
+export function momentumActionOpacity(action: Pick<MomentumAction, "highlighted">): number {
+  return action.highlighted ? 1 : .2;
 }
 
 export function momentumBinOpacity(bin: Pick<MomentumBin, "highlighted">): number {
